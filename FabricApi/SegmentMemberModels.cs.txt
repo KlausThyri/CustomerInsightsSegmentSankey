@@ -1,0 +1,112 @@
+#if FABRIC_API
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+public sealed class SegmentMemberRequest
+{
+    public string QueryToken { get; set; } = string.Empty;
+
+    public int StageOrder { get; set; }
+
+    public string ViewMode { get; set; } = "stage";
+
+    public string? Search { get; set; }
+
+    public string? FilterField { get; set; }
+
+    public string? FilterOperator { get; set; }
+
+    public string? FilterValue { get; set; }
+
+    public string SortField { get; set; } = "fullname";
+
+    public string SortDirection { get; set; } = "asc";
+
+    public int PageSize { get; set; } = 25;
+
+    public string? ContinuationToken { get; set; }
+}
+
+/// <summary>
+/// Response for <c>/api/segment-members</c>. Intentionally exposes only
+/// profile identifiers - never PII such as names, e-mail addresses, or phone
+/// numbers. Callers resolve any displayable fields through their own,
+/// security-trimmed Dataverse access.
+/// </summary>
+public sealed class SegmentMemberResponse
+{
+    public string ProfileEntity { get; set; } = string.Empty;
+
+    public List<Guid> ProfileIds { get; set; } = [];
+
+    public string? NextToken { get; set; }
+
+    public bool HasMore { get; set; }
+
+    /// <summary>
+    /// ISO-8601 timestamp (round-trip "o" format, e.g.
+    /// <c>2026-08-19T15:45:56.0710000+00:00</c>). Modeled as <see cref="string"/>
+    /// rather than <see cref="DateTimeOffset"/> so the wire value is always a
+    /// plain JSON string - safe for consumers using
+    /// <see cref="System.Runtime.Serialization.Json.DataContractJsonSerializer"/>,
+    /// which otherwise expects its own non-ISO <c>/Date(...)/</c> notation for
+    /// date-typed members.
+    /// </summary>
+    public string GeneratedAt { get; set; } = string.Empty;
+}
+
+internal static class SegmentMemberFields
+{
+    public static readonly IReadOnlyList<string> Allowed =
+    [
+        "fullname",
+        "firstname",
+        "lastname",
+        "emailaddress1",
+        "telephone1",
+        "address1_city"
+    ];
+
+    public static bool IsAllowed(string? field)
+    {
+        if (string.IsNullOrWhiteSpace(field))
+        {
+            return false;
+        }
+
+        var trimmed = field.Trim();
+        foreach (var allowed in Allowed)
+        {
+            if (string.Equals(allowed, trimmed, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+internal static class SegmentMemberOperators
+{
+    public static readonly IReadOnlyList<string> Allowed = ["contains", "startsWith", "equals"];
+
+    public static bool IsAllowed(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        foreach (var allowed in Allowed)
+        {
+            if (string.Equals(allowed, trimmed, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+#endif

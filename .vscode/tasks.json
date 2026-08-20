@@ -1,0 +1,53 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build plugin",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/CustomerInsightsSegmentSankey.csproj",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "build Fabric API",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/FabricApi/CustomerInsightsSegmentSankey.FabricApi.csproj",
+                "--configuration",
+                "Release"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "test Fabric API",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "test",
+                "${workspaceFolder}/FabricApi.Tests/CustomerInsightsSegmentSankey.FabricApi.Tests.csproj",
+                "--configuration",
+                "Release"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "build Dataverse solution",
+            "command": "pwsh",
+            "type": "process",
+            "args": [
+                "-File",
+                "${workspaceFolder}/solution/build-solution.ps1",
+                "-Configuration",
+                "Release"
+            ],
+            "problemMatcher": "$msCompile"
+        }
+    ]
+}

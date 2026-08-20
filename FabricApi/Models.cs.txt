@@ -1,0 +1,67 @@
+#if FABRIC_API
+using System.Text.Json.Serialization;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+public sealed class ApiError
+{
+    public string Code { get; set; } = string.Empty;
+
+    public string Message { get; set; } = string.Empty;
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Detail { get; set; }
+}
+
+public sealed class FabricDependencyRequest
+{
+    public List<string> DataverseTables { get; set; } = [];
+}
+
+public sealed class FabricDependencyResponse
+{
+    public List<string> RequiredTables { get; set; } = [];
+
+    public List<string> AddedTables { get; set; } = [];
+
+    public List<string> ExistingTables { get; set; } = [];
+}
+
+internal sealed record EventTableDescriptor(
+    string Schema,
+    string Table,
+    IReadOnlyDictionary<string, string> Columns)
+{
+    public bool TryResolveColumn(string requestedName, out string column)
+    {
+        return Columns.TryGetValue(IdentifierNormalizer.Normalize(requestedName), out column!);
+    }
+}
+
+internal static class IdentifierNormalizer
+{
+    public static string Normalize(string value)
+    {
+        var builder = new System.Text.StringBuilder(value.Length);
+        foreach (var character in value)
+        {
+            if (char.IsLetterOrDigit(character))
+            {
+                builder.Append(char.ToLowerInvariant(character));
+            }
+        }
+
+        return builder.ToString();
+    }
+}
+
+internal sealed class FabricQueryException(
+    string code,
+    string message,
+    string? detail = null) : Exception(message)
+{
+    public string Code { get; } = code;
+
+    public string? Detail { get; } = detail;
+}
+#endif

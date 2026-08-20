@@ -1,0 +1,15 @@
+{
+  "packages": {
+    "Newtonsoft.Json": [
+      "Newtonsoft.Json",
+      "Newtonsoft.Json.Linq"
+    ],
+    "Microsoft.CrmSdk.CoreAssemblies": [
+      "Microsoft.Xrm.Sdk",
+      "Microsoft.Xrm.Sdk.Query"
+    ],
+    "System.Net.Http": [
+      "System.Net.Http"
+    ]
+  }
+}

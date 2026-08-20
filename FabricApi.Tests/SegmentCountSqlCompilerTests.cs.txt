@@ -1,0 +1,516 @@
+#if FABRIC_API
+using System.Text.Json;
+using CustomerInsightsSegmentSankey.FabricApi;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+public sealed class SegmentCountSqlCompilerTests
+{
+    [Fact]
+    public void Ast_CamelCaseUnionShape_DeserializesOperandAndSteps()
+    {
+        const string json = """
+            {
+              "query": {
+                "firstOperand": {
+                  "kind": "profile",
+                  "profileEntity": "contact",
+                  "baseLabel": "Contacts",
+                  "baseDetail": "PROFILE(contact)",
+                  "steps": [{
+                    "kind": "profile",
+                    "label": "Active",
+                    "detail": "statecode == 0",
+                    "condition": {
+                      "kind": "predicate",
+                      "field": "statecode",
+                      "operator": "==",
+                      "value": 0
+                    }
+                  }]
+                },
+                "setOperations": []
+              }
+            }
+            """;
+
+        var request = JsonSerializer.Deserialize<SegmentCountRequest>(
+            json,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        var profile = Assert.IsType<SegmentOperand>(request!.Query.FirstOperand);
+        Assert.Equal("profile", profile.Kind);
+        Assert.Equal("profile", Assert.Single(profile.Steps).Kind);
+    }
+
+    [Fact]
+    public void Compile_ProfileStages_UsesCatalogIdentifiersAndValueParameters()
+    {
+        var request = Request(new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Active contacts",
+            BaseDetail = "PROFILE(contact)",
+            Steps =
+            [
+                new SegmentFilterStep
+                {
+                    Kind = "profile",
+                    Label = "Country filter",
+                    Detail = "contact.address1_country == 'DE'",
+                    Condition = Predicate("contact.address1_country", "==", Json("\"DE\""))
+                }
+            ]
+        });
+
+        var result = Compile(
+            request,
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country"));
+
+        Assert.Contains("FROM [dataverse].[contact] AS p", result.Sql);
+        Assert.Contains("TRY_CONVERT(uniqueidentifier, p.[contactid])", result.Sql);
+        Assert.Contains("p.[statecode] = @p0", result.Sql);
+        Assert.Contains("p.[address1_country] = @p1", result.Sql);
+        Assert.DoesNotContain("'DE'", result.Sql);
+        Assert.Contains("COUNT_BIG(*) AS StageCount", result.Sql);
+        Assert.EndsWith("ORDER BY StageOrder;", result.Sql);
+        Assert.Equal(
+            [0, "DE"],
+            result.Parameters.Select(parameter => parameter.Value).ToArray());
+        Assert.Equal(2, result.Stages.Count);
+        Assert.Equal("Country filter", result.Stages[1].Label);
+        Assert.Collection(
+            result.SourceTables,
+            source =>
+            {
+                Assert.Equal("dataverse", source.Schema);
+                Assert.Equal("contact", source.Table);
+            });
+    }
+
+    [Fact]
+    public void Compile_StringPatternOperators_AreCaseInsensitive()
+    {
+        var request = Request(new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Contacts",
+            BaseDetail = "PROFILE(contact)",
+            Steps =
+            [
+                new SegmentFilterStep
+                {
+                    Kind = "profile",
+                    Label = "Name filter",
+                    Detail = "firstname CONTAINS 'a'",
+                    Condition = Predicate("firstname", "CONTAINS", Json("\"a\""))
+                }
+            ]
+        });
+
+        var result = Compile(
+            request,
+            Table("dataverse", "contact", "contactid", "statecode", "firstname"));
+
+        Assert.Contains("LOWER(p.[firstname]) LIKE LOWER(@p1)", result.Sql);
+    }
+
+    [Fact]
+    public void Compile_RelationshipRootNot_DistinguishesRelateAndOptional()
+    {
+        var notPreferred = new SegmentCondition
+        {
+            Kind = "not",
+            Children = [Predicate("account.category", "==", Json("\"preferred\""))]
+        };
+        var profile = new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Contacts",
+            BaseDetail = "PROFILE(contact)",
+            Steps =
+            [
+                Relationship(
+                    "RELATE",
+                    "Required relationship",
+                    "Required root NOT",
+                    notPreferred),
+                Relationship(
+                    "RELATEOPTIONAL",
+                    "Optional relationship",
+                    "Optional root NOT",
+                    notPreferred)
+            ]
+        };
+
+        var result = Compile(
+            Request(profile),
+            Table("dataverse", "contact", "contactid", "statecode", "parentcustomerid"),
+            Table("dataverse", "account", "accountid", "category"));
+
+        Assert.Contains("EXISTS (SELECT 1", result.Sql);
+        Assert.Contains("AND NOT (r.[category] = @p1)", result.Sql);
+        Assert.Contains("NOT EXISTS (SELECT 1", result.Sql);
+        Assert.Contains("AND r.[category] = @p2", result.Sql);
+        Assert.Contains("r.[accountid] = p.[parentcustomerid]", result.Sql);
+        Assert.Equal(3, result.Stages.Count);
+        Assert.Equal(2, result.SourceTables.Count);
+    }
+
+    [Fact]
+    public void Compile_ProfilePrimaryId_ResolvesFabricIdAndAlwaysFiltersActiveRows()
+    {
+        var request = Request(new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Active contacts",
+            BaseDetail = "PROFILE(contact)"
+        });
+
+        var result = Compile(
+            request,
+            Table("dataverse", "contact", "Id", "statecode"));
+
+        Assert.Contains("TRY_CONVERT(uniqueidentifier, p.[Id])", result.Sql);
+        Assert.Contains("p.[statecode] = @p0", result.Sql);
+        Assert.Single(result.Parameters);
+        Assert.Equal(0, result.Parameters[0].Value);
+    }
+
+    [Fact]
+    public void Compile_FabricIdCandidate_AlsoResolvesLogicalPrimaryId()
+    {
+        var request = Request(new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Active contacts",
+            BaseDetail = "PROFILE(contact)"
+        });
+
+        var result = Compile(
+            request,
+            Table("dataverse", "contact", "contactid", "statecode"));
+
+        Assert.Contains("TRY_CONVERT(uniqueidentifier, p.[contactid])", result.Sql);
+    }
+
+    [Fact]
+    public void Compile_ConsentCondition_JoinsEmailAndMapsOptionalEnums()
+    {
+        var purpose = Guid.Parse("dd33591f-a3ac-48af-b0aa-b35e5b991638");
+        var topic = Guid.Parse("08931d44-52a7-42e8-947f-1345360c9120");
+        var request = Request(new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Active contacts",
+            BaseDetail = "PROFILE(contact)",
+            Steps =
+            [
+                new SegmentFilterStep
+                {
+                    Kind = "profile",
+                    Label = "Consent",
+                    Detail = "Email consent",
+                    Condition = new SegmentCondition
+                    {
+                        Kind = "consent",
+                        ProfileEmailField = "emailaddress1",
+                        PurposeId = purpose,
+                        TopicId = topic,
+                        Channel = "Email",
+                        Value = Json("\"OptedIn\"")
+                    }
+                }
+            ]
+        });
+
+        var result = Compile(
+            request,
+            Table(
+                "dataverse",
+                "contact",
+                "Id",
+                "statecode",
+                "emailaddress1"),
+            Table(
+                "dataverse",
+                "msdynmkt_contactpointconsent4",
+                "Id",
+                "statecode",
+                "msdynmkt_contactpointvalue",
+                "msdynmkt_purposeid",
+                "msdynmkt_topicid",
+                "msdynmkt_contactpointtype",
+                "msdynmkt_value"));
+
+        Assert.Contains(
+            "FROM [dataverse].[msdynmkt_contactpointconsent4] AS consent",
+            result.Sql);
+        Assert.Contains(
+            "consent.[msdynmkt_contactpointvalue] = p.[emailaddress1]",
+            result.Sql);
+        Assert.Contains("consent.[statecode] = @p1", result.Sql);
+        Assert.Contains("consent.[msdynmkt_purposeid] = @p2", result.Sql);
+        Assert.Contains("consent.[msdynmkt_topicid] = @p3", result.Sql);
+        Assert.Contains("consent.[msdynmkt_contactpointtype] = @p4", result.Sql);
+        Assert.Contains("consent.[msdynmkt_value] = @p5", result.Sql);
+        Assert.Equal(
+            [0, 0, purpose, topic, 534120000, 534120001],
+            result.Parameters.Select(parameter => parameter.Value).ToArray());
+        Assert.Equal(
+            ["contact", "msdynmkt_contactpointconsent4"],
+            result.SourceTables.Select(source => source.Table).ToArray());
+    }
+
+    [Fact]
+    public void Compile_AllSetOperations_UsesStagedSetCtes()
+    {
+        var id = Guid.Parse("8d78b7a9-9f53-46a2-b39a-ec9eec276c20");
+        var request = Request(Static("Initial", id));
+        request.Query.SetOperations =
+        [
+            Set("UNION", "Union", Static("Union operand", Guid.NewGuid())),
+            Set("INTERSECT", "Intersection", Static("Intersect operand", id)),
+            Set(
+                "EXCEPT",
+                "Exclusion",
+                new SegmentOperand
+                {
+                    Kind = "query",
+                    ProfileEntity = "contact",
+                    BaseLabel = "Nested",
+                    BaseDetail = "Nested query",
+                    Query = Request(Static("Nested static", Guid.NewGuid())).Query
+                })
+        ];
+
+        var result = Compile(request);
+
+        Assert.Contains(Environment.NewLine + "    UNION" + Environment.NewLine, result.Sql);
+        Assert.Contains(Environment.NewLine + "    INTERSECT" + Environment.NewLine, result.Sql);
+        Assert.Contains(Environment.NewLine + "    EXCEPT" + Environment.NewLine, result.Sql);
+        Assert.Equal(
+            ["Initial", "Union", "Intersection", "Exclusion"],
+            result.Stages.Select(stage => stage.Label).ToArray());
+        Assert.Contains("UNION ALL", result.Sql);
+    }
+
+    [Fact]
+    public void Compile_StaticIds_UsesSingleOpenJsonParameter()
+    {
+        var first = Guid.Parse("507cfd4d-b1fc-49dd-a782-64e8f49bc738");
+        var second = Guid.Parse("7b1e5c48-351c-4b72-8e9e-e419f078ad28");
+
+        var result = Compile(Request(Static("Static segment", first, second)));
+
+        Assert.Contains("OPENJSON(@p0)", result.Sql);
+        Assert.Contains("WITH ([value] nvarchar(36) '$')", result.Sql);
+        Assert.Single(result.Parameters);
+        var ids = JsonSerializer.Deserialize<List<Guid>>((string)result.Parameters[0].Value);
+        Assert.Equal([first, second], ids);
+    }
+
+    [Fact]
+    public void Compile_Interaction_UsesAliasesHavingWindowAndParameters()
+    {
+        var request = Request(new SegmentOperand
+        {
+            Kind = "interaction",
+            ProfileEntity = "contact",
+            EventLogicalName = "msdynmkt_emaillinkclicked",
+            EntityIdField = "msdynmkt_entityid",
+            BaseLabel = "Clicked",
+            BaseDetail = "Interaction click",
+            Filter = Predicate("msdynmkt_messagetemplateid", "==", Json("\"newsletter\"")),
+            Having = new SegmentHaving
+            {
+                Metric = "Count",
+                Operator = ">=",
+                Threshold = 2,
+                WindowFunction = "UTCDAYS",
+                WindowValue = 28
+            }
+        });
+
+        var result = Compile(
+            request,
+            Table(
+                "journeys",
+                "RedirectLinkClicked",
+                "ProfileId",
+                "ContactId",
+                "ProfileType",
+                "MessageId",
+                "Timestamp"));
+
+        Assert.Contains("FROM [journeys].[RedirectLinkClicked] AS e", result.Sql);
+        Assert.Contains("COALESCE([ProfileId], [ContactId])", result.Sql);
+        Assert.Contains("[MessageId] = @p1", result.Sql);
+        Assert.Contains("DATEADD(day, -@p2, SYSUTCDATETIME())", result.Sql);
+        Assert.Contains("HAVING COUNT_BIG(*) >= @p3", result.Sql);
+        Assert.DoesNotContain("newsletter", result.Sql);
+        Assert.Equal(
+            ["contact", "newsletter", 28, 2L],
+            result.Parameters.Select(parameter => parameter.Value).ToArray());
+    }
+
+    [Fact]
+    public void Compile_UncataloguedTable_IsRejected()
+    {
+        var request = Request(new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "missing",
+            BaseLabel = "Profile",
+            BaseDetail = "Profile"
+        });
+        var catalog = Catalog(Table("dataverse", "contact", "contactid", "statecode"));
+
+        var exception = Assert.Throws<SegmentQueryException>(
+            () => new SegmentCountSqlCompiler().Compile(request, catalog));
+
+        Assert.Equal("invalid_identifier", exception.Code);
+    }
+
+    [Fact]
+    public void Compile_UncataloguedField_IsRejected()
+    {
+        var request = Request(new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Profile",
+            BaseDetail = "Profile",
+            Steps =
+            [
+                new SegmentFilterStep
+                {
+                    Kind = "profile",
+                    Label = "Unsafe",
+                    Detail = "Unsafe",
+                    Condition = Predicate(
+                        "unsafe]; DROP TABLE contact;--",
+                        "==",
+                        Json("\"x\""))
+                }
+            ]
+        });
+
+        var exception = Assert.Throws<SegmentQueryException>(
+            () => Compile(
+                request,
+                Table("dataverse", "contact", "Id", "statecode")));
+
+        Assert.Equal("invalid_identifier", exception.Code);
+    }
+
+    private static SegmentFilterStep Relationship(
+        string type,
+        string label,
+        string detail,
+        SegmentCondition condition)
+    {
+        return new SegmentFilterStep
+        {
+            Kind = "relationship",
+            IsOptional = type == "RELATEOPTIONAL",
+            RelatedEntity = "account",
+            ProfileAttribute = "parentcustomerid",
+            RelatedAttribute = "accountid",
+            Label = label,
+            Detail = detail,
+            Condition = condition
+        };
+    }
+
+    private static SegmentSetOperation Set(
+        string operation,
+        string label,
+        SegmentOperand operand)
+    {
+        return new SegmentSetOperation
+        {
+            Operator = operation,
+            Operand = operand,
+            Label = label,
+            Detail = label + " detail"
+        };
+    }
+
+    private static SegmentOperand Static(string label, params Guid[] ids)
+    {
+        return new SegmentOperand
+        {
+            Kind = "static",
+            ProfileEntity = "contact",
+            ProfileIds = ids.ToList(),
+            BaseLabel = label,
+            BaseDetail = label + " detail"
+        };
+    }
+
+    private static SegmentCountRequest Request(SegmentOperand operand)
+    {
+        return new SegmentCountRequest
+        {
+            Query = new SegmentQueryNode
+            {
+                FirstOperand = operand
+            }
+        };
+    }
+
+    private static SegmentCondition Predicate(
+        string field,
+        string operation,
+        JsonElement value)
+    {
+        return new SegmentCondition
+        {
+            Kind = "predicate",
+            Field = field,
+            Operator = operation,
+            Value = value
+        };
+    }
+
+    private static JsonElement Json(string json)
+    {
+        return JsonDocument.Parse(json).RootElement.Clone();
+    }
+
+    private static CompiledSegmentCountQuery Compile(
+        SegmentCountRequest request,
+        params EventTableDescriptor[] tables)
+    {
+        return new SegmentCountSqlCompiler().Compile(request, Catalog(tables));
+    }
+
+    private static FabricSegmentCatalogSnapshot Catalog(
+        params EventTableDescriptor[] tables)
+    {
+        return new FabricSegmentCatalogSnapshot(DateTimeOffset.UtcNow, tables);
+    }
+
+    private static EventTableDescriptor Table(
+        string schema,
+        string table,
+        params string[] columns)
+    {
+        return new EventTableDescriptor(
+            schema,
+            table,
+            columns.ToDictionary(
+                IdentifierNormalizer.Normalize,
+                column => column,
+                StringComparer.OrdinalIgnoreCase));
+    }
+}
+#endif

@@ -1,0 +1,1797 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Segment preview</title>
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("scoutTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+      --cp-designer-group-icon: #d67540;
+      --cp-designer-group-icon-bg: #fdf1ef;
+      --cp-designer-behavior-icon: #0078d4;
+      --cp-designer-behavior-icon-bg: #f0f5ff;
+      --cp-designer-segment-icon: #069349;
+      --cp-designer-segment-icon-bg: #e4f7ed;
+      --cp-designer-group-text: #333333;
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+      --cp-designer-group-icon: #d67540;
+      --cp-designer-group-icon-bg: #fdf1ef;
+      --cp-designer-behavior-icon: #0078d4;
+      --cp-designer-behavior-icon-bg: #f0f5ff;
+      --cp-designer-segment-icon: #069349;
+      --cp-designer-segment-icon-bg: #e4f7ed;
+      --cp-designer-group-text: var(--cp-text);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--cp-surface);
+      color: var(--cp-text);
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+    }
+    button { font: inherit; }
+    .app { min-height: 100vh; padding: 16px 20px 24px; }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--cp-border);
+    }
+    .header-copy { min-width: 0; }
+    h1 {
+      overflow: hidden;
+      margin: 0;
+      font-size: 20px;
+      font-weight: 600;
+      line-height: 1.4;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .metadata {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 12px;
+      margin-top: 2px;
+      color: var(--cp-text-muted);
+      font-size: 12px;
+    }
+    .metadata span + span::before {
+      margin-right: 12px;
+      color: var(--cp-border-strong);
+      content: "•";
+    }
+    .button {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      min-height: 32px;
+      padding: 5px 12px;
+      border: 1px solid var(--cp-border-strong);
+      border-radius: .625rem;
+      background: var(--cp-surface);
+      color: var(--cp-text);
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .button:hover { background: var(--cp-surface-soft); }
+    .button:focus-visible { outline: 2px solid var(--cp-link); outline-offset: 2px; }
+    .button:disabled { cursor: wait; opacity: .65; }
+    .refresh-icon {
+      width: 16px;
+      height: 16px;
+      margin-right: 6px;
+      fill: currentColor;
+    }
+    .notice, .summary, .visualization {
+      border: 1px solid var(--cp-border);
+      background: var(--cp-surface);
+      box-shadow: 0 0 2px var(--cp-border), 0 1px 2px var(--cp-border);
+    }
+    .notice {
+      display: none;
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--cp-warning);
+      border-radius: .625rem;
+      color: var(--cp-text-muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .notice.error { border-left-color: var(--cp-danger); }
+    .notice.visible { display: block; }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      overflow: hidden;
+      margin-top: 16px;
+      border-radius: .625rem;
+      background: var(--cp-border);
+    }
+    .metric { min-width: 0; padding: 12px 14px; background: var(--cp-surface); }
+    .metric-label { color: var(--cp-text-muted); font-size: 12px; }
+    .metric-value { margin-top: 2px; font-size: 20px; font-weight: 600; }
+    .visualization {
+      overflow: hidden;
+      margin-top: 16px;
+      border-radius: .625rem;
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--cp-border);
+    }
+    .section-title { margin: 0; font-size: 14px; font-weight: 600; }
+    .legend { display: flex; gap: 12px; color: var(--cp-text-muted); font-size: 11px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 5px; }
+    .legend-swatch { width: 12px; height: 6px; border-radius: .625rem; }
+    .legend-swatch.remaining { background: var(--cp-accent); }
+    .legend-swatch.removed { background: var(--cp-border-strong); }
+    .chart {
+      min-height: 260px;
+      padding: 12px 12px 4px;
+      background: var(--cp-bg-elevated);
+    }
+    .sankey-svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .journey-trunk, .journey-flow, .journey-loss-flow, .journey-add-flow {
+      fill: none;
+      stroke: var(--cp-link);
+      stroke-linecap: butt;
+      stroke-linejoin: round;
+    }
+    .journey-trunk { opacity: .38; }
+    .journey-flow { opacity: .55; }
+    .journey-loss-flow {
+      opacity: .4;
+    }
+    .journey-add-flow {
+      opacity: .5;
+    }
+    .journey-card, .journey-branch-card, .journey-add-card {
+      fill: var(--cp-surface);
+      stroke: var(--cp-border);
+      stroke-width: 1;
+      filter: drop-shadow(0 1px 2px var(--cp-border));
+    }
+    .journey-card { rx: 0; }
+    .journey-entry-card {
+      rx: 44px;
+      fill: var(--cp-surface);
+      stroke: var(--cp-border);
+      stroke-width: 1;
+      filter: drop-shadow(0 2px 3px var(--cp-border));
+    }
+    .journey-exit-card {
+      rx: 44px;
+      fill: var(--cp-surface);
+      stroke: var(--cp-border);
+      stroke-width: 1;
+      filter: drop-shadow(0 2px 3px var(--cp-border));
+    }
+    .journey-branch-card {
+      fill: var(--cp-surface);
+      stroke: var(--cp-border);
+      stroke-width: 1;
+      filter: drop-shadow(0 2px 3px var(--cp-border));
+    }
+    .journey-add-card {
+      fill: var(--cp-surface);
+      stroke: var(--cp-border);
+      stroke-width: 1;
+      filter: drop-shadow(0 2px 3px var(--cp-border));
+    }
+    .journey-icon-tile { opacity: .12; }
+    .journey-icon {
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .journey-card-group {
+      display: flex;
+      align-items: center;
+      height: 24px;
+      color: var(--cp-designer-group-text);
+      font-family: "Segoe UI", "Segoe UI Web (West European)", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      line-height: normal;
+    }
+    .journey-card-group-badge {
+      display: flex;
+      width: 24px;
+      height: 24px;
+      margin-right: 4px;
+      flex: 0 0 24px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 0;
+      background: var(--cp-designer-group-icon-bg);
+      color: var(--cp-designer-group-icon);
+    }
+    .journey-card-group-badge.audience {
+      background: transparent;
+      color: var(--cp-text-muted);
+    }
+    .journey-card-group-badge.behavioral {
+      background: var(--cp-designer-behavior-icon-bg);
+      color: var(--cp-designer-behavior-icon);
+    }
+    .journey-card-group-badge.segment {
+      background: var(--cp-designer-segment-icon-bg);
+      color: var(--cp-designer-segment-icon);
+    }
+    .journey-card-group-glyph {
+      display: block;
+      width: 14px;
+      height: 14.4px;
+      fill: currentColor;
+    }
+    .journey-card-step { color: var(--cp-text-muted); font-size: 11px; line-height: 14px; }
+    .journey-card-title {
+      overflow: hidden;
+      color: var(--cp-text-muted);
+      font-size: 14px;
+      font-weight: 400;
+      line-height: 18px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .journey-card-expression {
+      overflow: hidden;
+      color: var(--cp-text);
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 16px;
+      font-weight: 600;
+      line-height: 22px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .journey-card-expression.expanded {
+      overflow: visible;
+      overflow-wrap: anywhere;
+      text-overflow: clip;
+      white-space: normal;
+    }
+    .journey-card-toggle {
+      appearance: none;
+      display: flex;
+      width: 28px;
+      height: 18px;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: 0;
+      border-radius: .625rem;
+      background-color: var(--cp-surface);
+      color: var(--cp-text-muted);
+      cursor: pointer;
+      opacity: 1;
+      -webkit-appearance: none;
+    }
+    .journey-card-toggle-backdrop {
+      fill: var(--cp-surface);
+      stroke: var(--cp-border);
+      stroke-width: 1;
+      filter: drop-shadow(0 1px 2px var(--cp-border));
+    }
+    .journey-hover-target {
+      fill: var(--cp-surface);
+      fill-opacity: .001;
+      stroke: var(--cp-link);
+      stroke-width: 2;
+      stroke-opacity: 0;
+      pointer-events: all;
+      transition: filter 120ms ease, stroke-opacity 120ms ease;
+    }
+    .journey-hover-target:hover {
+      stroke-opacity: 1;
+      filter: drop-shadow(0 2px 3px var(--cp-border));
+    }
+    .journey-hover-target.clickable {
+      cursor: pointer;
+    }
+    .journey-hover-target.clickable:focus {
+      stroke-opacity: 1;
+      outline: none;
+    }
+    .journey-card-toggle:hover,
+    .journey-card-toggle:focus-visible {
+      background: var(--cp-surface-soft);
+      color: var(--cp-text);
+      outline: none;
+    }
+    .journey-card-toggle-icon {
+      display: block;
+      width: 6px;
+      height: 6px;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: translateY(-2px) rotate(45deg);
+    }
+    .journey-card-toggle[aria-expanded="true"] .journey-card-toggle-icon {
+      transform: translateY(2px) rotate(225deg);
+    }
+    .journey-entry-label {
+      color: var(--cp-text-muted);
+      font-size: 14px;
+      font-weight: 400;
+      line-height: 18px;
+    }
+    .journey-entry-title {
+      overflow: hidden;
+      color: var(--cp-text);
+      font-size: 16px;
+      font-weight: 600;
+      line-height: 22px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .journey-card-group-slot {
+      display: flex;
+      height: 24px;
+      align-items: flex-end;
+      justify-content: flex-end;
+    }
+    .journey-flow-count {
+      color: var(--cp-text);
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .journey-flow-count-value { font-size: 14px; font-weight: 600; line-height: 18px; }
+    .journey-flow-count-label { color: var(--cp-text-muted); font-size: 11px; line-height: 14px; }
+    .journey-branch-value, .journey-add-value {
+      display: flex;
+      height: 100%;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--cp-text);
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .journey-branch-number {
+      color: color-mix(in srgb, var(--cp-danger) 72%, var(--cp-text));
+      font-size: 16px;
+      font-weight: 600;
+      line-height: 19px;
+    }
+    .journey-add-number {
+      color: color-mix(in srgb, var(--cp-success) 72%, var(--cp-text));
+      font-size: 16px;
+      font-weight: 600;
+      line-height: 19px;
+    }
+    .journey-branch-label { color: var(--cp-text-muted); font-size: 11px; line-height: 13px; }
+    .flow-note { color: var(--cp-text-muted); font-size: 11px; }
+    .flow-note::before {
+      display: inline-block;
+      width: 14px;
+      height: 4px;
+      margin-right: 5px;
+      border-radius: .625rem;
+      background: var(--cp-link);
+      content: "";
+      vertical-align: 2px;
+      opacity: .55;
+    }
+    .empty {
+      padding: 40px 16px;
+      border: 1px dashed var(--cp-border-strong);
+      border-radius: .625rem;
+      text-align: center;
+      color: var(--cp-text-muted);
+    }
+    .spinner {
+      width: 18px;
+      height: 18px;
+      margin: 0 auto 12px;
+      border: 2px solid var(--cp-border);
+      border-top-color: var(--cp-accent);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 440px) {
+      .app { padding-inline: 12px; }
+      .metadata span + span::before { content: ""; margin: 0; }
+      .summary { grid-template-columns: 1fr; }
+      .legend { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="header">
+      <div class="header-copy">
+        <h1 id="segment-name">Segment</h1>
+        <div class="metadata">
+          <span id="updated-at">Not refreshed yet</span>
+          <span id="load-duration">Load time pending</span>
+        </div>
+      </div>
+      <button class="button" id="refresh-button" type="button">
+        <svg class="refresh-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M16.5 3.5v4h-4l1.45-1.45A5.5 5.5 0 1 0 15.5 10h1.5a7 7 0 1 1-2-4.9L16.5 3.5Z"></path>
+        </svg>
+        <span id="refresh-label">Refresh</span>
+      </button>
+    </header>
+
+    <div class="notice" id="notice" role="status"></div>
+
+    <section class="summary" id="summary" aria-label="Zusammenfassung" hidden>
+      <div class="metric">
+        <div class="metric-label">Starting members</div>
+        <div class="metric-value" id="initial-count">–</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Result</div>
+        <div class="metric-value" id="result-count">–</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Retention</div>
+        <div class="metric-value" id="retention">–</div>
+      </div>
+    </section>
+
+    <section class="visualization" id="visualization" aria-label="Cumulative member flow">
+      <div class="section-header">
+        <h2 class="section-title">Member flow</h2>
+        <span class="flow-note">Line width represents members</span>
+      </div>
+      <div class="chart" id="chart">
+        <div class="empty"><div class="spinner"></div>Loading filter counts.</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const ACTION_NAME = "klth_GetSegmentFilterCounts";
+      const SEGMENT_ENTITY_NAME = "msdynmkt_segmentdefinition";
+      const SEGMENT_MONITOR_INTERVAL_MS = 750;
+      const AUTOMATIC_RETRY_DELAY_MS = 1500;
+      const MAX_AUTOMATIC_RETRIES = 2;
+      const PANE_IDS = ["klth_segment_preview", "klth_segment_sankey"];
+      const ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+      const state = {
+        context: parseContext(),
+        formatter: new Intl.NumberFormat("en-US"),
+        expandedStages: new Set(),
+        renderedSegmentId: "",
+        attemptedSegmentId: "",
+        refreshInProgress: false,
+        pendingSegmentId: "",
+        pendingPollCount: 0,
+        retrySegmentId: "",
+        retryCount: 0,
+        retryAfter: 0,
+        evaluationToken: ""
+      };
+
+      function parseContext() {
+        const raw = new URLSearchParams(window.location.search).get("data");
+        if (!raw) {
+          return {};
+        }
+
+        try {
+          return JSON.parse(raw);
+        } catch {
+          try {
+            return JSON.parse(decodeURIComponent(raw));
+          } catch {
+            return {};
+          }
+        }
+      }
+
+      function getXrm() {
+        if (window.parent && window.parent.Xrm) {
+          return window.parent.Xrm;
+        }
+        return null;
+      }
+
+      function setHostPaneTitle() {
+        const sidePanes = getXrm()?.App?.sidePanes;
+        if (!sidePanes) {
+          return;
+        }
+
+        for (const paneId of PANE_IDS) {
+          const pane = sidePanes.getPane(paneId);
+          if (pane) {
+            pane.title = "Segment preview";
+          }
+        }
+      }
+
+      function getActiveSegmentId() {
+        try {
+          const pageUrl = new URL(window.top.location.href);
+          const pageType = String(pageUrl.searchParams.get("pagetype") || "").toLowerCase();
+          const entityName = String(pageUrl.searchParams.get("etn") || "").toLowerCase();
+          const pageId = pageUrl.searchParams.get("id") || "";
+          return pageType === "entityrecord" &&
+            entityName === SEGMENT_ENTITY_NAME &&
+            ID_PATTERN.test(pageId)
+            ? pageId
+            : "";
+        } catch (error) {
+          console.log("Segment preview: Could not read the segment ID from the Dynamics URL.", error);
+          return "";
+        }
+      }
+
+      function getSegmentId() {
+        const activeSegmentId = getActiveSegmentId();
+        if (activeSegmentId) {
+          return activeSegmentId;
+        }
+
+        const contextId = String(state.context.segmentId || "");
+        return ID_PATTERN.test(contextId) ? contextId : "";
+      }
+
+      async function updateSegmentIdentity(segmentId) {
+        const isNewSegment = state.renderedSegmentId !== segmentId;
+        let segmentName = state.context.segmentName || "Segment";
+        const xrm = getXrm();
+        if (xrm?.WebApi?.retrieveRecord) {
+          let segment;
+          try {
+            segment = await xrm.WebApi.retrieveRecord(
+              SEGMENT_ENTITY_NAME,
+              segmentId,
+              "?$select=msdynmkt_name"
+            );
+          } catch (error) {
+            throw createTransientError(
+              error?.message || "The active segment is not ready yet."
+            );
+          }
+          if (!segment?.msdynmkt_name) {
+            throw createTransientError("The active segment name could not be resolved.");
+          }
+          segmentName = segment.msdynmkt_name;
+        }
+
+        state.context.segmentId = segmentId;
+        state.context.segmentName = segmentName;
+        document.getElementById("segment-name").textContent = segmentName;
+        if (isNewSegment) {
+          state.expandedStages.clear();
+          document.getElementById("summary").hidden = true;
+        }
+      }
+
+      async function synchronizeActiveSegment() {
+        setHostPaneTitle();
+        if (state.refreshInProgress) {
+          return;
+        }
+
+        const activeSegmentId = getActiveSegmentId();
+        const retryIsDue =
+          activeSegmentId &&
+          activeSegmentId === state.retrySegmentId &&
+          Date.now() >= state.retryAfter;
+        if (!activeSegmentId ||
+          (activeSegmentId === state.attemptedSegmentId && !retryIsDue)) {
+          state.pendingSegmentId = "";
+          state.pendingPollCount = 0;
+          return;
+        }
+
+        if (retryIsDue) {
+          state.retrySegmentId = "";
+          state.retryAfter = 0;
+          await refresh({ segmentId: activeSegmentId, automatic: true });
+          return;
+        }
+
+        if (state.pendingSegmentId !== activeSegmentId) {
+          state.pendingSegmentId = activeSegmentId;
+          state.pendingPollCount = 1;
+          return;
+        }
+
+        state.pendingPollCount += 1;
+        if (state.pendingPollCount < 2) {
+          return;
+        }
+
+        state.pendingSegmentId = "";
+        state.pendingPollCount = 0;
+        await refresh({ segmentId: activeSegmentId, automatic: true });
+      }
+
+      function createTransientError(message) {
+        const error = new Error(message);
+        error.retryAutomatically = true;
+        return error;
+      }
+
+      function clearAutomaticRetry() {
+        state.retrySegmentId = "";
+        state.retryCount = 0;
+        state.retryAfter = 0;
+      }
+
+      function setNotice(message, kind) {
+        const notice = document.getElementById("notice");
+        notice.textContent = message || "";
+        notice.className = "notice" + (message ? " visible" : "") + (kind ? " " + kind : "");
+      }
+
+      function setLoading(isLoading) {
+        const button = document.getElementById("refresh-button");
+        button.disabled = isLoading;
+        document.getElementById("refresh-label").textContent =
+          isLoading ? "Loading…" : "Refresh";
+        if (isLoading) {
+          document.getElementById("load-duration").textContent = "Measuring load time…";
+          document.getElementById("chart").innerHTML =
+            '<div class="empty"><div class="spinner"></div>Loading filter counts.</div>';
+        }
+      }
+
+      function normalizeResult(payload) {
+        const result = typeof payload === "string" ? JSON.parse(payload) : payload;
+        if (!result || !Array.isArray(result.stages)) {
+          throw new Error("The count provider returned an invalid result.");
+        }
+
+        const stages = result.stages.map((stage, index) => ({
+          order: Number.isInteger(stage.order) ? stage.order : index,
+          label: translateStageLabel(stage.label) || "Filter " + (index + 1),
+          detail: stage.detail || "",
+          count: Number(stage.count)
+        }));
+        if (stages.some(stage => !Number.isFinite(stage.count) || stage.count < 0)) {
+          throw new Error("The count provider returned an invalid stage count.");
+        }
+
+        return {
+          generatedAt: result.generatedAt || new Date().toISOString(),
+          isEstimate: Boolean(result.isEstimate),
+          evaluationToken: result.evaluationToken || "",
+          stages: stages
+        };
+      }
+
+      function translateStageLabel(label) {
+        const value = String(label || "");
+        const normalized = value.toLowerCase();
+        if (normalized.startsWith("aktive contact-datensätze")) {
+          return "Active contacts";
+        }
+        if (normalized.startsWith("aktive lead-datensätze")) {
+          return "Active leads";
+        }
+        if (normalized === "profilfilter") {
+          return "Profile filter";
+        }
+        if (normalized === "schnittmenge") {
+          return "Intersection";
+        }
+        if (normalized === "ausschluss") {
+          return "Exclusion";
+        }
+        if (normalized === "statisches segment") {
+          return "Static segment";
+        }
+        if (normalized.startsWith("beziehungsfilter ")) {
+          return "Relationship filter " + value.substring("Beziehungsfilter ".length);
+        }
+        return value;
+      }
+
+      async function executeCountAction(segmentId) {
+        const xrm = getXrm();
+        if (!xrm) {
+          return normalizeResult({
+            isEstimate: true,
+            stages: [
+              { label: "All contacts", detail: "PROFILE(contact)", count: 24840 },
+              { label: "Email available", detail: "Email contains data", count: 19560 },
+              { label: "Consent", detail: "Commercial email opted in", count: 14210 },
+              { label: "Risk profile", detail: "Risk-ready or speculative", count: 5870 }
+            ]
+          });
+        }
+
+        if (window.parent?.CISegmentSankey?.saveCurrentSegment) {
+          try {
+            await window.parent.CISegmentSankey.saveCurrentSegment();
+          } catch (error) {
+            throw createTransientError(
+              error?.message || "The active segment could not be saved yet."
+            );
+          }
+        }
+
+        let response;
+        try {
+          response = await fetch(
+            xrm.Utility.getGlobalContext().getClientUrl() + "/api/data/v9.2/" + ACTION_NAME,
+            {
+              method: "POST",
+              credentials: "same-origin",
+              headers: {
+                "Accept": "application/json",
+                "Content-Type": "application/json; charset=utf-8",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0"
+              },
+              body: JSON.stringify({ klth_segmentid: segmentId })
+            }
+          );
+        } catch (error) {
+          throw createTransientError(
+            error?.message || "The count provider could not be reached."
+          );
+        }
+        if (!response.ok) {
+          const errorBody = await response.json();
+          throw new Error(
+            errorBody?.error?.message ||
+            "The count provider returned HTTP " + response.status + "."
+          );
+        }
+
+        const body = await response.json();
+        return normalizeResult(body.klth_resultjson || body);
+      }
+
+      function render(result, elapsedMilliseconds) {
+        const stages = result.stages;
+        state.evaluationToken = result.evaluationToken;
+        document.getElementById("load-duration").textContent =
+          "Load time " + new Intl.NumberFormat("en-US", {
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1
+          }).format(elapsedMilliseconds / 1000) + " s";
+        if (!stages.length) {
+          document.getElementById("summary").hidden = true;
+          document.getElementById("chart").innerHTML =
+            '<div class="empty">No supported filters were found for this segment.</div>';
+          return;
+        }
+
+        const initial = stages[0].count;
+        const final = stages[stages.length - 1].count;
+        const chart = document.getElementById("chart");
+        chart.replaceChildren();
+        chart.append(createSankey(stages));
+
+        document.getElementById("summary").hidden = false;
+        document.getElementById("initial-count").textContent = state.formatter.format(initial);
+        document.getElementById("result-count").textContent = state.formatter.format(final);
+        document.getElementById("retention").textContent =
+          new Intl.NumberFormat("en-US", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+          }).format(initial ? (final / initial) * 100 : 0) + " %";
+        document.getElementById("updated-at").textContent =
+          "Calculated " + new Intl.DateTimeFormat("en-GB", {
+            dateStyle: "short",
+            timeStyle: "short"
+          }).format(new Date(result.generatedAt));
+        setNotice(
+          result.isEstimate ? "The displayed values are estimates from the count provider." : "",
+          ""
+        );
+      }
+
+      function createSankey(stages) {
+        const namespace = "http://www.w3.org/2000/svg";
+        const width = 540;
+        const cardGap = 76;
+        const unionGap = 128;
+        const top = 24;
+        const cardX = 18;
+        const cardWidth = 338;
+        const cardHeight = 88;
+        const flowLeftX = cardX + cardWidth / 2 - 40;
+        const branchX = 400;
+        const branchWidth = 122;
+        const branchHeight = 48;
+        const minimumFlowCardGap = 12;
+        const cardToggleOverflow = 9;
+        const initial = Math.max(stages[0].count, 1);
+        const expandableStages = stages.map((stage, index) =>
+          index > 0 && expressionNeedsExpansion(stage)
+        );
+        const cardHeights = stages.map((stage, index) =>
+          expandableStages[index] && state.expandedStages.has(index)
+            ? expandedCardHeight(stage)
+            : cardHeight
+        );
+        const stageYs = [top];
+        const stageGaps = [];
+        function gapAfterStage(stageIndex) {
+          const hostedLoss = stageIndex > 0
+            ? Math.max(stages[stageIndex - 1].count - stages[stageIndex].count, 0)
+            : 0;
+          const sourceControlOverflow = expandableStages[stageIndex]
+            ? cardToggleOverflow
+            : 0;
+          let gap = hostedLoss > 0
+            ? Math.max(
+              cardGap,
+              flowBubbleHeight(hostedLoss, initial, branchHeight) +
+                minimumFlowCardGap * 2 +
+                sourceControlOverflow
+            )
+            : cardGap;
+          const nextIndex = stageIndex + 1;
+          if (nextIndex >= stages.length) {
+            return gap;
+          }
+
+          const addition = Math.max(
+            stages[nextIndex].count - stages[stageIndex].count,
+            0
+          );
+          if (addition > 0) {
+            let additionalGap = unionGap;
+            if (hostedLoss > 0) {
+              const requiredGap =
+                58 +
+                (
+                  flowBubbleHeight(hostedLoss, initial, branchHeight) +
+                  flowBubbleHeight(addition, initial, branchHeight)
+                ) / 2;
+              additionalGap = Math.max(additionalGap, requiredGap);
+            }
+            gap += additionalGap;
+          }
+
+          return gap;
+        }
+        for (let index = 1; index < stages.length; index += 1) {
+          const precedingGap = gapAfterStage(index - 1);
+          stageGaps[index - 1] = precedingGap;
+          stageYs.push(
+            stageYs[index - 1] +
+            cardHeights[index - 1] +
+            precedingGap
+          );
+        }
+        stageGaps[stages.length - 1] = gapAfterStage(stages.length - 1);
+        const exitY =
+          stageYs[stageYs.length - 1] +
+          cardHeights[cardHeights.length - 1] +
+          stageGaps[stageGaps.length - 1];
+        const height = exitY + cardHeight + 24;
+        const svg = document.createElementNS(namespace, "svg");
+        svg.setAttribute("class", "sankey-svg");
+        svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+        svg.setAttribute("role", "group");
+        svg.setAttribute(
+          "aria-label",
+          "Journey-style Sankey diagram with " + stages.length + " cumulative filter stages"
+        );
+        const toggleLayer = createSvgElement(namespace, "g", {
+          class: "journey-toggle-layer"
+        });
+        const hoverLayer = createSvgElement(namespace, "g", {
+          class: "journey-hover-layer"
+        });
+
+        stages.forEach((stage, index) => {
+          const y = stageYs[index];
+          const currentCardHeight = cardHeights[index];
+          if (index > 0) {
+            const previous = stages[index - 1];
+            const sourceY = stageYs[index - 1] + cardHeights[index - 1];
+            const targetY = y;
+            const loss = Math.max(previous.count - stage.count, 0);
+            const addition = Math.max(stage.count - previous.count, 0);
+            const incomingWidth = flowThickness(previous.count, initial);
+            const retainedWidth = flowThickness(stage.count, initial);
+            const flowX = flowLeftX + incomingWidth / 2;
+
+            svg.append(createSvgElement(namespace, "path", {
+              class: "journey-flow",
+              d: "M " + flowX + " " + sourceY +
+                " L " + flowX + " " + targetY,
+              "stroke-width": incomingWidth
+            }));
+            appendFlowCount(
+              svg,
+              namespace,
+              flowLeftX - 92,
+              sourceY + 18,
+              82,
+              previous.count
+            );
+
+            if (addition > 0) {
+              const additionWidth = flowThickness(addition, initial);
+              const additionTargetX =
+                flowLeftX + incomingWidth + additionWidth / 2;
+              const additionCenterY = targetY - 88;
+              const additionMergeY = targetY - 32;
+              const additionBubbleHeight =
+                flowBubbleHeight(addition, initial, branchHeight);
+              const additionBubbleWidth = branchWidth;
+              const additionBubbleX = branchX;
+              const bubbleCenterX = additionBubbleX + additionBubbleWidth / 2;
+              const additionPath = createSvgElement(namespace, "path", {
+                class: "journey-add-flow",
+                d: "M " + bubbleCenterX + " " + additionCenterY +
+                  " C " + (branchX - 40) + " " + additionCenterY +
+                  ", " + additionTargetX + " " + additionCenterY +
+                  ", " + additionTargetX + " " + additionMergeY +
+                  " L " + additionTargetX + " " + targetY,
+                "stroke-width": additionWidth
+              });
+              additionPath.append(createSvgTitle(
+                namespace,
+                state.formatter.format(addition) + " members added by filter " + index
+              ));
+              svg.append(additionPath);
+              appendAdditionCard(
+                svg,
+                namespace,
+                additionBubbleX,
+                additionCenterY - additionBubbleHeight / 2,
+                additionBubbleWidth,
+                additionBubbleHeight,
+                addition,
+                hoverLayer,
+                stage.order
+              );
+            }
+
+            if (loss > 0) {
+              const cardBottomY = y + currentCardHeight;
+              const lossWidth = flowThickness(loss, initial);
+              const sourceControlOverflow = expandableStages[index]
+                ? cardToggleOverflow
+                : 0;
+              const sourceClearance =
+                minimumFlowCardGap + sourceControlOverflow;
+              const lossBubbleHeight =
+                flowBubbleHeight(loss, initial, branchHeight);
+              const branchCenterY =
+                cardBottomY + sourceClearance + lossBubbleHeight / 2;
+              const branchStartX = flowLeftX + retainedWidth + lossWidth / 2;
+              const bubbleCenterX = branchX + branchWidth / 2;
+              const branch = createSvgElement(namespace, "path", {
+                class: "journey-loss-flow",
+                d: "M " + branchStartX + " " + cardBottomY +
+                  " C " + branchStartX + " " + (cardBottomY + 30) +
+                  ", " + (branchStartX + 26) + " " + branchCenterY +
+                  ", " + (branchStartX + 62) + " " + branchCenterY +
+                  " S " + (branchX - 10) + " " + branchCenterY +
+                  ", " + bubbleCenterX + " " + branchCenterY,
+                "stroke-width": lossWidth
+              });
+              branch.append(createSvgTitle(
+                namespace,
+                state.formatter.format(loss) + " excluded by filter " + index
+              ));
+              svg.append(branch);
+              appendBranchCard(
+                svg,
+                namespace,
+                branchX,
+                branchCenterY - lossBubbleHeight / 2,
+                branchWidth,
+                lossBubbleHeight,
+                loss,
+                hoverLayer,
+                stage.order
+              );
+            }
+
+            if (index === stages.length - 1 && retainedWidth > 0) {
+              svg.append(createSvgElement(namespace, "path", {
+                class: "journey-flow",
+                d: "M " + (flowLeftX + retainedWidth / 2) + " " + (y + currentCardHeight) +
+                  " L " + (flowLeftX + retainedWidth / 2) + " " +
+                  exitY,
+                "stroke-width": retainedWidth
+              }));
+              appendFlowCount(
+                svg,
+                namespace,
+                flowLeftX - 92,
+                y + cardHeight + 18,
+                82,
+                stage.count
+              );
+            }
+          }
+
+          appendJourneyCard(
+            svg,
+            namespace,
+            cardX,
+            y,
+            cardWidth,
+            currentCardHeight,
+            stage,
+            index,
+            stages,
+            expandableStages[index],
+            toggleLayer,
+            hoverLayer
+          );
+        });
+
+        appendExitCard(
+          svg,
+          namespace,
+          cardX,
+          exitY,
+          cardWidth,
+          cardHeight,
+          stages[stages.length - 1].count,
+          hoverLayer,
+          stages[stages.length - 1].order
+        );
+        svg.append(hoverLayer);
+        svg.append(toggleLayer);
+        return svg;
+      }
+
+      function expandedCardHeight(stage) {
+        const probe = document.createElement("div");
+        probe.className = "journey-card-expression expanded";
+        probe.style.position = "fixed";
+        probe.style.left = "-10000px";
+        probe.style.top = "0";
+        probe.style.width = "246px";
+        probe.style.height = "auto";
+        probe.style.visibility = "hidden";
+        probe.style.pointerEvents = "none";
+        probe.textContent = stage.detail || "No expression";
+        document.body.append(probe);
+        const contentHeight = Math.ceil(probe.getBoundingClientRect().height);
+        probe.remove();
+        return Math.max(88, 86 + contentHeight);
+      }
+
+      function expressionNeedsExpansion(stage) {
+        const probe = document.createElement("div");
+        probe.className = "journey-card-expression";
+        probe.style.position = "fixed";
+        probe.style.left = "-10000px";
+        probe.style.top = "0";
+        probe.style.width = "148px";
+        probe.style.height = "22px";
+        probe.style.visibility = "hidden";
+        probe.style.pointerEvents = "none";
+        probe.textContent = stage.detail || "No expression";
+        document.body.append(probe);
+        const isOverflowing = probe.scrollWidth > probe.clientWidth;
+        probe.remove();
+        return isOverflowing;
+      }
+
+      function flowThickness(count, initial) {
+        return (Math.max(count, 0) / initial) * 80;
+      }
+
+      function flowBubbleHeight(count, initial, minimumHeight) {
+        return Math.max(minimumHeight, flowThickness(count, initial) + 12);
+      }
+
+      function appendJourneyCard(
+        svg,
+        namespace,
+        x,
+        y,
+        width,
+        height,
+        stage,
+        index,
+        stages,
+        isExpandable,
+        toggleLayer,
+        hoverLayer
+      ) {
+        const isExpanded = isExpandable && state.expandedStages.has(index);
+        const card = createSvgElement(namespace, "rect", {
+          class: "journey-card" + (index === 0 ? " journey-entry-card" : ""),
+          x: x,
+          y: y,
+          width: width,
+          height: height
+        });
+        card.append(createSvgTitle(
+          namespace,
+          stage.label + ": " + state.formatter.format(stage.count)
+        ));
+        svg.append(card);
+        appendJourneyIcon(
+          svg,
+          namespace,
+          x + 16,
+          y + 22,
+          index,
+          stage.detail
+        );
+
+        const content = createSvgElement(namespace, "foreignObject", {
+          x: x + 74,
+          y: y + 20,
+          width: width - (index === 0 ? 92 : 190),
+          height: index === 0 ? 48 : isExpanded ? 22 : height - 28
+        });
+        const wrapper = document.createElement("div");
+        wrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        if (index === 0) {
+          const entryLabel = document.createElement("div");
+          entryLabel.className = "journey-entry-label";
+          entryLabel.textContent = "Audience";
+          const entryTitle = document.createElement("div");
+          entryTitle.className = "journey-entry-title";
+          entryTitle.textContent = stage.label;
+          wrapper.append(entryLabel, entryTitle);
+          content.append(wrapper);
+          svg.append(content);
+          appendHoverTarget(
+            hoverLayer,
+            namespace,
+            x,
+            y,
+            width,
+            height,
+            height / 2,
+            "Audience: " + stage.label,
+            () => openMembersDialog(stage.order, "stage", stage.label, stage.count)
+          );
+          return;
+        }
+
+        const title = document.createElement("div");
+        title.className = "journey-card-title";
+        title.textContent = stage.label;
+        const expression = document.createElement("div");
+        expression.className = "journey-card-expression" + (isExpanded ? " expanded" : "");
+        expression.title = stage.detail;
+        expression.textContent = stage.detail || "No expression";
+        wrapper.append(title);
+        if (!isExpanded) {
+          wrapper.append(expression);
+        }
+        content.append(wrapper);
+        svg.append(content);
+
+        if (isExpanded) {
+          const expressionContent = createSvgElement(namespace, "foreignObject", {
+            x: x + 74,
+            y: y + 58,
+            width: width - 92,
+            height: height - 84
+          });
+          const expressionWrapper = document.createElement("div");
+          expressionWrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+          expressionWrapper.append(expression);
+          expressionContent.append(expressionWrapper);
+          svg.append(expressionContent);
+        }
+
+        const count = createSvgElement(namespace, "foreignObject", {
+          x: x + width - 112,
+          y: y + 32,
+          width: 98,
+          height: 24
+        });
+        const countText = document.createElement("div");
+        countText.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        countText.className = "journey-card-group-slot";
+        const group = document.createElement("div");
+        group.className = "journey-card-group";
+        group.append(createGroupIcon(index === 0, stage.detail));
+        const groupLabel = document.createElement("span");
+        groupLabel.textContent = index === 0 ? "Audience" : "Group " + index;
+        group.append(groupLabel);
+        countText.append(group);
+        count.append(countText);
+        svg.append(count);
+        appendHoverTarget(
+          hoverLayer,
+          namespace,
+          x,
+          y,
+          width,
+          height,
+          0,
+          stage.label + ": " + (stage.detail || "No expression"),
+          () => openMembersDialog(stage.order, "stage", stage.label, stage.count)
+        );
+
+        if (!isExpandable) {
+          return;
+        }
+
+        const toggleX = x + (width - 28) / 2;
+        const toggleY = y + height - 9;
+        toggleLayer.append(createSvgElement(namespace, "rect", {
+          class: "journey-card-toggle-backdrop",
+          x: toggleX,
+          y: toggleY,
+          width: 28,
+          height: 18,
+          rx: 9
+        }));
+        const toggleContainer = createSvgElement(namespace, "foreignObject", {
+          x: toggleX,
+          y: toggleY,
+          width: 28,
+          height: 18
+        });
+        const toggle = document.createElement("button");
+        toggle.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        toggle.className = "journey-card-toggle";
+        toggle.type = "button";
+        toggle.dataset.stageIndex = String(index);
+        toggle.setAttribute("aria-expanded", String(isExpanded));
+        toggle.setAttribute(
+          "aria-label",
+          (isExpanded ? "Collapse" : "Show full") + " filter criterion for Group " + index
+        );
+        toggle.title = isExpanded ? "Collapse filter criterion" : "Show full filter criterion";
+        const toggleIcon = document.createElement("span");
+        toggleIcon.className = "journey-card-toggle-icon";
+        toggle.append(toggleIcon);
+        toggle.addEventListener("click", () => {
+          if (state.expandedStages.has(index)) {
+            state.expandedStages.delete(index);
+          } else {
+            state.expandedStages.add(index);
+          }
+          const chart = document.getElementById("chart");
+          chart.replaceChildren(createSankey(stages));
+          requestAnimationFrame(() => {
+            chart.querySelector(
+              '.journey-card-toggle[data-stage-index="' + index + '"]'
+            )?.focus();
+          });
+        });
+        toggleContainer.append(toggle);
+        toggleLayer.append(toggleContainer);
+      }
+
+      function appendFlowCount(svg, namespace, x, y, width, count) {
+        const label = createSvgElement(namespace, "foreignObject", {
+          x: x,
+          y: y,
+          width: width,
+          height: 36
+        });
+        const wrapper = document.createElement("div");
+        wrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        wrapper.className = "journey-flow-count";
+        const value = document.createElement("div");
+        value.className = "journey-flow-count-value";
+        value.textContent = state.formatter.format(count);
+        const caption = document.createElement("div");
+        caption.className = "journey-flow-count-label";
+        caption.textContent = "members";
+        wrapper.append(value, caption);
+        label.append(wrapper);
+        svg.append(label);
+      }
+
+      function appendAdditionCard(
+        svg,
+        namespace,
+        x,
+        y,
+        width,
+        height,
+        count,
+        hoverLayer,
+        stageOrder
+      ) {
+        svg.append(createSvgElement(namespace, "rect", {
+          class: "journey-add-card",
+          x: x,
+          y: y,
+          width: width,
+          height: height,
+          rx: height / 2
+        }));
+        const content = createSvgElement(namespace, "foreignObject", {
+          x: x,
+          y: y,
+          width: width,
+          height: height
+        });
+        const wrapper = document.createElement("div");
+        wrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        wrapper.className = "journey-add-value";
+        const number = document.createElement("div");
+        number.className = "journey-add-number";
+        number.textContent = "+" + state.formatter.format(count);
+        const label = document.createElement("div");
+        label.className = "journey-branch-label";
+        label.textContent = "members";
+        wrapper.append(number, label);
+        content.append(wrapper);
+        svg.append(content);
+        appendHoverTarget(
+          hoverLayer,
+          namespace,
+          x,
+          y,
+          width,
+          height,
+          height / 2,
+          "+" + state.formatter.format(count) + " members",
+          () => openMembersDialog(
+            stageOrder,
+            "added",
+            "Members added by Group " + stageOrder,
+            count
+          )
+        );
+      }
+
+      function createGroupIcon(isAudience, detail) {
+        const isBehavioral = !isAudience && /\bInteraction\s*\(/i.test(detail || "");
+        const isSegment = !isAudience && /\bSEGMENT\s*\(/i.test(detail || "");
+        const badge = document.createElement("span");
+        badge.className = "journey-card-group-badge" +
+          (isAudience
+            ? " audience"
+            : isBehavioral
+            ? " behavioral"
+            : isSegment
+            ? " segment"
+            : "");
+        badge.setAttribute("aria-hidden", "true");
+        const namespace = "http://www.w3.org/2000/svg";
+        const glyph = document.createElementNS(namespace, "svg");
+        glyph.setAttribute("class", "journey-card-group-glyph");
+        glyph.setAttribute(
+          "viewBox",
+          isAudience
+            ? "0 0 16 16"
+            : isBehavioral
+            ? "0 0 2080 2048"
+            : "0 0 2048 2048"
+        );
+        const path = document.createElementNS(namespace, "path");
+        path.setAttribute(
+          "d",
+          isAudience
+            ? "M8 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm0 7c3.31 0 6 1.57 6 3.5V14H2v-1.5C2 10.57 4.69 9 8 9Z"
+            : isBehavioral
+            ? "M1664 2048L1664 1920L0 1920L0 2048ZM1015 1536L948 1408L0 1408L0 1536ZM0 1024L747 1024L680 896L0 896ZM1512 1024L2080 1024L1004 0L747 0L1051 640L691 640L1226 1664L1838 1664ZM953 128L1760 896L1304 896L1629 1536L1304 1536L902 768L1253 768L949 128Z"
+            : isSegment
+            ? "M1024 1920Q1082 1920 1137.5 1917Q1193 1914 1247 1905.5Q1301 1897 1354.5 1882.5Q1408 1868 1462 1845Q1595 1788 1703.5 1697Q1812 1606 1888.5 1490.5Q1965 1375 2006.5 1240Q2048 1105 2048 960Q2048 827 2014 704.5Q1980 582 1917.5 475Q1855 368 1767.5 280.5Q1680 193 1573 130.5Q1466 68 1343.5 34Q1221 0 1088 0Q893 0 720 72Q547 144 409 281L364 326L1024 987ZM1088 128Q1203 128 1309 158Q1415 188 1507.5 242Q1600 296 1676 372Q1752 448 1806 540.5Q1860 633 1890 739Q1920 845 1920 960Q1920 1068 1893 1169.5Q1866 1271 1817 1360.5Q1768 1450 1698 1525.5Q1628 1601 1543 1657Q1458 1713 1359 1747.5Q1260 1782 1152 1790L1152 933L547 328Q661 230 799.5 179Q938 128 1088 128ZM896 1152L0 1152Q0 1276 32 1390.5Q64 1505 122.5 1604.5Q181 1704 262.5 1785.5Q344 1867 443.5 1925.5Q543 1984 657.5 2016Q772 2048 896 2048ZM768 1910Q647 1889 541.5 1833.5Q436 1778 353 1695Q270 1612 214.5 1506.5Q159 1401 138 1280L768 1280ZM864 1024L240 400Q122 528 61 689Q0 850 0 1024ZM138 896Q151 815 179 738.5Q207 662 252 593L555 896Z"
+            : "M640 1152H512v128h128Zm896 0H768v128h768ZM512 896h128V768H512Zm256 0h768V768H768ZM640 1536H512v128h128Zm896 0H768v128h768Zm512-1152V256h-256V0h-128v256h-256v128h256v256h128V384ZM384 384h896V256H256v1792h1536V768h-128v1152H384Z"
+        );
+        glyph.append(path);
+        badge.append(glyph);
+        return badge;
+      }
+
+      function appendExitCard(
+        svg,
+        namespace,
+        x,
+        y,
+        width,
+        height,
+        count,
+        hoverLayer,
+        stageOrder
+      ) {
+        const card = createSvgElement(namespace, "rect", {
+          class: "journey-exit-card",
+          x: x,
+          y: y,
+          width: width,
+          height: height
+        });
+        card.append(createSvgTitle(
+          namespace,
+          "Result: " + state.formatter.format(count) + " members"
+        ));
+        svg.append(card);
+
+        const tileX = x + 16;
+        const tileY = y + 22;
+        svg.append(createSvgElement(namespace, "rect", {
+          class: "journey-icon-tile",
+          x: tileX,
+          y: tileY,
+          width: 44,
+          height: 44,
+          rx: 22,
+          fill: "var(--cp-success)"
+        }));
+        svg.append(createSvgElement(namespace, "path", {
+          class: "journey-icon",
+          d: "M " + (tileX + 12) + " " + (tileY + 14) +
+            " h 2 v 16 h -2 M " + (tileX + 14) + " " + (tileY + 22) +
+            " h 17 M " + (tileX + 24) + " " + (tileY + 16) +
+            " l 7 6 -7 6",
+          stroke: "var(--cp-success)"
+        }));
+
+        const content = createSvgElement(namespace, "foreignObject", {
+          x: x + 74,
+          y: y + 20,
+          width: width - 92,
+          height: 48
+        });
+        const wrapper = document.createElement("div");
+        wrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        const label = document.createElement("div");
+        label.className = "journey-entry-label";
+        label.textContent = "Result";
+        const title = document.createElement("div");
+        title.className = "journey-entry-title";
+        title.textContent = state.formatter.format(count) + " members";
+        wrapper.append(label, title);
+        content.append(wrapper);
+        svg.append(content);
+        appendHoverTarget(
+          hoverLayer,
+          namespace,
+          x,
+          y,
+          width,
+          height,
+          height / 2,
+          "Result: " + state.formatter.format(count) + " members",
+          () => openMembersDialog(stageOrder, "stage", "Result", count)
+        );
+      }
+
+      function appendJourneyIcon(svg, namespace, x, y, index, detail) {
+        const color = index === 0 ? "var(--cp-success)" : "var(--cp-link)";
+        const size = 44;
+        svg.append(createSvgElement(namespace, "rect", {
+          class: "journey-icon-tile",
+          x: x,
+          y: y,
+          width: size,
+          height: size,
+          rx: index === 0 ? 22 : 2,
+          fill: color
+        }));
+        const icon = createSvgElement(namespace, "path", {
+          class: "journey-icon",
+          d: index === 0
+            ? "M " + (x + 13) + " " + (y + 22) +
+              " h 13 M " + (x + 20) + " " + (y + 16) +
+              " l 6 6 -6 6 M " + (x + 30) + " " + (y + 14) +
+              " h 2 v 16 h -2"
+            : "M " + (x + 12) + " " + (y + 13) +
+              " h 20 l -7 9 v 8 l -6 3 v -11 Z",
+          stroke: color
+        });
+        svg.append(icon);
+      }
+
+      function appendBranchCard(
+        svg,
+        namespace,
+        x,
+        y,
+        width,
+        height,
+        loss,
+        hoverLayer,
+        stageOrder
+      ) {
+        svg.append(createSvgElement(namespace, "rect", {
+          class: "journey-branch-card",
+          x: x,
+          y: y,
+          width: width,
+          height: height,
+          rx: height / 2
+        }));
+        const content = createSvgElement(namespace, "foreignObject", {
+          x: x,
+          y: y,
+          width: width,
+          height: height
+        });
+        const wrapper = document.createElement("div");
+        wrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        wrapper.className = "journey-branch-value";
+        const number = document.createElement("div");
+        number.className = "journey-branch-number";
+        number.textContent = "− " + state.formatter.format(loss);
+        const label = document.createElement("div");
+        label.className = "journey-branch-label";
+        label.textContent = "members";
+        wrapper.append(number, label);
+        content.append(wrapper);
+        svg.append(content);
+        appendHoverTarget(
+          hoverLayer,
+          namespace,
+          x,
+          y,
+          width,
+          height,
+          height / 2,
+          "− " + state.formatter.format(loss) + " members",
+          () => openMembersDialog(
+            stageOrder,
+            "removed",
+            "Members excluded by Group " + stageOrder,
+            loss
+          )
+        );
+      }
+
+      function appendHoverTarget(
+        layer,
+        namespace,
+        x,
+        y,
+        width,
+        height,
+        radius,
+        tooltip,
+        onClick
+      ) {
+        const target = createSvgElement(namespace, "rect", {
+          class: "journey-hover-target" + (onClick ? " clickable" : ""),
+          x: x,
+          y: y,
+          width: width,
+          height: height,
+          rx: radius,
+          "aria-hidden": onClick ? "false" : "true",
+          focusable: onClick ? "true" : "false"
+        });
+        target.append(createSvgTitle(namespace, tooltip));
+        if (onClick) {
+          target.setAttribute("role", "button");
+          target.setAttribute("tabindex", "0");
+          target.setAttribute("aria-label", tooltip + ". Open member list.");
+          target.addEventListener("click", onClick);
+          target.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onClick();
+            }
+          });
+        }
+        layer.append(target);
+      }
+
+      async function openMembersDialog(stageOrder, viewMode, title, memberCount) {
+        const xrm = getXrm();
+        if (!xrm?.Navigation?.navigateTo) {
+          return;
+        }
+        if (!state.evaluationToken) {
+          setNotice("Refresh the preview before opening the member list.", "error");
+          return;
+        }
+
+        const contextKey = storeMemberDialogContext({
+          evaluationToken: state.evaluationToken,
+          stageOrder: stageOrder,
+          viewMode: viewMode,
+          title: title,
+          subtitle: viewMode === "stage"
+            ? "Contacts remaining in this element"
+            : viewMode === "removed"
+            ? "Contacts excluded at this transition"
+            : "Contacts added at this transition",
+          memberCount: memberCount
+        });
+        await xrm.Navigation.navigateTo(
+          {
+            pageType: "webresource",
+            webresourceName: "klth_/SegmentSankey/segment-members.html",
+            data: JSON.stringify({ contextKey: contextKey })
+          },
+          {
+            target: 2,
+            position: 1,
+            width: { value: 82, unit: "%" },
+            height: { value: 82, unit: "%" },
+            title: title
+          }
+        );
+      }
+
+      function storeMemberDialogContext(value) {
+        const host = window.top;
+        const now = Date.now();
+        const key = globalThis.crypto?.randomUUID
+          ? globalThis.crypto.randomUUID()
+          : now.toString(36) + Math.random().toString(36).slice(2);
+        const store = host.__klthSegmentMemberContexts instanceof Map
+          ? host.__klthSegmentMemberContexts
+          : new Map();
+        for (const [storedKey, item] of store) {
+          if (!item || item.expiresAt <= now || store.size >= 10) {
+            store.delete(storedKey);
+          }
+        }
+        store.set(key, {
+          value: value,
+          expiresAt: now + 30 * 60 * 1000
+        });
+        host.__klthSegmentMemberContexts = store;
+        return key;
+      }
+
+      function createSvgElement(namespace, name, attributes) {
+        const element = document.createElementNS(namespace, name);
+        Object.entries(attributes).forEach(([key, value]) => {
+          element.setAttribute(key, String(value));
+        });
+        return element;
+      }
+
+      function createSvgTitle(namespace, text) {
+        const title = document.createElementNS(namespace, "title");
+        title.textContent = text;
+        return title;
+      }
+
+      async function refresh(options) {
+        if (state.refreshInProgress) {
+          return false;
+        }
+
+        const requestedSegmentId = options?.segmentId;
+        const isAutomatic = Boolean(options?.automatic);
+        const segmentId = ID_PATTERN.test(String(requestedSegmentId || ""))
+          ? requestedSegmentId
+          : getSegmentId();
+        if (!segmentId && getXrm()) {
+          setNotice("No segment ID was provided. Open the preview from a saved segment.", "error");
+          document.getElementById("chart").innerHTML =
+            '<div class="empty">The segment could not be identified.</div>';
+          return false;
+        }
+
+        if (state.attemptedSegmentId !== segmentId) {
+          clearAutomaticRetry();
+        } else if (!isAutomatic) {
+          clearAutomaticRetry();
+        }
+        state.attemptedSegmentId = segmentId;
+        state.refreshInProgress = true;
+        const startedAt = performance.now();
+        setLoading(true);
+        setNotice("", "");
+        try {
+          await updateSegmentIdentity(segmentId);
+          render(await executeCountAction(segmentId), performance.now() - startedAt);
+          state.renderedSegmentId = segmentId;
+          clearAutomaticRetry();
+          return true;
+        } catch (error) {
+          if (isAutomatic &&
+            error.retryAutomatically &&
+            state.retryCount < MAX_AUTOMATIC_RETRIES) {
+            state.retryCount += 1;
+            state.retrySegmentId = segmentId;
+            state.retryAfter = Date.now() + AUTOMATIC_RETRY_DELAY_MS * state.retryCount;
+          } else {
+            clearAutomaticRetry();
+          }
+          const isTransientError = Boolean(error.retryAutomatically);
+          const isBehavioralError = /fabric|behavioral|ereignis|event/i.test(error.message);
+          setNotice(
+            (isTransientError
+              ? "The active segment is not ready yet: "
+              : isBehavioralError
+              ? "The behavioral evaluation is unavailable: "
+              : "The count is currently unavailable: ") +
+            error.message +
+            (isTransientError
+              ? " Wait a moment, then use Refresh to try again."
+              : isBehavioralError
+              ? " Check the event shortcut, Fabric data freshness, and API configuration."
+              : " Ensure that the Custom API " + ACTION_NAME + " is deployed."),
+            "error"
+          );
+          document.getElementById("chart").innerHTML =
+            '<div class="empty">The filter counts could not be loaded.</div>';
+          return false;
+        } finally {
+          setLoading(false);
+          state.refreshInProgress = false;
+        }
+      }
+
+      document.getElementById("segment-name").textContent =
+        state.context.segmentName || "Segment";
+      setHostPaneTitle();
+      document.getElementById("refresh-button").addEventListener("click", function () {
+        refresh();
+      });
+      window.setInterval(function () {
+        synchronizeActiveSegment().catch(function (error) {
+          console.error("Segment preview: Active segment synchronization failed.", error);
+        });
+      }, SEGMENT_MONITOR_INTERVAL_MS);
+      refresh({ automatic: true });
+    })();
+  </script>
+</body>
+</html>

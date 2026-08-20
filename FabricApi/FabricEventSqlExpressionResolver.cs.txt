@@ -1,0 +1,180 @@
+#if FABRIC_API
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+/// <summary>
+/// Resolves metadata-driven SQL expressions against a Fabric event table.
+/// </summary>
+internal static class FabricEventSqlExpressionResolver
+{
+    private static readonly IReadOnlyDictionary<string, string[]> FieldAliases =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["msdynmktentityid"] = ["ProfileId", "ContactId", "LeadId"],
+            ["entityid"] = ["ProfileId", "ContactId", "LeadId"],
+            ["msdynmktmessagetemplateid"] = ["MessageId"],
+            ["messagetemplateid"] = ["MessageId"],
+            ["msdynmktinteractionid"] = ["InternalMarketingInteractionId"],
+            ["interactionid"] = ["InternalMarketingInteractionId"],
+            ["msdynmktcustomerjourneyid"] = ["CustomerJourneyId"],
+            ["customerjourneyid"] = ["CustomerJourneyId"]
+        };
+
+    internal static string ResolveFieldExpression(
+        string field,
+        EventTableDescriptor table,
+        string profileExpression)
+    {
+        var unqualified = field.Contains('.')
+            ? field[(field.LastIndexOf('.') + 1)..]
+            : field;
+        var normalized = IdentifierNormalizer.Normalize(unqualified);
+        if (normalized.EndsWith("logicalname", StringComparison.Ordinal))
+        {
+            return ResolveProfileTypeExpression(table);
+        }
+
+        if (normalized is "msdynmktentityid" or "entityid")
+        {
+            return profileExpression;
+        }
+
+        if (table.TryResolveColumn(unqualified, out var direct))
+        {
+            return Quote(direct);
+        }
+
+        if (normalized.StartsWith("msdynmkt", StringComparison.Ordinal) &&
+            table.TryResolveColumn(normalized["msdynmkt".Length..], out var withoutPrefix))
+        {
+            return Quote(withoutPrefix);
+        }
+
+        if (FieldAliases.TryGetValue(normalized, out var aliases))
+        {
+            var available = aliases
+                .Select(alias => table.TryResolveColumn(alias, out var column) ? column : null)
+                .Where(column => column is not null)
+                .Cast<string>()
+                .ToArray();
+            if (available.Length > 0)
+            {
+                return available.Length == 1
+                    ? Quote(available[0])
+                    : "COALESCE(" + string.Join(", ", available.Select(Quote)) + ")";
+            }
+        }
+
+        throw new FabricQueryException(
+            "field_not_mapped",
+            $"The behavioral field '{field}' could not be mapped in '{table.Table}'.");
+    }
+
+    internal static string ResolveProfileExpression(
+        string profileEntity,
+        EventTableDescriptor table)
+    {
+        var candidates = string.Equals(
+            profileEntity,
+            "lead",
+            StringComparison.OrdinalIgnoreCase)
+            ? new[] { "ProfileId", "LeadId", "EntityId" }
+            : new[] { "ProfileId", "ContactId", "EntityId" };
+        var columns = candidates
+            .Select(candidate => table.TryResolveColumn(candidate, out var column) ? column : null)
+            .Where(column => column is not null)
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (columns.Length == 0)
+        {
+            throw new FabricQueryException(
+                "profile_field_missing",
+                $"The event table '{table.Table}' does not contain a profile ID for '{profileEntity}'.");
+        }
+
+        return columns.Length == 1
+            ? Quote(columns[0])
+            : "COALESCE(" + string.Join(", ", columns.Select(Quote)) + ")";
+    }
+
+    internal static string ResolveProfileTypeExpression(EventTableDescriptor table)
+    {
+        if (table.TryResolveColumn("ProfileType", out var profileType))
+        {
+            return Quote(profileType);
+        }
+
+        var branches = new List<string>();
+        if (table.TryResolveColumn("ContactId", out var contactId))
+        {
+            branches.Add($"WHEN {Quote(contactId)} IS NOT NULL THEN 'contact'");
+        }
+
+        if (table.TryResolveColumn("LeadId", out var leadId))
+        {
+            branches.Add($"WHEN {Quote(leadId)} IS NOT NULL THEN 'lead'");
+        }
+
+        if (branches.Count == 0)
+        {
+            throw new FabricQueryException(
+                "profile_type_missing",
+                $"The event table '{table.Table}' does not contain a profile type.");
+        }
+
+        return "(CASE " + string.Join(" ", branches) + " END)";
+    }
+
+    internal static string ResolveTimestampColumn(EventTableDescriptor table)
+    {
+        foreach (var candidate in new[] { "Timestamp", "CreatedOn", "InteractionTime" })
+        {
+            if (table.TryResolveColumn(candidate, out var timestamp))
+            {
+                return timestamp;
+            }
+        }
+
+        throw new FabricQueryException(
+            "timestamp_missing",
+            $"The event table '{table.Table}' does not contain a timestamp.");
+    }
+
+    internal static string ResolveDatePart(string? function)
+    {
+        return (function ?? string.Empty).Trim().ToUpperInvariant() switch
+        {
+            "UTCMINUTES" => "minute",
+            "UTCHOURS" => "hour",
+            "UTCDAYS" => "day",
+            "UTCWEEKS" => "week",
+            "UTCMONTHS" => "month",
+            "UTCYEARS" => "year",
+            _ => throw new FabricQueryException(
+                "unsupported_time_window",
+                $"The time window '{function}' is not supported.")
+        };
+    }
+
+    internal static string ResolveComparator(string value)
+    {
+        return value.Trim() switch
+        {
+            "=" or "==" => "=",
+            "!=" or "<>" => "<>",
+            ">" => ">",
+            ">=" => ">=",
+            "<" => "<",
+            "<=" => "<=",
+            _ => throw new FabricQueryException(
+                "unsupported_having_operator",
+                $"The HAVING operator '{value}' is not supported.")
+        };
+    }
+
+    private static string Quote(string identifier)
+    {
+        return "[" + identifier.Replace("]", "]]", StringComparison.Ordinal) + "]";
+    }
+}
+#endif

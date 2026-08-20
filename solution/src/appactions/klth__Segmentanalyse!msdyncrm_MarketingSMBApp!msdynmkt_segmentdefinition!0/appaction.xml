@@ -1,0 +1,41 @@
+<appaction uniquename="klth__Segmentanalyse!msdyncrm_MarketingSMBApp!msdynmkt_segmentdefinition!0">
+  <appmoduleid>
+    <uniquename>msdyncrm_MarketingSMBApp</uniquename>
+  </appmoduleid>
+  <buttonaccessibilitytext default="Segment preview">
+    <label description="Segment preview" languagecode="1033" />
+  </buttonaccessibilitytext>
+  <buttonlabeltext default="Segment preview">
+    <label description="Segment preview" languagecode="1033" />
+  </buttonlabeltext>
+  <buttontooltipdescription default="Open the segment preview">
+    <label description="Open the segment preview" languagecode="1033" />
+  </buttontooltipdescription>
+  <buttontooltiptitle default="Segment preview">
+    <label description="Segment preview" languagecode="1033" />
+  </buttontooltiptitle>
+  <context>1</context>
+  <contextentity>
+    <logicalname>msdynmkt_segmentdefinition</logicalname>
+  </contextentity>
+  <contextvalue>msdynmkt_segmentdefinition</contextvalue>
+  <fonticon>FunnelChart</fonticon>
+  <hidden>0</hidden>
+  <iscustomizable>1</iscustomizable>
+  <isdisabled>0</isdisabled>
+  <isgrouptitlehidden>0</isgrouptitlehidden>
+  <location>0</location>
+  <name>Segmentanalyse</name>
+  <onclickeventjavascriptfunctionname>CISegmentSankey.open</onclickeventjavascriptfunctionname>
+  <onclickeventjavascriptparameters>[{"type":5,"value":null}]</onclickeventjavascriptparameters>
+  <onclickeventjavascriptwebresourceid>
+    <webresourceid>180614c7-1c9a-f111-b8dc-7ced8d762587</webresourceid>
+  </onclickeventjavascriptwebresourceid>
+  <onclickeventtype>2</onclickeventtype>
+  <origin>0</origin>
+  <sequence>100100066.0000000000</sequence>
+  <statecode>0</statecode>
+  <statuscode>1</statuscode>
+  <type>0</type>
+  <visibilitytype>0</visibilitytype>
+</appaction>

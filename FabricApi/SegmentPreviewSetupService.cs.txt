@@ -1,0 +1,303 @@
+#if FABRIC_API
+using System.Reflection;
+using Microsoft.Data.SqlClient;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+internal sealed class SegmentPreviewSetupService
+{
+    private static readonly string[] RequiredSettings =
+    [
+        "FABRIC_SQL_SERVER",
+        "FABRIC_SQL_DATABASE",
+        "FABRIC_WORKSPACE_ID",
+        "FABRIC_SERVING_LAKEHOUSE_ID",
+        "FABRIC_DATAVERSE_CONNECTION_ID",
+        "FABRIC_DATAVERSE_DELTA_FOLDER",
+        "DATAVERSE_ENVIRONMENT_URL"
+    ];
+
+    private static readonly string[] DefaultDataverseTables =
+    [
+        "contact",
+        "msdynmkt_contactpointconsent4",
+        "msdynmkt_purpose",
+        "msdynmkt_topic"
+    ];
+
+    private readonly IHttpClientFactory httpClientFactory;
+    private readonly ILogger<SegmentPreviewSetupService> logger;
+
+    public SegmentPreviewSetupService(
+        IHttpClientFactory httpClientFactory,
+        ILogger<SegmentPreviewSetupService> logger)
+    {
+        this.httpClientFactory = httpClientFactory;
+        this.logger = logger;
+    }
+
+    public async Task<SetupStatusResponse> GetStatusAsync(
+        CancellationToken cancellationToken)
+    {
+        var response = new SetupStatusResponse
+        {
+            ApiVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
+            CheckedAt = DateTime.UtcNow
+        };
+        response.Components.Add(Component(
+            "azure-api",
+            "Azure API",
+            "Azure",
+            SetupComponentStates.Ready,
+            "The Segment Preview API is running."));
+
+        var missingSettings = RequiredSettings
+            .Where(name => string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name)))
+            .ToList();
+        response.Components.Add(Component(
+            "azure-configuration",
+            "Application configuration",
+            "Azure",
+            missingSettings.Count == 0
+                ? SetupComponentStates.Ready
+                : SetupComponentStates.NotConfigured,
+            missingSettings.Count == 0
+                ? "All required application settings are configured."
+                : $"{missingSettings.Count} required application setting(s) are missing.",
+            missingSettings.Count == 0 ? null : string.Join(", ", missingSettings),
+            missingSettings.Count == 0 ? null : "configure-azure"));
+
+        if (missingSettings.Count > 0)
+        {
+            response.Components.Add(Blocked(
+                "managed-identity",
+                "Managed Identity",
+                "Azure",
+                "Configure the application settings before testing the identity."));
+            response.Components.Add(Blocked(
+                "fabric-sql",
+                "Fabric SQL endpoint",
+                "Fabric",
+                "Configure the Fabric SQL endpoint before testing connectivity."));
+            response.Components.Add(Blocked(
+                "dataverse-shortcuts",
+                "Dataverse shortcuts",
+                "Fabric",
+                "Configure the Serving Lakehouse before checking shortcuts."));
+            response.Components.Add(Blocked(
+                "journeys-events",
+                "Journeys event tables",
+                "Fabric",
+                "Configure the Fabric SQL endpoint before checking event tables."));
+            SetOverallState(response);
+            return response;
+        }
+
+        IReadOnlyCollection<string>? shortcuts = null;
+        try
+        {
+            shortcuts = await new FabricDataverseShortcutService(
+                    httpClientFactory.CreateClient(nameof(FabricDataverseShortcutService)))
+                .GetExistingAsync(cancellationToken);
+            response.Components.Add(Component(
+                "managed-identity",
+                "Managed Identity",
+                "Azure",
+                SetupComponentStates.Ready,
+                "The Web App identity can access the Fabric REST API."));
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "The Fabric REST setup probe failed.");
+            response.Components.Add(Component(
+                "managed-identity",
+                "Managed Identity",
+                "Azure",
+                SetupComponentStates.Unavailable,
+                "The Web App identity cannot access the configured Fabric Lakehouse.",
+                exception.Message,
+                "configure-permissions"));
+        }
+
+        var requiredTables = ReadRequiredDataverseTables();
+        if (shortcuts is null)
+        {
+            response.Components.Add(Blocked(
+                "dataverse-shortcuts",
+                "Dataverse shortcuts",
+                "Fabric",
+                "Fabric REST access is required to check Dataverse shortcuts."));
+        }
+        else
+        {
+            var missingTables = requiredTables
+                .Where(table => !shortcuts.Contains(table, StringComparer.OrdinalIgnoreCase))
+                .ToList();
+            response.Components.Add(Component(
+                "dataverse-shortcuts",
+                "Dataverse shortcuts",
+                "Fabric",
+                missingTables.Count == 0
+                    ? SetupComponentStates.Ready
+                    : SetupComponentStates.Partial,
+                missingTables.Count == 0
+                    ? $"All {requiredTables.Count} required Dataverse shortcuts are available."
+                    : $"{missingTables.Count} of {requiredTables.Count} required Dataverse shortcuts are missing.",
+                missingTables.Count == 0 ? null : string.Join(", ", missingTables),
+                missingTables.Count == 0 ? null : "provision-shortcuts"));
+        }
+
+        try
+        {
+            await using var connection = await new FabricConnectionFactory()
+                .OpenAsync(cancellationToken);
+            var schemaCounts = await ReadSchemaCountsAsync(connection, cancellationToken);
+            response.Components.Add(Component(
+                "fabric-sql",
+                "Fabric SQL endpoint",
+                "Fabric",
+                SetupComponentStates.Ready,
+                "The Web App identity can connect to the Fabric SQL endpoint."));
+
+            var journeysTables = schemaCounts.TryGetValue("journeys", out var count)
+                ? count
+                : 0;
+            response.Components.Add(Component(
+                "journeys-events",
+                "Journeys event tables",
+                "Fabric",
+                journeysTables > 0
+                    ? SetupComponentStates.Ready
+                    : SetupComponentStates.NotConfigured,
+                journeysTables > 0
+                    ? $"{journeysTables} Journeys event table(s) are available."
+                    : "No Journeys event tables were found in the Serving Lakehouse.",
+                action: journeysTables > 0 ? null : "run-fabric-bootstrap"));
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "The Fabric SQL setup probe failed.");
+            response.Components.Add(Component(
+                "fabric-sql",
+                "Fabric SQL endpoint",
+                "Fabric",
+                SetupComponentStates.Unavailable,
+                "The Fabric SQL endpoint is not reachable with the Web App identity.",
+                exception.Message,
+                "configure-permissions"));
+            response.Components.Add(Blocked(
+                "journeys-events",
+                "Journeys event tables",
+                "Fabric",
+                "Fabric SQL connectivity is required to check event tables."));
+        }
+
+        SetOverallState(response);
+        return response;
+    }
+
+    public async Task<SetupProvisionResponse> ProvisionAsync(
+        SetupProvisionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var tables = request.DataverseTables is { Count: > 0 } configuredTables
+            ? configuredTables
+            : ReadRequiredDataverseTables();
+        var dependencies = await new FabricDataverseShortcutService(
+                httpClientFactory.CreateClient(nameof(FabricDataverseShortcutService)))
+            .EnsureAsync(
+                new FabricDependencyRequest { DataverseTables = tables },
+                cancellationToken);
+        return new SetupProvisionResponse
+        {
+            Dependencies = dependencies,
+            Status = await GetStatusAsync(cancellationToken)
+        };
+    }
+
+    internal static List<string> ReadRequiredDataverseTables()
+    {
+        var configured = Environment.GetEnvironmentVariable(
+            "SEGMENT_PREVIEW_REQUIRED_TABLES");
+        var source = string.IsNullOrWhiteSpace(configured)
+            ? DefaultDataverseTables
+            : configured.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        return source
+            .Select(value => value.Trim())
+            .Where(value => value.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static async Task<Dictionary<string, int>> ReadSchemaCountsAsync(
+        SqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT TABLE_SCHEMA, COUNT_BIG(*)
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA IN ('dataverse', 'journeys')
+            GROUP BY TABLE_SCHEMA;
+            """;
+        await using var command = new SqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            result[reader.GetString(0)] = checked((int)reader.GetInt64(1));
+        }
+
+        return result;
+    }
+
+    private static SetupComponentStatus Component(
+        string id,
+        string name,
+        string category,
+        string state,
+        string message,
+        string? detail = null,
+        string? action = null)
+    {
+        return new SetupComponentStatus
+        {
+            Id = id,
+            Name = name,
+            Category = category,
+            State = state,
+            Message = message,
+            Detail = detail,
+            Action = action
+        };
+    }
+
+    private static SetupComponentStatus Blocked(
+        string id,
+        string name,
+        string category,
+        string message)
+    {
+        return Component(
+            id,
+            name,
+            category,
+            SetupComponentStates.Blocked,
+            message);
+    }
+
+    private static void SetOverallState(SetupStatusResponse response)
+    {
+        response.OverallState = response.Components.All(
+            component => component.State == SetupComponentStates.Ready)
+            ? SetupComponentStates.Ready
+            : response.Components.Any(
+                component => component.State == SetupComponentStates.Unavailable)
+                ? SetupComponentStates.Unavailable
+                : SetupComponentStates.Partial;
+    }
+}
+#endif

@@ -1,0 +1,165 @@
+#if FABRIC_API
+using Microsoft.Data.SqlClient;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+internal sealed class FabricSegmentCatalog(
+    FabricConnectionFactory connectionFactory,
+    ILogger<FabricSegmentCatalog> logger)
+{
+    private static readonly string[] Schemas = ["dataverse", "journeys"];
+    private readonly SemaphoreSlim refreshLock = new(1, 1);
+    private readonly TimeSpan cacheDuration = TimeSpan.FromMinutes(5);
+    private volatile FabricSegmentCatalogSnapshot? snapshot;
+
+    public async Task<FabricSegmentCatalogSnapshot> GetSnapshotAsync(
+        CancellationToken cancellationToken)
+    {
+        var current = snapshot;
+        if (current is not null && DateTimeOffset.UtcNow - current.LoadedAt < cacheDuration)
+        {
+            return current;
+        }
+
+        await refreshLock.WaitAsync(cancellationToken);
+        try
+        {
+            current = snapshot;
+            if (current is not null && DateTimeOffset.UtcNow - current.LoadedAt < cacheDuration)
+            {
+                return current;
+            }
+
+            snapshot = await LoadWithRetryAsync(cancellationToken);
+            return snapshot;
+        }
+        finally
+        {
+            refreshLock.Release();
+        }
+    }
+
+    private async Task<FabricSegmentCatalogSnapshot> LoadWithRetryAsync(
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await LoadAsync(cancellationToken);
+        }
+        catch (SqlException exception) when (exception.Number == -2)
+        {
+            logger.LogWarning(exception, "The Fabric segment catalog load timed out. Retrying once.");
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            return await LoadAsync(cancellationToken);
+        }
+    }
+
+    private async Task<FabricSegmentCatalogSnapshot> LoadAsync(
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA IN (@dataverse, @journeys)
+            ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION;
+            """;
+        var tables = new Dictionary<string, MutableTable>(StringComparer.OrdinalIgnoreCase);
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection)
+        {
+            CommandTimeout = 90
+        };
+        command.Parameters.AddWithValue("@dataverse", Schemas[0]);
+        command.Parameters.AddWithValue("@journeys", Schemas[1]);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var schema = reader.GetString(0);
+            var table = reader.GetString(1);
+            var column = reader.GetString(2);
+            var key = FabricSegmentCatalogSnapshot.Key(schema, table);
+            if (!tables.TryGetValue(key, out var mutable))
+            {
+                mutable = new MutableTable(schema, table);
+                tables.Add(key, mutable);
+            }
+
+            mutable.Columns[IdentifierNormalizer.Normalize(column)] = column;
+        }
+
+        return new FabricSegmentCatalogSnapshot(
+            DateTimeOffset.UtcNow,
+            tables.Values.Select(table => new EventTableDescriptor(
+                table.Schema,
+                table.Table,
+                table.Columns)));
+    }
+
+    private sealed class MutableTable(string schema, string table)
+    {
+        public string Schema { get; } = schema;
+
+        public string Table { get; } = table;
+
+        public Dictionary<string, string> Columns { get; } =
+            new(StringComparer.OrdinalIgnoreCase);
+    }
+}
+
+internal sealed class FabricSegmentCatalogSnapshot
+{
+    private readonly IReadOnlyDictionary<string, EventTableDescriptor> tables;
+
+    public FabricSegmentCatalogSnapshot(
+        DateTimeOffset loadedAt,
+        IEnumerable<EventTableDescriptor> tables)
+    {
+        LoadedAt = loadedAt;
+        this.tables = tables.ToDictionary(
+            table => Key(table.Schema, table.Table),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    public DateTimeOffset LoadedAt { get; }
+
+    public EventTableDescriptor ResolveDataverse(string requestedTable)
+    {
+        return Resolve("dataverse", requestedTable, false);
+    }
+
+    public EventTableDescriptor ResolveJourney(string requestedTable)
+    {
+        return Resolve("journeys", requestedTable, true);
+    }
+
+    internal static string Key(string schema, string table)
+    {
+        return schema.ToLowerInvariant() + ":" + IdentifierNormalizer.Normalize(table);
+    }
+
+    private EventTableDescriptor Resolve(
+        string schema,
+        string requestedTable,
+        bool eventAliases)
+    {
+        if (string.IsNullOrWhiteSpace(requestedTable))
+        {
+            throw new SegmentQueryException(
+                "invalid_identifier",
+                $"A table name for schema '{schema}' is required.");
+        }
+
+        var normalized = eventAliases
+            ? EventTableNameNormalizer.NormalizeEventTableName(requestedTable)
+            : IdentifierNormalizer.Normalize(requestedTable);
+        if (tables.TryGetValue(schema + ":" + normalized, out var descriptor))
+        {
+            return descriptor;
+        }
+
+        throw new SegmentQueryException(
+            "invalid_identifier",
+            $"Table '{requestedTable}' is not present in the INFORMATION_SCHEMA catalog for '{schema}'.");
+    }
+}
+#endif

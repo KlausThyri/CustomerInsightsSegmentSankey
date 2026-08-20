@@ -1,0 +1,305 @@
+#if FABRIC_API
+using CustomerInsightsSegmentSankey.FabricApi;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton<FabricConnectionFactory>();
+builder.Services.AddSingleton<FabricSegmentCatalog>();
+builder.Services.AddSingleton<SegmentCountSqlCompiler>();
+builder.Services.AddSingleton<QueryTokenService>();
+builder.Services.AddSingleton<FabricSegmentCountService>();
+builder.Services.AddSingleton<FabricSegmentMemberService>();
+builder.Services.AddHttpClient<FabricDataverseShortcutService>();
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<SegmentPreviewSetupService>();
+
+var app = builder.Build();
+app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.UtcNow }));
+app.MapPost(
+    "/api/segment-counts",
+    async (
+        HttpRequest request,
+        SegmentCountRequest input,
+        FabricSegmentCountService service,
+        ILogger<Program> logger,
+        CancellationToken cancellationToken) =>
+    {
+        if (!HasValidApiKey(request))
+        {
+            return Results.Json(
+                new ApiError
+                {
+                    Code = "unauthorized",
+                    Message = "The API key is missing or invalid."
+                },
+                statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        try
+        {
+            return Results.Ok(await service.EvaluateAsync(input, cancellationToken));
+        }
+        catch (SegmentQueryException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Segment-count query rejected with code {Code}.",
+                exception.Code);
+            return Results.Json(
+                new ApiError
+                {
+                    Code = exception.Code,
+                    Message = exception.Message,
+                    Detail = exception.Detail
+                },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+        catch (FabricQueryException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Segment-count interaction rejected with code {Code}.",
+                exception.Code);
+            return Results.Json(
+                new ApiError
+                {
+                    Code = exception.Code,
+                    Message = exception.Message,
+                    Detail = exception.Detail
+                },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Segment-count execution failed.");
+            return Results.Json(
+                new ApiError
+                {
+                    Code = "execution_failed",
+                    Message = "The Fabric segment evaluation failed."
+                },
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    });
+app.MapPost(
+    "/api/segment-members",
+    async (
+        HttpRequest request,
+        SegmentMemberRequest input,
+        FabricSegmentMemberService service,
+        ILogger<Program> logger,
+        CancellationToken cancellationToken) =>
+    {
+        if (!HasValidApiKey(request))
+        {
+            return Results.Json(
+                new ApiError
+                {
+                    Code = "unauthorized",
+                    Message = "The API key is missing or invalid."
+                },
+                statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        try
+        {
+            return Results.Ok(await service.EvaluateAsync(input, cancellationToken));
+        }
+        catch (SegmentQueryException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Segment-member query rejected with code {Code}.",
+                exception.Code);
+            return Results.Json(
+                new ApiError
+                {
+                    Code = exception.Code,
+                    Message = exception.Message,
+                    Detail = exception.Detail
+                },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+        catch (FabricQueryException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Segment-member interaction rejected with code {Code}.",
+                exception.Code);
+            return Results.Json(
+                new ApiError
+                {
+                    Code = exception.Code,
+                    Message = exception.Message,
+                    Detail = exception.Detail
+                },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Segment-member execution failed.");
+            return Results.Json(
+                new ApiError
+                {
+                    Code = "execution_failed",
+                    Message = "The Fabric segment members could not be determined."
+                },
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    });
+app.MapPost(
+    "/api/fabric-dependencies",
+    async (
+        HttpRequest request,
+        FabricDependencyRequest input,
+        FabricDataverseShortcutService service,
+        ILogger<Program> logger,
+        CancellationToken cancellationToken) =>
+    {
+        if (!HasValidApiKey(request))
+        {
+            return Results.Json(
+                new ApiError
+                {
+                    Code = "unauthorized",
+                    Message = "The API key is missing or invalid."
+                },
+                statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        try
+        {
+            return Results.Ok(await service.EnsureAsync(input, cancellationToken));
+        }
+        catch (FabricQueryException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Fabric dependency provisioning rejected with code {Code}.",
+                exception.Code);
+            return Results.Json(
+                new ApiError
+                {
+                    Code = exception.Code,
+                    Message = exception.Message,
+                    Detail = exception.Detail
+                },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Fabric dependency provisioning failed.");
+            return Results.Json(
+                new ApiError
+                {
+                    Code = "dependency_provisioning_failed",
+                    Message = "The Fabric tables could not be provisioned."
+                },
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    });
+app.MapGet(
+    "/api/setup/status",
+    async (
+        HttpRequest request,
+        SegmentPreviewSetupService service,
+        ILogger<Program> logger,
+        CancellationToken cancellationToken) =>
+    {
+        if (!HasValidApiKey(request))
+        {
+            return Unauthorized();
+        }
+
+        try
+        {
+            return Results.Ok(await service.GetStatusAsync(cancellationToken));
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Segment Preview setup status failed.");
+            return Results.Json(
+                new ApiError
+                {
+                    Code = "setup_status_failed",
+                    Message = "The Segment Preview setup status could not be determined."
+                },
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    });
+app.MapPost(
+    "/api/setup/provision",
+    async (
+        HttpRequest request,
+        SetupProvisionRequest input,
+        SegmentPreviewSetupService service,
+        ILogger<Program> logger,
+        CancellationToken cancellationToken) =>
+    {
+        if (!HasValidApiKey(request))
+        {
+            return Unauthorized();
+        }
+
+        try
+        {
+            return Results.Ok(await service.ProvisionAsync(input, cancellationToken));
+        }
+        catch (FabricQueryException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Segment Preview provisioning rejected with code {Code}.",
+                exception.Code);
+            return Results.Json(
+                new ApiError
+                {
+                    Code = exception.Code,
+                    Message = exception.Message,
+                    Detail = exception.Detail
+                },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Segment Preview provisioning failed.");
+            return Results.Json(
+                new ApiError
+                {
+                    Code = "setup_provisioning_failed",
+                    Message = "The Segment Preview components could not be provisioned."
+                },
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    });
+
+app.Run();
+
+static IResult Unauthorized()
+{
+    return Results.Json(
+        new ApiError
+        {
+            Code = "unauthorized",
+            Message = "The API key is missing or invalid."
+        },
+        statusCode: StatusCodes.Status401Unauthorized);
+}
+
+static bool HasValidApiKey(HttpRequest request)
+{
+    var expected = Environment.GetEnvironmentVariable("BEHAVIORAL_API_KEY");
+    var supplied = request.Headers["x-api-key"].FirstOrDefault();
+    if (string.IsNullOrEmpty(expected) || string.IsNullOrEmpty(supplied))
+    {
+        return false;
+    }
+
+    var expectedBytes = Encoding.UTF8.GetBytes(expected);
+    var suppliedBytes = Encoding.UTF8.GetBytes(supplied);
+    return expectedBytes.Length == suppliedBytes.Length &&
+        CryptographicOperations.FixedTimeEquals(expectedBytes, suppliedBytes);
+}
+#endif

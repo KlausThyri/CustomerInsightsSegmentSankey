@@ -1,0 +1,33 @@
+#if FABRIC_API
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+/// <summary>
+/// Normalizes Customer-Insights-Journeys event names to Fabric table names.
+/// </summary>
+internal static class EventTableNameNormalizer
+{
+    private static readonly IReadOnlyDictionary<string, string> EventAliases =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["emaillinkclicked"] = "RedirectLinkClicked",
+            ["msdynmktemaillinkclicked"] = "RedirectLinkClicked",
+            ["customlinkclicked"] = "CustomLinkClicked",
+            ["msdynmktcustomlinkclicked"] = "CustomLinkClicked",
+            ["botemaillinkclicked"] = "BotEmailLinkClicked",
+            ["msdynmktbotemaillinkclicked"] = "BotEmailLinkClicked"
+        };
+
+    public static string NormalizeEventTableName(string eventLogicalName)
+    {
+        var normalized = IdentifierNormalizer.Normalize(eventLogicalName);
+        if (EventAliases.TryGetValue(normalized, out var alias))
+        {
+            return IdentifierNormalizer.Normalize(alias);
+        }
+
+        return normalized.StartsWith("msdynmkt", StringComparison.Ordinal)
+            ? normalized["msdynmkt".Length..]
+            : normalized;
+    }
+}
+#endif

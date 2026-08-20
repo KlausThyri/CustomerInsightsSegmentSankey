@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<WebResource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <WebResourceId>{1b0614c7-1c9a-f111-b8dc-7ced8d762587}</WebResourceId>
+  <Name>klth_/SegmentSankey/segment-sankey.html</Name>
+  <DisplayName>Customer Insights Segment Sankey</DisplayName>
+  <Description>Side-pane preview with cumulative Dataverse and Fabric behavioral filter counts.</Description>
+  <WebResourceType>1</WebResourceType>
+  <IntroducedVersion>1.0.0.0</IntroducedVersion>
+  <IsEnabledForMobileClient>0</IsEnabledForMobileClient>
+  <IsAvailableForMobileOffline>0</IsAvailableForMobileOffline>
+  <IsCustomizable>1</IsCustomizable>
+  <CanBeDeleted>1</CanBeDeleted>
+  <IsHidden>0</IsHidden>
+  <FileName>/WebResources/klth_SegmentSankeysegment-sankeyhtml1B0614C7-1C9A-F111-B8DC-7CED8D762587</FileName>
+</WebResource>

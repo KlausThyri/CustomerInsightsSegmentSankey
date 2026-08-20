@@ -1,0 +1,11 @@
+using './main.bicep'
+
+param webAppName = 'your-segment-preview-api'
+param fabricSqlServer = 'your-sql-endpoint.datawarehouse.fabric.microsoft.com'
+param fabricSqlDatabase = 'your-sql-endpoint-database'
+param fabricWorkspaceId = '00000000-0000-0000-0000-000000000000'
+param fabricServingLakehouseId = '00000000-0000-0000-0000-000000000000'
+param fabricDataverseConnectionId = '00000000-0000-0000-0000-000000000000'
+param fabricDataverseDeltaFolder = 'your-delta-lake-folder'
+param dataverseEnvironmentUrl = 'https://your-environment.crm.dynamics.com'
+param behavioralApiKey = '<provide-at-deployment-time>'

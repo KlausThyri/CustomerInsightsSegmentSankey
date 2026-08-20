@@ -1,0 +1,12 @@
+<customapirequestparameter uniquename="klth_requestjson">
+  <description default="JSON payload containing the evaluation token, selected view, filters, sort, and continuation token.">
+    <label description="JSON payload containing the evaluation token, selected view, filters, sort, and continuation token." languagecode="1033" />
+  </description>
+  <displayname default="Request JSON">
+    <label description="Request JSON" languagecode="1033" />
+  </displayname>
+  <iscustomizable>1</iscustomizable>
+  <isoptional>0</isoptional>
+  <name>klth_requestjson</name>
+  <type>10</type>
+</customapirequestparameter>

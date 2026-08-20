@@ -1,0 +1,18 @@
+<customapi uniquename="klth_GetSegmentFilterCounts">
+  <allowedcustomprocessingsteptype>0</allowedcustomprocessingsteptype>
+  <bindingtype>0</bindingtype>
+  <description default="Returns cumulative member counts for supported Customer Insights draft segment filters.">
+    <label description="Returns cumulative member counts for supported Customer Insights draft segment filters." languagecode="1033" />
+  </description>
+  <displayname default="Get Segment Filter Counts">
+    <label description="Get Segment Filter Counts" languagecode="1033" />
+  </displayname>
+  <iscustomizable>1</iscustomizable>
+  <isfunction>0</isfunction>
+  <isprivate>0</isprivate>
+  <name>Get Segment Filter Counts</name>
+  <plugintypeid>
+    <plugintypeexportkey>6913c1cd-1d9a-f111-b8dc-7ced8d762587</plugintypeexportkey>
+  </plugintypeid>
+  <workflowsdkstepenabled>0</workflowsdkstepenabled>
+</customapi>

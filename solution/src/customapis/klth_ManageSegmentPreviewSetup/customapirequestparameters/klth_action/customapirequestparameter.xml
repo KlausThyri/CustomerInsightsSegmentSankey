@@ -1,0 +1,12 @@
+<customapirequestparameter uniquename="klth_action">
+  <description default="Setup action: status or provision-shortcuts.">
+    <label description="Setup action: status or provision-shortcuts." languagecode="1033" />
+  </description>
+  <displayname default="Action">
+    <label description="Action" languagecode="1033" />
+  </displayname>
+  <iscustomizable>1</iscustomizable>
+  <isoptional>1</isoptional>
+  <name>klth_action</name>
+  <type>10</type>
+</customapirequestparameter>

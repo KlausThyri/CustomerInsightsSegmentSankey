@@ -1,0 +1,1106 @@
+#if FABRIC_API
+using System.Data;
+using System.Globalization;
+using System.Text.Json;
+using Microsoft.Data.SqlClient;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+internal sealed class SegmentCountSqlCompiler
+{
+    private const int MaximumDepth = 16;
+    private const int MaximumParameters = 1_800;
+    private const int EmailContactPointType = 534120000;
+    private const int OptedOutValue = 534120000;
+    private const int OptedInValue = 534120001;
+    private const string ConsentEntity = "msdynmkt_contactpointconsent4";
+
+    public CompiledSegmentCountQuery Compile(
+        SegmentCountRequest request,
+        FabricSegmentCatalogSnapshot catalog)
+    {
+        var context = CompileStages(request.Query, catalog, out _);
+        return context.Build();
+    }
+
+    /// <summary>
+    /// Compiles a metadata-safe, paged member-identifier query for the exact
+    /// same compiled CTE stages used by <see cref="Compile"/>: the requested
+    /// stage is selected by re-using its stage CTE directly, and the
+    /// removed/added views are expressed as EXCEPT over the selected and
+    /// previous stage CTEs. No stage compilation logic is duplicated - only
+    /// the final selection, search/filter/sort, and keyset paging are added
+    /// on top of the shared <see cref="CompilationContext"/>.
+    /// </summary>
+    public CompiledSegmentMemberQuery CompileMemberQuery(
+        SegmentQueryNode query,
+        FabricSegmentCatalogSnapshot catalog,
+        SegmentMemberCompileOptions options)
+    {
+        var context = CompileStages(query, catalog, out var profileEntity);
+        return context.BuildMemberQuery(profileEntity, options);
+    }
+
+    private static CompilationContext CompileStages(
+        SegmentQueryNode? query,
+        FabricSegmentCatalogSnapshot catalog,
+        out string profileEntity)
+    {
+        if (query?.FirstOperand is null)
+        {
+            throw new SegmentQueryException(
+                "invalid_request",
+                "query.firstOperand is required.");
+        }
+
+        var context = new CompilationContext(catalog);
+        var root = context.CompileQuery(query, 0, true);
+        profileEntity = root.ProfileEntity;
+        return context;
+    }
+
+    private sealed class CompilationContext(FabricSegmentCatalogSnapshot catalog)
+    {
+        private readonly List<string> ctes = [];
+        private readonly List<SqlParameter> parameters = [];
+        private readonly List<CompiledSegmentStage> stages = [];
+        private readonly List<EventTableDescriptor> sourceTables = [];
+        private int cteIndex;
+
+        public OperandResult CompileQuery(
+            SegmentQueryNode query,
+            int depth,
+            bool exposeStages)
+        {
+            EnsureDepth(depth);
+            if (query.FirstOperand is null)
+            {
+                throw new SegmentQueryException(
+                    "invalid_request",
+                    "Every query requires a firstOperand.");
+            }
+
+            var current = CompileOperand(query.FirstOperand, depth + 1, exposeStages);
+            foreach (var operation in query.SetOperations ?? [])
+            {
+                if (operation.Operand is null)
+                {
+                    throw new SegmentQueryException(
+                        "invalid_request",
+                        "Every set operation requires an operand.");
+                }
+
+                var right = CompileOperand(operation.Operand, depth + 1, false);
+                EnsureSameProfile(current.ProfileEntity, right.ProfileEntity);
+                var setOperator = ResolveSetOperator(operation.Operator);
+                var cte = NextCte("set");
+                ctes.Add($"""
+                    {Quote(cte)} AS
+                    (
+                        SELECT ProfileId FROM {Quote(current.Cte)}
+                        {setOperator}
+                        SELECT ProfileId FROM {Quote(right.Cte)}
+                    )
+                    """);
+                current = new OperandResult(cte, current.ProfileEntity);
+                if (exposeStages)
+                {
+                    AddStage(cte, operation.Label, operation.Detail);
+                }
+            }
+
+            return current;
+        }
+
+        public CompiledSegmentCountQuery Build()
+        {
+            if (stages.Count == 0)
+            {
+                throw new SegmentQueryException(
+                    "invalid_request",
+                    "The query did not produce any count stages.");
+            }
+
+            var counts = stages.Select(stage => $"""
+                SELECT CAST({stage.Order.ToString(CultureInfo.InvariantCulture)} AS int) AS StageOrder,
+                       COUNT_BIG(*) AS StageCount
+                FROM {Quote(stage.Cte)}
+                """);
+            var sql = RenderCtePrologue() + Environment.NewLine +
+                string.Join(Environment.NewLine + "UNION ALL" + Environment.NewLine, counts) +
+                Environment.NewLine + "ORDER BY StageOrder;";
+            return new CompiledSegmentCountQuery(
+                sql,
+                parameters,
+                stages,
+                BuildSourceTables());
+        }
+
+        /// <summary>
+        /// Builds a paged, metadata-safe member-identifier selection over the
+        /// exact same stage CTEs produced while compiling counts. Re-uses the
+        /// shared CTE prologue: stage=selected stage CTE, removed=previous
+        /// EXCEPT selected (stageOrder&gt;0), added=selected EXCEPT previous
+        /// (stageOrder&gt;0). Identifiers for search/filter/sort columns are
+        /// resolved exclusively through the <see cref="FabricSegmentCatalogSnapshot"/>.
+        /// </summary>
+        public CompiledSegmentMemberQuery BuildMemberQuery(
+            string profileEntity,
+            SegmentMemberCompileOptions options)
+        {
+            if (stages.Count == 0)
+            {
+                throw new SegmentQueryException(
+                    "invalid_request",
+                    "The query did not produce any stages.");
+            }
+
+            if (options.StageOrder < 0 || options.StageOrder >= stages.Count)
+            {
+                throw new SegmentQueryException(
+                    "invalid_stage_order",
+                    $"stageOrder must be between 0 and {stages.Count - 1}.");
+            }
+
+            var viewMode = NormalizeViewMode(options.ViewMode);
+            if (viewMode != MemberViewMode.Stage && options.StageOrder == 0)
+            {
+                throw new SegmentQueryException(
+                    "invalid_view_mode",
+                    "viewMode 'removed' and 'added' require stageOrder greater than 0.");
+            }
+
+            if (options.PageSize < 1 || options.PageSize > 50)
+            {
+                throw new SegmentQueryException(
+                    "invalid_page_size",
+                    "pageSize must be between 1 and 50.");
+            }
+
+            var selected = stages[options.StageOrder];
+            var memberCte = NextCte("member");
+            var body = viewMode switch
+            {
+                MemberViewMode.Stage =>
+                    $"SELECT ProfileId FROM {Quote(selected.Cte)}",
+                MemberViewMode.Removed =>
+                    $"SELECT ProfileId FROM {Quote(stages[options.StageOrder - 1].Cte)}" +
+                    Environment.NewLine + "    EXCEPT" + Environment.NewLine +
+                    $"    SELECT ProfileId FROM {Quote(selected.Cte)}",
+                MemberViewMode.Added =>
+                    $"SELECT ProfileId FROM {Quote(selected.Cte)}" +
+                    Environment.NewLine + "    EXCEPT" + Environment.NewLine +
+                    $"    SELECT ProfileId FROM {Quote(stages[options.StageOrder - 1].Cte)}",
+                _ => throw new SegmentQueryException(
+                    "invalid_view_mode",
+                    $"Unsupported viewMode '{options.ViewMode}'.")
+            };
+            ctes.Add($"""
+                {Quote(memberCte)} AS
+                (
+                    {body}
+                )
+                """);
+
+            var profileTable = catalog.ResolveDataverse(profileEntity);
+            AddSource(profileTable);
+            var idColumn = ResolveColumn(profileTable, "Id");
+            var sortField = ValidateAllowedField(options.SortField, "sortField");
+            var sortColumn = ResolveColumn(profileTable, sortField);
+
+            var predicates = new List<string>();
+            if (!string.IsNullOrWhiteSpace(options.FilterField))
+            {
+                var filterField = ValidateAllowedField(options.FilterField, "filterField");
+                var filterColumn = ResolveColumn(profileTable, filterField);
+                predicates.Add(BuildFilterPredicate(
+                    "p." + Quote(filterColumn),
+                    options.FilterOperator,
+                    options.FilterValue));
+            }
+
+            if (!string.IsNullOrWhiteSpace(options.Search))
+            {
+                predicates.Add(BuildSearchPredicate(profileTable, options.Search));
+            }
+
+            var whereClause = predicates.Count > 0
+                ? "WHERE " + string.Join(" AND ", predicates)
+                : string.Empty;
+            var keysetClause = BuildKeysetPredicate(options.Cursor, options.Ascending);
+            var sortDirectionSql = options.Ascending ? "ASC" : "DESC";
+            var top = AddParameter(options.PageSize + 1, SqlDbType.Int, 0);
+
+            var sql = RenderCtePrologue() + Environment.NewLine +
+                $"SELECT TOP ({top}) root.ProfileId, root.SortIsNull, root.SortValue" + Environment.NewLine +
+                "FROM (" + Environment.NewLine +
+                "    SELECT m.ProfileId AS ProfileId," + Environment.NewLine +
+                $"           CASE WHEN p.{Quote(sortColumn)} IS NULL THEN 1 ELSE 0 END AS SortIsNull," + Environment.NewLine +
+                $"           CONVERT(nvarchar(4000), p.{Quote(sortColumn)}) AS SortValue" + Environment.NewLine +
+                $"    FROM {Quote(memberCte)} AS m" + Environment.NewLine +
+                $"    INNER JOIN {Qualified(profileTable)} AS p" + Environment.NewLine +
+                $"        ON TRY_CONVERT(uniqueidentifier, p.{Quote(idColumn)}) = m.ProfileId" +
+                (whereClause.Length > 0 ? Environment.NewLine + "    " + whereClause : string.Empty) +
+                Environment.NewLine + ") AS root" +
+                (keysetClause.Length > 0 ? Environment.NewLine + keysetClause : string.Empty) +
+                Environment.NewLine +
+                $"ORDER BY root.SortIsNull ASC, root.SortValue {sortDirectionSql}, root.ProfileId ASC;";
+
+            return new CompiledSegmentMemberQuery(sql, parameters, profileEntity, BuildSourceTables());
+        }
+
+        private string RenderCtePrologue()
+        {
+            return "WITH" + Environment.NewLine + string.Join("," + Environment.NewLine, ctes);
+        }
+
+        private IReadOnlyList<SegmentSourceTable> BuildSourceTables()
+        {
+            return sourceTables
+                .Select(table => new SegmentSourceTable
+                {
+                    Schema = table.Schema,
+                    Table = table.Table
+                })
+                .ToArray();
+        }
+
+        private string BuildFilterPredicate(string expression, string? operatorName, string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                throw new SegmentQueryException(
+                    "invalid_filter_value",
+                    "filterValue is required when filterField is provided.");
+            }
+
+            if (value.Length > 100)
+            {
+                throw new SegmentQueryException(
+                    "invalid_filter_value",
+                    "filterValue must be 100 characters or fewer.");
+            }
+
+            return (operatorName ?? string.Empty).Trim().ToLowerInvariant() switch
+            {
+                "contains" => "LOWER(" + expression + ") LIKE LOWER(" +
+                    AddParameter("%" + EscapeLike(value) + "%") + ") ESCAPE '\\'",
+                "startswith" => "LOWER(" + expression + ") LIKE LOWER(" +
+                    AddParameter(EscapeLike(value) + "%") + ") ESCAPE '\\'",
+                "equals" => "LOWER(" + expression + ") = LOWER(" + AddParameter(value) + ")",
+                _ => throw new SegmentQueryException(
+                    "invalid_filter_operator",
+                    $"Unsupported filterOperator '{operatorName}'.")
+            };
+        }
+
+        private string BuildSearchPredicate(EventTableDescriptor profileTable, string search)
+        {
+            if (search.Length > 100)
+            {
+                throw new SegmentQueryException(
+                    "invalid_search",
+                    "search must be 100 characters or fewer.");
+            }
+
+            var searchPredicates = new List<string>();
+            if (profileTable.TryResolveColumn("fullname", out var fullNameColumn))
+            {
+                searchPredicates.Add(
+                    "LOWER(p." + Quote(fullNameColumn) + ") LIKE LOWER(" +
+                        AddParameter("%" + EscapeLike(search) + "%") + ") ESCAPE '\\'");
+            }
+
+            if (profileTable.TryResolveColumn("emailaddress1", out var emailColumn))
+            {
+                searchPredicates.Add(
+                    "LOWER(p." + Quote(emailColumn) + ") LIKE LOWER(" +
+                        AddParameter("%" + EscapeLike(search) + "%") + ") ESCAPE '\\'");
+            }
+
+            if (searchPredicates.Count == 0)
+            {
+                throw new SegmentQueryException(
+                    "unsupported_search",
+                    "The resolved profile entity does not expose a searchable name or email field.");
+            }
+
+            return "(" + string.Join(" OR ", searchPredicates) + ")";
+        }
+
+        private string BuildKeysetPredicate(SegmentMemberCursor? cursor, bool ascending)
+        {
+            if (cursor is null)
+            {
+                return string.Empty;
+            }
+
+            var lastProfileId = AddParameter(cursor.LastProfileId);
+            if (cursor.LastValueIsNull)
+            {
+                return $"WHERE root.SortIsNull = 1 AND root.ProfileId > {lastProfileId}";
+            }
+
+            var comparisonOperator = ascending ? ">" : "<";
+            var lastValue = AddParameter(cursor.LastValue ?? string.Empty, SqlDbType.NVarChar, 4000);
+            return "WHERE (root.SortIsNull = 0 AND (" +
+                $"root.SortValue {comparisonOperator} {lastValue} OR " +
+                $"(root.SortValue = {lastValue} AND root.ProfileId > {lastProfileId}))) " +
+                "OR root.SortIsNull = 1";
+        }
+
+        private static string ValidateAllowedField(string? field, string parameterName)
+        {
+            var normalized = (field ?? string.Empty).Trim();
+            if (!SegmentMemberFields.IsAllowed(normalized))
+            {
+                throw new SegmentQueryException(
+                    "invalid_field",
+                    $"'{parameterName}' must be one of: {string.Join(", ", SegmentMemberFields.Allowed)}.");
+            }
+
+            return normalized.ToLowerInvariant();
+        }
+
+        private static MemberViewMode NormalizeViewMode(string viewMode)
+        {
+            return (viewMode ?? string.Empty).Trim().ToLowerInvariant() switch
+            {
+                "stage" => MemberViewMode.Stage,
+                "removed" => MemberViewMode.Removed,
+                "added" => MemberViewMode.Added,
+                _ => throw new SegmentQueryException(
+                    "invalid_view_mode",
+                    $"Unsupported viewMode '{viewMode}'.")
+            };
+        }
+
+        private OperandResult CompileOperand(
+            SegmentOperand operand,
+            int depth,
+            bool exposeStages)
+        {
+            EnsureDepth(depth);
+            ValidateProfileEntity(operand.ProfileEntity);
+            return (operand.Kind ?? string.Empty).Trim().ToLowerInvariant() switch
+            {
+                "profile" => CompileProfile(operand, depth, exposeStages),
+                "interaction" => CompileInteraction(operand, exposeStages),
+                "static" => CompileStatic(operand, exposeStages),
+                "query" => CompileNestedQuery(operand, depth, exposeStages),
+                _ => throw new SegmentQueryException(
+                    "invalid_operand",
+                    $"The segment AST contains unknown operand kind '{operand.Kind}'.")
+            };
+        }
+
+        private OperandResult CompileProfile(
+            SegmentOperand operand,
+            int depth,
+            bool exposeStages)
+        {
+            var table = catalog.ResolveDataverse(operand.ProfileEntity);
+            AddSource(table);
+            var idColumn = ResolveColumn(table, "Id");
+            var stateColumn = ResolveColumn(table, "statecode");
+            var idExpression = $"TRY_CONVERT(uniqueidentifier, p.{Quote(idColumn)})";
+            var where = new List<string>
+            {
+                idExpression + " IS NOT NULL",
+                $"p.{Quote(stateColumn)} = {AddParameter(0)}"
+            };
+
+            var current = NextCte("profile");
+            ctes.Add($"""
+                {Quote(current)} AS
+                (
+                    SELECT DISTINCT {idExpression} AS ProfileId
+                    FROM {Qualified(table)} AS p
+                    WHERE {string.Join(Environment.NewLine + "      AND ", where)}
+                )
+                """);
+            if (exposeStages)
+            {
+                AddStage(current, operand.BaseLabel, operand.BaseDetail);
+            }
+
+            foreach (var step in operand.Steps ?? [])
+            {
+                var next = NextCte("profile_step");
+                var body = (step.Kind ?? string.Empty).Trim().ToLowerInvariant() switch
+                {
+                    "profile" =>
+                        CompileProfileStep(step, table, idColumn, current, next, depth),
+                    "relationship" =>
+                        CompileRelationshipStep(
+                            step,
+                            table,
+                            idColumn,
+                            current,
+                            next,
+                            depth),
+                    _ => throw new SegmentQueryException(
+                        "invalid_filter_step",
+                        $"The profile operand contains unknown filter step '{step.Kind}'.")
+                };
+                ctes.Add(body);
+                current = next;
+                if (exposeStages)
+                {
+                    AddStage(current, step.Label, step.Detail);
+                }
+            }
+
+            return new OperandResult(current, operand.ProfileEntity);
+        }
+
+        private string CompileProfileStep(
+            SegmentFilterStep step,
+            EventTableDescriptor profileTable,
+            string idColumn,
+            string previous,
+            string next,
+            int depth)
+        {
+            if (step.Condition is null)
+            {
+                throw new SegmentQueryException(
+                    "invalid_condition",
+                    "A profile filter step requires a condition.");
+            }
+
+            var condition = CompileCondition(step.Condition, profileTable, "p", depth + 1);
+            return $"""
+                {Quote(next)} AS
+                (
+                    SELECT DISTINCT previous.ProfileId
+                    FROM {Quote(previous)} AS previous
+                    INNER JOIN {Qualified(profileTable)} AS p
+                        ON TRY_CONVERT(uniqueidentifier, p.{Quote(idColumn)}) = previous.ProfileId
+                    WHERE {condition}
+                )
+                """;
+        }
+
+        private string CompileRelationshipStep(
+            SegmentFilterStep step,
+            EventTableDescriptor profileTable,
+            string idColumn,
+            string previous,
+            string next,
+            int depth)
+        {
+            if (step.Condition is null)
+            {
+                throw new SegmentQueryException(
+                    "invalid_condition",
+                    "A relationship filter step requires a condition.");
+            }
+
+            var relatedTable = catalog.ResolveDataverse(step.RelatedEntity);
+            AddSource(relatedTable);
+            var profileKey = ResolveColumn(profileTable, step.ProfileAttribute);
+            var relatedKey = ResolveColumn(relatedTable, step.RelatedAttribute);
+            var rootNot = IsRootNot(step.Condition);
+            var conditionNode = rootNot ? step.Condition.Children![0] : step.Condition;
+            var condition = CompileCondition(conditionNode, relatedTable, "r", depth + 1);
+            var exists = $"""
+                SELECT 1
+                FROM {Qualified(relatedTable)} AS r
+                WHERE r.{Quote(relatedKey)} = p.{Quote(profileKey)}
+                  AND {(rootNot && !step.IsOptional ? "NOT (" + condition + ")" : condition)}
+                """;
+            var relationshipPredicate =
+                rootNot && step.IsOptional
+                    ? "NOT EXISTS (" + exists + ")"
+                    : "EXISTS (" + exists + ")";
+            return $"""
+                {Quote(next)} AS
+                (
+                    SELECT DISTINCT previous.ProfileId
+                    FROM {Quote(previous)} AS previous
+                    INNER JOIN {Qualified(profileTable)} AS p
+                        ON TRY_CONVERT(uniqueidentifier, p.{Quote(idColumn)}) = previous.ProfileId
+                    WHERE {relationshipPredicate}
+                )
+                """;
+        }
+
+        private OperandResult CompileInteraction(
+            SegmentOperand operand,
+            bool exposeStages)
+        {
+            var table = catalog.ResolveJourney(operand.EventLogicalName);
+            AddSource(table);
+            var profileExpression = FabricEventSqlExpressionResolver.ResolveProfileExpression(
+                operand.ProfileEntity,
+                table);
+            var entityIdExpression = FabricEventSqlExpressionResolver.ResolveFieldExpression(
+                operand.EntityIdField,
+                table,
+                profileExpression);
+            var where = new List<string>
+            {
+                entityIdExpression + " IS NOT NULL",
+                FabricEventSqlExpressionResolver.ResolveProfileTypeExpression(table) + " = " +
+                    AddParameter(operand.ProfileEntity.ToLowerInvariant())
+            };
+            if (operand.Filter is not null)
+            {
+                where.Add(CompileInteractionCondition(
+                    operand.Filter,
+                    table,
+                    entityIdExpression,
+                    0));
+            }
+
+            var having = operand.Having
+                ?? throw new SegmentQueryException(
+                    "invalid_having",
+                    "An interaction operand requires a HAVING clause.");
+            if (having.WindowValue is > 0)
+            {
+                var timestamp = FabricEventSqlExpressionResolver.ResolveTimestampColumn(table);
+                var datePart = FabricEventSqlExpressionResolver.ResolveDatePart(
+                    having.WindowFunction);
+                where.Add(
+                    $"{Quote(timestamp)} >= DATEADD({datePart}, -{AddParameter(having.WindowValue.Value)}, SYSUTCDATETIME())");
+            }
+
+            if (!string.Equals(
+                having.Metric,
+                "Count",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                throw new SegmentQueryException(
+                    "unsupported_having_metric",
+                    $"Unsupported HAVING metric '{having.Metric}'.");
+            }
+
+            var comparator = FabricEventSqlExpressionResolver.ResolveComparator(having.Operator ?? string.Empty);
+            var threshold = AddParameter(having.Threshold);
+            var cte = NextCte("interaction");
+            ctes.Add($"""
+                {Quote(cte)} AS
+                (
+                    SELECT TRY_CONVERT(uniqueidentifier, {entityIdExpression}) AS ProfileId
+                    FROM {Qualified(table)} AS e
+                    WHERE {string.Join(Environment.NewLine + "      AND ", where)}
+                    GROUP BY {entityIdExpression}
+                    HAVING COUNT_BIG(*) {comparator} {threshold}
+                )
+                """);
+            if (exposeStages)
+            {
+                AddStage(cte, operand.BaseLabel, operand.BaseDetail);
+            }
+
+            return new OperandResult(cte, operand.ProfileEntity);
+        }
+
+        private OperandResult CompileStatic(
+            SegmentOperand operand,
+            bool exposeStages)
+        {
+            var json = JsonSerializer.Serialize(operand.ProfileIds ?? []);
+            var parameter = AddParameter(json, SqlDbType.NVarChar, -1);
+            var cte = NextCte("static");
+            ctes.Add($"""
+                {Quote(cte)} AS
+                (
+                    SELECT DISTINCT TRY_CONVERT(uniqueidentifier, ids.[value]) AS ProfileId
+                    FROM OPENJSON({parameter})
+                        WITH ([value] nvarchar(36) '$') AS ids
+                    WHERE TRY_CONVERT(uniqueidentifier, ids.[value]) IS NOT NULL
+                )
+                """);
+            if (exposeStages)
+            {
+                AddStage(cte, operand.BaseLabel, operand.BaseDetail);
+            }
+
+            return new OperandResult(cte, operand.ProfileEntity);
+        }
+
+        private OperandResult CompileNestedQuery(
+            SegmentOperand operand,
+            int depth,
+            bool exposeStages)
+        {
+            if (operand.Query is null)
+            {
+                throw new SegmentQueryException(
+                    "invalid_request",
+                    "A query operand requires a nested query.");
+            }
+
+            var nested = CompileQuery(operand.Query, depth + 1, false);
+            EnsureSameProfile(operand.ProfileEntity, nested.ProfileEntity);
+            var cte = NextCte("query");
+            ctes.Add($"""
+                {Quote(cte)} AS
+                (
+                    SELECT ProfileId FROM {Quote(nested.Cte)}
+                )
+                """);
+            if (exposeStages)
+            {
+                AddStage(cte, operand.BaseLabel, operand.BaseDetail);
+            }
+
+            return new OperandResult(cte, operand.ProfileEntity);
+        }
+
+        private string CompileCondition(
+            SegmentCondition condition,
+            EventTableDescriptor table,
+            string alias,
+            int depth)
+        {
+            EnsureDepth(depth);
+            if (string.Equals(condition.Kind, "consent", StringComparison.OrdinalIgnoreCase))
+            {
+                return CompileConsentCondition(condition, table, alias);
+            }
+
+            return CompileConditionCore(
+                condition,
+                field => alias + "." + Quote(ResolveColumn(table, field)),
+                child => CompileCondition(child, table, alias, depth + 1));
+        }
+
+        private string CompileConsentCondition(
+            SegmentCondition condition,
+            EventTableDescriptor profileTable,
+            string profileAlias)
+        {
+            if (string.IsNullOrWhiteSpace(condition.ProfileEmailField) ||
+                !condition.PurposeId.HasValue)
+            {
+                throw new SegmentQueryException(
+                    "invalid_consent",
+                    "A consent condition requires profileEmailField and purposeId.");
+            }
+
+            var consentTable = catalog.ResolveDataverse(ConsentEntity);
+            AddSource(consentTable);
+            var emailColumn = ResolveColumn(profileTable, condition.ProfileEmailField);
+            var contactPointValue = ResolveColumn(
+                consentTable,
+                "msdynmkt_contactpointvalue");
+            var state = ResolveColumn(consentTable, "statecode");
+            var purpose = ResolveColumn(consentTable, "msdynmkt_purposeid");
+            var predicates = new List<string>
+            {
+                $"consent.{Quote(contactPointValue)} = {profileAlias}.{Quote(emailColumn)}",
+                $"consent.{Quote(state)} = {AddParameter(0)}",
+                $"consent.{Quote(purpose)} = {AddParameter(condition.PurposeId.Value)}"
+            };
+
+            if (condition.TopicId.HasValue)
+            {
+                var topic = ResolveColumn(consentTable, "msdynmkt_topicid");
+                predicates.Add(
+                    $"consent.{Quote(topic)} = {AddParameter(condition.TopicId.Value)}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(condition.Channel))
+            {
+                if (!string.Equals(
+                    condition.Channel,
+                    "Email",
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new SegmentQueryException(
+                        "invalid_consent",
+                        $"Unsupported consent channel '{condition.Channel}'. Only Email is supported.");
+                }
+
+                var contactPointType = ResolveColumn(
+                    consentTable,
+                    "msdynmkt_contactpointtype");
+                predicates.Add(
+                    $"consent.{Quote(contactPointType)} = {AddParameter(EmailContactPointType)}");
+            }
+
+            if (condition.Value.HasValue)
+            {
+                if (condition.Value.Value.ValueKind != JsonValueKind.String)
+                {
+                    throw new SegmentQueryException(
+                        "invalid_consent",
+                        "Consent value must be OptedIn or OptedOut.");
+                }
+
+                var consentValue = condition.Value.Value.GetString();
+                var value = (consentValue ?? string.Empty).Trim().ToUpperInvariant() switch
+                {
+                    "OPTEDIN" => OptedInValue,
+                    "OPTEDOUT" => OptedOutValue,
+                    _ => throw new SegmentQueryException(
+                        "invalid_consent",
+                        $"Unsupported consent value '{consentValue}'.")
+                };
+                var valueColumn = ResolveColumn(consentTable, "msdynmkt_value");
+                predicates.Add(
+                    $"consent.{Quote(valueColumn)} = {AddParameter(value)}");
+            }
+
+            return "EXISTS (" + Environment.NewLine +
+                "        SELECT 1" + Environment.NewLine +
+                $"        FROM {Qualified(consentTable)} AS consent" + Environment.NewLine +
+                "        WHERE " +
+                string.Join(Environment.NewLine + "          AND ", predicates) +
+                Environment.NewLine + "    )";
+        }
+
+        private string CompileInteractionCondition(
+            SegmentCondition condition,
+            EventTableDescriptor table,
+            string profileExpression,
+            int depth)
+        {
+            EnsureDepth(depth);
+            return CompileConditionCore(
+                condition,
+                field => FabricEventSqlExpressionResolver.ResolveFieldExpression(
+                    field,
+                    table,
+                    profileExpression),
+                child => CompileInteractionCondition(
+                    child,
+                    table,
+                    profileExpression,
+                    depth + 1));
+        }
+
+        private string CompileConditionCore(
+            SegmentCondition condition,
+            Func<string, string> resolveField,
+            Func<SegmentCondition, string> compileChild)
+        {
+            var kind = (condition.Kind ?? string.Empty).Trim().ToLowerInvariant();
+            if (kind is "and" or "or")
+            {
+                if (condition.Children is not { Count: > 0 })
+                {
+                    throw new SegmentQueryException(
+                        "invalid_condition",
+                        $"Logical condition '{condition.Kind}' has no children.");
+                }
+
+                var separator = kind == "and" ? " AND " : " OR ";
+                return "(" + string.Join(separator, condition.Children.Select(compileChild)) + ")";
+            }
+
+            if (kind == "not")
+            {
+                if (condition.Children is not { Count: 1 })
+                {
+                    throw new SegmentQueryException(
+                        "invalid_condition",
+                        "NOT requires exactly one child.");
+                }
+
+                return "(NOT (" + compileChild(condition.Children[0]) + "))";
+            }
+
+            if (kind != "predicate" || string.IsNullOrWhiteSpace(condition.Field))
+            {
+                throw new SegmentQueryException(
+                    "invalid_condition",
+                    "A predicate requires a field.");
+            }
+
+            var expression = resolveField(condition.Field);
+            var operation = (condition.Operator ?? string.Empty).Trim().ToUpperInvariant();
+            return operation switch
+            {
+                "ISNULL" => expression + " IS NULL",
+                "ISNOTNULL" => expression + " IS NOT NULL",
+                "=" or "==" => expression + " = " + AddParameter(ReadScalar(condition)),
+                "!=" or "<>" => expression + " <> " + AddParameter(ReadScalar(condition)),
+                ">" or ">=" or "<" or "<=" =>
+                    expression + " " + operation + " " + AddParameter(ReadScalar(condition)),
+                "CONTAINS" => "LOWER(" + expression + ") LIKE LOWER(" +
+                    AddParameter("%" + EscapeLike(ReadString(condition)) + "%") + ")" +
+                    " ESCAPE '\\'",
+                "STARTSWITH" => "LOWER(" + expression + ") LIKE LOWER(" +
+                    AddParameter(EscapeLike(ReadString(condition)) + "%") + ")" +
+                    " ESCAPE '\\'",
+                "ENDSWITH" => "LOWER(" + expression + ") LIKE LOWER(" +
+                    AddParameter("%" + EscapeLike(ReadString(condition))) + ")" +
+                    " ESCAPE '\\'",
+                "IN" => CompileIn(expression, condition),
+                _ => throw new SegmentQueryException(
+                    "unsupported_operator",
+                    $"Unsupported comparison operator '{condition.Operator}'.")
+            };
+        }
+
+        private string CompileIn(string expression, SegmentCondition condition)
+        {
+            if (condition.Values is not { Count: > 0 })
+            {
+                throw new SegmentQueryException(
+                    "invalid_condition",
+                    "IN requires at least one value.");
+            }
+
+            return expression + " IN (" + string.Join(
+                ", ",
+                condition.Values.Select(value => AddParameter(ReadJsonValue(value)))) + ")";
+        }
+
+        private string AddParameter(object value)
+        {
+            return AddParameter(value, null, null);
+        }
+
+        private string AddParameter(object value, SqlDbType? type, int? size)
+        {
+            if (parameters.Count >= MaximumParameters)
+            {
+                throw new SegmentQueryException(
+                    "query_too_large",
+                    $"The query exceeds the safe limit of {MaximumParameters} SQL parameters.");
+            }
+
+            var name = "@p" + parameters.Count.ToString(CultureInfo.InvariantCulture);
+            var parameter = type.HasValue
+                ? new SqlParameter(name, type.Value, size ?? 0) { Value = value }
+                : new SqlParameter(name, value);
+            parameters.Add(parameter);
+            return name;
+        }
+
+        private void AddStage(string cte, string label, string detail)
+        {
+            if (string.IsNullOrWhiteSpace(label) || string.IsNullOrWhiteSpace(detail))
+            {
+                throw new SegmentQueryException(
+                    "invalid_stage",
+                    "Every returned stage requires a non-empty label and detail.");
+            }
+
+            stages.Add(new CompiledSegmentStage(stages.Count, cte, label, detail));
+        }
+
+        private void AddSource(EventTableDescriptor table)
+        {
+            if (!sourceTables.Any(source =>
+                string.Equals(source.Schema, table.Schema, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(source.Table, table.Table, StringComparison.OrdinalIgnoreCase)))
+            {
+                sourceTables.Add(table);
+            }
+        }
+
+        private string NextCte(string prefix)
+        {
+            return prefix + "_" + cteIndex++.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private enum MemberViewMode
+        {
+            Stage,
+            Removed,
+            Added
+        }
+    }
+
+    private static string ResolveColumn(EventTableDescriptor table, string requested)
+    {
+        if (string.IsNullOrWhiteSpace(requested))
+        {
+            throw new SegmentQueryException(
+                "invalid_identifier",
+                $"A column name for '{table.Schema}.{table.Table}' is required.");
+        }
+
+        var unqualified = requested.Contains('.')
+            ? requested[(requested.LastIndexOf('.') + 1)..]
+            : requested;
+        if (table.TryResolveColumn(unqualified, out var column))
+        {
+            return column;
+        }
+
+        var normalized = IdentifierNormalizer.Normalize(unqualified);
+        var logicalPrimaryId = IdentifierNormalizer.Normalize(table.Table) + "id";
+        if (normalized == logicalPrimaryId || normalized == "id")
+        {
+            if (table.TryResolveColumn("Id", out var fabricPrimaryId))
+            {
+                return fabricPrimaryId;
+            }
+
+            if (table.TryResolveColumn(logicalPrimaryId, out var logicalPrimaryIdColumn))
+            {
+                return logicalPrimaryIdColumn;
+            }
+        }
+
+        throw new SegmentQueryException(
+            "invalid_identifier",
+            $"Column '{requested}' is not present in the INFORMATION_SCHEMA catalog for '{table.Schema}.{table.Table}'.");
+    }
+
+    private static object ReadScalar(SegmentCondition condition)
+    {
+        if (!condition.Value.HasValue)
+        {
+            throw new SegmentQueryException(
+                "invalid_condition",
+                $"Operator '{condition.Operator}' requires a value.");
+        }
+
+        return ReadJsonValue(condition.Value.Value);
+    }
+
+    private static string ReadString(SegmentCondition condition)
+    {
+        return ReadScalar(condition) as string
+            ?? throw new SegmentQueryException(
+                "invalid_condition",
+                $"Operator '{condition.Operator}' requires text.");
+    }
+
+    private static object ReadJsonValue(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String when element.TryGetGuid(out var guid) => guid,
+            JsonValueKind.String when element.TryGetDateTimeOffset(out var dateTime) => dateTime,
+            JsonValueKind.String => element.GetString()!,
+            JsonValueKind.Number when element.TryGetInt64(out var integer) => integer,
+            JsonValueKind.Number => element.GetDecimal(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => throw new SegmentQueryException(
+                "invalid_literal",
+                "Conditions support only string, GUID, date, number, and boolean literals.")
+        };
+    }
+
+    private static bool IsRootNot(SegmentCondition condition)
+    {
+        return string.Equals(condition.Kind, "not", StringComparison.OrdinalIgnoreCase) &&
+            condition.Children is { Count: 1 };
+    }
+
+    private static string ResolveSetOperator(string value)
+    {
+        return (value ?? string.Empty).Trim().ToUpperInvariant() switch
+        {
+            "UNION" => "UNION",
+            "INTERSECT" => "INTERSECT",
+            "EXCEPT" => "EXCEPT",
+            _ => throw new SegmentQueryException(
+                "unsupported_set_operator",
+                $"Unsupported set operator '{value}'.")
+        };
+    }
+
+    private static void ValidateProfileEntity(string profileEntity)
+    {
+        if (string.IsNullOrWhiteSpace(profileEntity))
+        {
+            throw new SegmentQueryException(
+                "invalid_profile",
+                "Every operand requires profileEntity.");
+        }
+    }
+
+    private static void EnsureSameProfile(string left, string right)
+    {
+        if (!string.Equals(left, right, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new SegmentQueryException(
+                "profile_mismatch",
+                $"Set operands use different profile entities: '{left}' and '{right}'.");
+        }
+    }
+
+    private static void EnsureDepth(int depth)
+    {
+        if (depth > MaximumDepth)
+        {
+            throw new SegmentQueryException(
+                "query_too_deep",
+                $"The segment AST exceeds the safe depth of {MaximumDepth}.");
+        }
+    }
+
+    private static string Qualified(EventTableDescriptor table)
+    {
+        return Quote(table.Schema) + "." + Quote(table.Table);
+    }
+
+    private static string Quote(string identifier)
+    {
+        return "[" + identifier.Replace("]", "]]", StringComparison.Ordinal) + "]";
+    }
+
+    private static string EscapeLike(string value)
+    {
+        return value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("%", "\\%", StringComparison.Ordinal)
+            .Replace("_", "\\_", StringComparison.Ordinal)
+            .Replace("[", "\\[", StringComparison.Ordinal);
+    }
+
+    private sealed record OperandResult(string Cte, string ProfileEntity);
+}
+
+internal sealed record CompiledSegmentCountQuery(
+    string Sql,
+    IReadOnlyList<SqlParameter> Parameters,
+    IReadOnlyList<CompiledSegmentStage> Stages,
+    IReadOnlyList<SegmentSourceTable> SourceTables);
+
+internal sealed record CompiledSegmentStage(
+    int Order,
+    string Cte,
+    string Label,
+    string Detail);
+
+internal sealed record CompiledSegmentMemberQuery(
+    string Sql,
+    IReadOnlyList<SqlParameter> Parameters,
+    string ProfileEntity,
+    IReadOnlyList<SegmentSourceTable> SourceTables);
+
+/// <summary>
+/// The keyset cursor extracted from a validated continuation token: the sort
+/// value and profile identifier of the last row returned on the previous
+/// page, used to resume a stable, null-safe deterministic ordering.
+/// </summary>
+internal sealed record SegmentMemberCursor(
+    bool LastValueIsNull,
+    string? LastValue,
+    Guid LastProfileId);
+
+internal sealed record SegmentMemberCompileOptions(
+    int StageOrder,
+    string ViewMode,
+    string SortField,
+    bool Ascending,
+    string? Search,
+    string? FilterField,
+    string? FilterOperator,
+    string? FilterValue,
+    int PageSize,
+    SegmentMemberCursor? Cursor);
+
+internal sealed class SegmentQueryException(
+    string code,
+    string message,
+    string? detail = null) : Exception(message)
+{
+    public string Code { get; } = code;
+
+    public string? Detail { get; } = detail;
+}
+#endif

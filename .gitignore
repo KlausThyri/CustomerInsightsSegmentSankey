@@ -1,0 +1,24 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# msbuild output directories
+**/bin/
+**/obj/
+/artifacts
+/deployment/azure/*.bicepparam
+!/deployment/azure/main.bicepparam.example
+/solution/bin
+/solution/obj
+
+# Local signing material and environment-specific settings
+*.snk
+*.bicepparam
+!main.bicepparam.example
+
+# Local tooling guidance
+/system-guidance.txt
+
+# vs intermediate directory
+**/.vs/
+
+# MSBuild Binary and Structured Log
+*.binlog

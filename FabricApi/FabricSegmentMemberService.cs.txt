@@ -1,0 +1,261 @@
+#if FABRIC_API
+using Microsoft.Data.SqlClient;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+internal sealed class FabricSegmentMemberService(
+    FabricConnectionFactory connectionFactory,
+    FabricSegmentCatalog catalog,
+    SegmentCountSqlCompiler compiler,
+    QueryTokenService tokenService)
+{
+    private const int MinimumPageSize = 1;
+    private const int MaximumPageSize = 50;
+    private const int MaximumSearchLength = 100;
+    private const int MaximumFilterValueLength = 100;
+
+    public async Task<SegmentMemberResponse> EvaluateAsync(
+        SegmentMemberRequest request,
+        CancellationToken cancellationToken)
+    {
+        ValidateShape(request);
+
+        var queryPayload = tokenService.ValidateQueryToken(request.QueryToken);
+        var queryTokenHash = tokenService.HashQueryToken(request.QueryToken);
+
+        TryNormalizeViewMode(request.ViewMode, out var viewMode);
+        TryParseSortDirection(request.SortDirection, out var ascending);
+        var sortField = (request.SortField ?? string.Empty).Trim().ToLowerInvariant();
+        var sortDirection = ascending ? "asc" : "desc";
+
+        SegmentMemberCursor? cursor = null;
+        if (!string.IsNullOrWhiteSpace(request.ContinuationToken))
+        {
+            var continuation = tokenService.ValidateContinuationToken(request.ContinuationToken);
+            EnsureContinuationMatchesRequest(
+                continuation,
+                request,
+                viewMode,
+                sortField,
+                sortDirection,
+                queryTokenHash);
+            cursor = new SegmentMemberCursor(
+                continuation.LastValueIsNull,
+                continuation.LastValue,
+                continuation.LastProfileId);
+        }
+
+        var snapshot = await catalog.GetSnapshotAsync(cancellationToken);
+        var compiled = compiler.CompileMemberQuery(
+            queryPayload.Query,
+            snapshot,
+            new SegmentMemberCompileOptions(
+                request.StageOrder,
+                viewMode,
+                sortField,
+                ascending,
+                request.Search,
+                request.FilterField,
+                request.FilterOperator,
+                request.FilterValue,
+                request.PageSize,
+                cursor));
+
+        var rows = new List<(Guid ProfileId, bool SortIsNull, string? SortValue)>(request.PageSize + 1);
+        await using (var connection = await connectionFactory.OpenAsync(cancellationToken))
+        await using (var command = new SqlCommand(compiled.Sql, connection) { CommandTimeout = 120 })
+        {
+            foreach (var parameter in compiled.Parameters)
+            {
+                command.Parameters.Add(parameter);
+            }
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var profileId = reader.GetGuid(0);
+                var sortIsNull = reader.GetInt32(1) != 0;
+                var sortValue = reader.IsDBNull(2) ? null : reader.GetString(2);
+                rows.Add((profileId, sortIsNull, sortValue));
+            }
+        }
+
+        var hasMore = rows.Count > request.PageSize;
+        var page = hasMore ? rows.Take(request.PageSize).ToList() : rows;
+
+        string? nextToken = null;
+        if (hasMore && page.Count > 0)
+        {
+            var last = page[^1];
+            var continuationPayload = new ContinuationTokenPayload
+            {
+                QueryTokenHash = queryTokenHash,
+                StageOrder = request.StageOrder,
+                ViewMode = viewMode,
+                Search = NormalizeOptional(request.Search),
+                FilterField = NormalizeOptional(request.FilterField),
+                FilterOperator = NormalizeOptional(request.FilterOperator),
+                FilterValue = NormalizeOptional(request.FilterValue),
+                SortField = sortField,
+                SortDirection = sortDirection,
+                LastValueIsNull = last.SortIsNull,
+                LastValue = last.SortValue,
+                LastProfileId = last.ProfileId,
+                ExpiresAt = queryPayload.ExpiresAt
+            };
+            nextToken = tokenService.IssueContinuationToken(continuationPayload);
+        }
+
+        return new SegmentMemberResponse
+        {
+            ProfileEntity = compiled.ProfileEntity,
+            ProfileIds = page.Select(row => row.ProfileId).ToList(),
+            NextToken = nextToken,
+            HasMore = hasMore,
+            GeneratedAt = DateTimeOffset.UtcNow.ToString("o")
+        };
+    }
+
+    private static void ValidateShape(SegmentMemberRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.QueryToken))
+        {
+            throw new SegmentQueryException("invalid_request", "queryToken is required.");
+        }
+
+        if (request.StageOrder < 0)
+        {
+            throw new SegmentQueryException(
+                "invalid_stage_order",
+                "stageOrder must be zero or greater.");
+        }
+
+        if (!TryNormalizeViewMode(request.ViewMode, out _))
+        {
+            throw new SegmentQueryException(
+                "invalid_view_mode",
+                $"Unsupported viewMode '{request.ViewMode}'. Use 'stage', 'removed', or 'added'.");
+        }
+
+        if (request.Search is { Length: > MaximumSearchLength })
+        {
+            throw new SegmentQueryException(
+                "invalid_search",
+                $"search must be {MaximumSearchLength} characters or fewer.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.FilterField))
+        {
+            if (!SegmentMemberFields.IsAllowed(request.FilterField))
+            {
+                throw new SegmentQueryException(
+                    "invalid_field",
+                    $"filterField must be one of: {string.Join(", ", SegmentMemberFields.Allowed)}.");
+            }
+
+            if (!SegmentMemberOperators.IsAllowed(request.FilterOperator))
+            {
+                throw new SegmentQueryException(
+                    "invalid_filter_operator",
+                    $"filterOperator must be one of: {string.Join(", ", SegmentMemberOperators.Allowed)}.");
+            }
+
+            if (string.IsNullOrEmpty(request.FilterValue))
+            {
+                throw new SegmentQueryException(
+                    "invalid_filter_value",
+                    "filterValue is required when filterField is provided.");
+            }
+        }
+
+        if (request.FilterValue is { Length: > MaximumFilterValueLength })
+        {
+            throw new SegmentQueryException(
+                "invalid_filter_value",
+                $"filterValue must be {MaximumFilterValueLength} characters or fewer.");
+        }
+
+        if (!SegmentMemberFields.IsAllowed(request.SortField))
+        {
+            throw new SegmentQueryException(
+                "invalid_field",
+                $"sortField must be one of: {string.Join(", ", SegmentMemberFields.Allowed)}.");
+        }
+
+        if (!TryParseSortDirection(request.SortDirection, out _))
+        {
+            throw new SegmentQueryException(
+                "invalid_sort_direction",
+                "sortDirection must be 'asc' or 'desc'.");
+        }
+
+        if (request.PageSize < MinimumPageSize || request.PageSize > MaximumPageSize)
+        {
+            throw new SegmentQueryException(
+                "invalid_page_size",
+                $"pageSize must be between {MinimumPageSize} and {MaximumPageSize}.");
+        }
+    }
+
+    private static void EnsureContinuationMatchesRequest(
+        ContinuationTokenPayload continuation,
+        SegmentMemberRequest request,
+        string viewMode,
+        string sortField,
+        string sortDirection,
+        string queryTokenHash)
+    {
+        var matches =
+            string.Equals(continuation.QueryTokenHash, queryTokenHash, StringComparison.Ordinal) &&
+            continuation.StageOrder == request.StageOrder &&
+            string.Equals(continuation.ViewMode, viewMode, StringComparison.Ordinal) &&
+            NormalizedEquals(continuation.Search, request.Search) &&
+            NormalizedEquals(continuation.FilterField, request.FilterField) &&
+            NormalizedEquals(continuation.FilterOperator, request.FilterOperator) &&
+            NormalizedEquals(continuation.FilterValue, request.FilterValue) &&
+            string.Equals(continuation.SortField, sortField, StringComparison.Ordinal) &&
+            string.Equals(continuation.SortDirection, sortDirection, StringComparison.Ordinal);
+
+        if (!matches)
+        {
+            throw new SegmentQueryException(
+                "continuation_token_mismatch",
+                "The continuation token does not match the current query, stage, filter, or sort selection.");
+        }
+    }
+
+    private static bool NormalizedEquals(string? left, string? right)
+    {
+        var normalizedLeft = string.IsNullOrEmpty(left) ? null : left.Trim();
+        var normalizedRight = string.IsNullOrEmpty(right) ? null : right.Trim();
+        return string.Equals(normalizedLeft, normalizedRight, StringComparison.Ordinal);
+    }
+
+    private static string? NormalizeOptional(string? value)
+    {
+        return string.IsNullOrEmpty(value) ? null : value.Trim();
+    }
+
+    private static bool TryNormalizeViewMode(string? viewMode, out string normalized)
+    {
+        normalized = (viewMode ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized is "stage" or "removed" or "added";
+    }
+
+    private static bool TryParseSortDirection(string? sortDirection, out bool ascending)
+    {
+        switch ((sortDirection ?? string.Empty).Trim().ToLowerInvariant())
+        {
+            case "asc":
+                ascending = true;
+                return true;
+            case "desc":
+                ascending = false;
+                return true;
+            default:
+                ascending = true;
+                return false;
+        }
+    }
+}
+#endif

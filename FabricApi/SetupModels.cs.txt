@@ -1,0 +1,52 @@
+#if FABRIC_API
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+public static class SetupComponentStates
+{
+    public const string Ready = "ready";
+    public const string Partial = "partial";
+    public const string NotConfigured = "notConfigured";
+    public const string Unavailable = "unavailable";
+    public const string Blocked = "blocked";
+}
+
+public sealed class SetupStatusResponse
+{
+    public string OverallState { get; set; } = SetupComponentStates.Unavailable;
+
+    public string ApiVersion { get; set; } = string.Empty;
+
+    public DateTime CheckedAt { get; set; }
+
+    public List<SetupComponentStatus> Components { get; set; } = [];
+}
+
+public sealed class SetupComponentStatus
+{
+    public string Id { get; set; } = string.Empty;
+
+    public string Name { get; set; } = string.Empty;
+
+    public string Category { get; set; } = string.Empty;
+
+    public string State { get; set; } = SetupComponentStates.Unavailable;
+
+    public string Message { get; set; } = string.Empty;
+
+    public string? Detail { get; set; }
+
+    public string? Action { get; set; }
+}
+
+public sealed class SetupProvisionRequest
+{
+    public List<string> DataverseTables { get; set; } = [];
+}
+
+public sealed class SetupProvisionResponse
+{
+    public FabricDependencyResponse Dependencies { get; set; } = new();
+
+    public SetupStatusResponse Status { get; set; } = new();
+}
+#endif

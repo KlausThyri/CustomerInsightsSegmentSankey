@@ -1,0 +1,13 @@
+<environmentvariabledefinition schemaname="klth_FabricBehavioralApiUrl">
+  <description default="Server-side endpoint used by the segment analysis plugin.">
+    <label description="Server-side endpoint used by the segment analysis plugin." languagecode="1033" />
+  </description>
+  <displayname default="Fabric Behavioral API URL">
+    <label description="Fabric Behavioral API URL" languagecode="1033" />
+  </displayname>
+  <introducedversion>1.0.0.0</introducedversion>
+  <iscustomizable>1</iscustomizable>
+  <isrequired>0</isrequired>
+  <secretstore>0</secretstore>
+  <type>100000000</type>
+</environmentvariabledefinition>

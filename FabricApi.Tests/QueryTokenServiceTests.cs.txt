@@ -1,0 +1,222 @@
+#if FABRIC_API
+using CustomerInsightsSegmentSankey.FabricApi;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+public sealed class QueryTokenServiceTests
+{
+    private const string Secret = "unit-test-behavioral-api-key-0123456789";
+
+    public QueryTokenServiceTests()
+    {
+        Environment.SetEnvironmentVariable("BEHAVIORAL_API_KEY", Secret);
+    }
+
+    [Fact]
+    public void IssueAndValidateQueryToken_RoundTripsTheQuery()
+    {
+        var service = new QueryTokenService();
+        var token = service.IssueQueryToken(SimpleQuery());
+
+        var payload = service.ValidateQueryToken(token);
+
+        Assert.Equal("contact", payload.Query.FirstOperand!.ProfileEntity);
+        Assert.True(payload.ExpiresAt > DateTimeOffset.UtcNow);
+        Assert.True(payload.ExpiresAt <= DateTimeOffset.UtcNow.AddMinutes(30).AddSeconds(5));
+    }
+
+    [Fact]
+    public void ValidateQueryToken_MissingToken_IsRejected()
+    {
+        var service = new QueryTokenService();
+
+        var exception = Assert.Throws<SegmentQueryException>(() => service.ValidateQueryToken(null));
+
+        Assert.Equal("invalid_query_token", exception.Code);
+    }
+
+    [Fact]
+    public void ValidateQueryToken_MalformedToken_IsRejected()
+    {
+        var service = new QueryTokenService();
+
+        var exception = Assert.Throws<SegmentQueryException>(
+            () => service.ValidateQueryToken("not-a-valid-token!!"));
+
+        Assert.Equal("invalid_query_token", exception.Code);
+    }
+
+    [Fact]
+    public void ValidateQueryToken_TooShortToken_IsRejected()
+    {
+        var service = new QueryTokenService();
+
+        var exception = Assert.Throws<SegmentQueryException>(() => service.ValidateQueryToken("QUJD"));
+
+        Assert.Equal("invalid_query_token", exception.Code);
+    }
+
+    [Fact]
+    public void ValidateQueryToken_TamperedCiphertext_FailsAuthentication()
+    {
+        var service = new QueryTokenService();
+        var token = service.IssueQueryToken(SimpleQuery());
+
+        var exception = Assert.Throws<SegmentQueryException>(
+            () => service.ValidateQueryToken(Tamper(token)));
+
+        Assert.Equal("invalid_query_token", exception.Code);
+    }
+
+    [Fact]
+    public void ValidateQueryToken_IssuedByDifferentSecret_FailsAuthentication()
+    {
+        var serviceA = new QueryTokenService();
+        var token = serviceA.IssueQueryToken(SimpleQuery());
+
+        Environment.SetEnvironmentVariable("BEHAVIORAL_API_KEY", Secret + "-different");
+        var serviceB = new QueryTokenService();
+
+        var exception = Assert.Throws<SegmentQueryException>(() => serviceB.ValidateQueryToken(token));
+
+        Assert.Equal("invalid_query_token", exception.Code);
+    }
+
+    [Fact]
+    public void ValidateQueryToken_Expired_IsRejectedWithExpiredCode()
+    {
+        var service = new QueryTokenService();
+        var expiredToken = service.IssueQueryToken(SimpleQuery(), DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var exception = Assert.Throws<SegmentQueryException>(() => service.ValidateQueryToken(expiredToken));
+
+        Assert.Equal("query_token_expired", exception.Code);
+    }
+
+    [Fact]
+    public void HashQueryToken_IsDeterministicForTheSameToken()
+    {
+        var service = new QueryTokenService();
+        var token = service.IssueQueryToken(SimpleQuery());
+
+        Assert.Equal(service.HashQueryToken(token), service.HashQueryToken(token));
+    }
+
+    [Fact]
+    public void HashQueryToken_DiffersAcrossIndependentlyIssuedTokens()
+    {
+        var service = new QueryTokenService();
+        var tokenA = service.IssueQueryToken(SimpleQuery());
+        var tokenB = service.IssueQueryToken(SimpleQuery());
+
+        // Random per-call nonces make every issued token (and its hash)
+        // unique even for logically identical queries.
+        Assert.NotEqual(service.HashQueryToken(tokenA), service.HashQueryToken(tokenB));
+    }
+
+    [Fact]
+    public void IssueAndValidateContinuationToken_RoundTripsThePayload()
+    {
+        var service = new QueryTokenService();
+        var payload = new ContinuationTokenPayload
+        {
+            QueryTokenHash = "abc123",
+            StageOrder = 1,
+            ViewMode = "stage",
+            SortField = "fullname",
+            SortDirection = "asc",
+            LastValueIsNull = false,
+            LastValue = "Alice",
+            LastProfileId = Guid.NewGuid(),
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10)
+        };
+
+        var token = service.IssueContinuationToken(payload);
+        var validated = service.ValidateContinuationToken(token);
+
+        Assert.Equal(payload.QueryTokenHash, validated.QueryTokenHash);
+        Assert.Equal(payload.StageOrder, validated.StageOrder);
+        Assert.Equal(payload.ViewMode, validated.ViewMode);
+        Assert.Equal(payload.SortField, validated.SortField);
+        Assert.Equal(payload.SortDirection, validated.SortDirection);
+        Assert.Equal(payload.LastValueIsNull, validated.LastValueIsNull);
+        Assert.Equal(payload.LastValue, validated.LastValue);
+        Assert.Equal(payload.LastProfileId, validated.LastProfileId);
+    }
+
+    [Fact]
+    public void ValidateContinuationToken_Tampered_FailsAuthentication()
+    {
+        var service = new QueryTokenService();
+        var token = service.IssueContinuationToken(new ContinuationTokenPayload
+        {
+            QueryTokenHash = "abc123",
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10)
+        });
+
+        var exception = Assert.Throws<SegmentQueryException>(
+            () => service.ValidateContinuationToken(Tamper(token)));
+
+        Assert.Equal("invalid_continuation_token", exception.Code);
+    }
+
+    [Fact]
+    public void ValidateContinuationToken_Expired_IsRejectedWithExpiredCode()
+    {
+        var service = new QueryTokenService();
+        var token = service.IssueContinuationToken(new ContinuationTokenPayload
+        {
+            QueryTokenHash = "abc123",
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+        });
+
+        var exception = Assert.Throws<SegmentQueryException>(() => service.ValidateContinuationToken(token));
+
+        Assert.Equal("continuation_token_expired", exception.Code);
+    }
+
+    [Fact]
+    public void QueryTokenAndContinuationToken_UseIndependentDerivedKeys()
+    {
+        var service = new QueryTokenService();
+        var queryToken = service.IssueQueryToken(SimpleQuery());
+
+        // A query token must never validate as a continuation token, proving
+        // the two token families are bound to distinct HKDF-derived keys.
+        var exception = Assert.Throws<SegmentQueryException>(
+            () => service.ValidateContinuationToken(queryToken));
+
+        Assert.Equal("invalid_continuation_token", exception.Code);
+    }
+
+    private static string Tamper(string token)
+    {
+        var chars = token.ToCharArray();
+        for (var i = chars.Length - 1; i >= 0; i--)
+        {
+            if (char.IsLetterOrDigit(chars[i]))
+            {
+                chars[i] = chars[i] == 'A' ? 'B' : 'A';
+                return new string(chars);
+            }
+        }
+
+        throw new InvalidOperationException("Token did not contain a tamperable character.");
+    }
+
+    private static SegmentQueryNode SimpleQuery()
+    {
+        return new SegmentQueryNode
+        {
+            FirstOperand = new SegmentOperand
+            {
+                Kind = "profile",
+                ProfileEntity = "contact",
+                BaseLabel = "Active contacts",
+                BaseDetail = "PROFILE(contact)"
+            }
+        };
+    }
+}
+#endif

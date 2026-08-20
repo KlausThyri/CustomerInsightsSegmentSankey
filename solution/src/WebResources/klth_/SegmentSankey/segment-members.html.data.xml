@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<WebResource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <WebResourceId>{930d7f12-e89b-f111-b8dc-7ced8d762587}</WebResourceId>
+  <Name>klth_/SegmentSankey/segment-members.html</Name>
+  <DisplayName>Segment Preview Members</DisplayName>
+  <Description>Searchable, filterable and paged contacts for segment preview elements.</Description>
+  <WebResourceType>1</WebResourceType>
+  <IntroducedVersion>1.0.0.0</IntroducedVersion>
+  <IsEnabledForMobileClient>0</IsEnabledForMobileClient>
+  <IsAvailableForMobileOffline>0</IsAvailableForMobileOffline>
+  <IsCustomizable>1</IsCustomizable>
+  <CanBeDeleted>1</CanBeDeleted>
+  <IsHidden>0</IsHidden>
+  <FileName>/WebResources/klth_SegmentSankeysegment-membershtml930D7F12-E89B-F111-B8DC-7CED8D762587</FileName>
+</WebResource>

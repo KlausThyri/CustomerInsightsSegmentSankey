@@ -1,0 +1,68 @@
+#if FABRIC_API
+using Microsoft.Data.SqlClient;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+internal sealed class FabricSegmentCountService(
+    FabricConnectionFactory connectionFactory,
+    FabricSegmentCatalog catalog,
+    SegmentCountSqlCompiler compiler,
+    QueryTokenService tokenService)
+{
+    public async Task<SegmentCountResponse> EvaluateAsync(
+        SegmentCountRequest request,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await catalog.GetSnapshotAsync(cancellationToken);
+        var compiled = compiler.Compile(request, snapshot);
+        var counts = new long[compiled.Stages.Count];
+        var seen = new bool[compiled.Stages.Count];
+
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(compiled.Sql, connection)
+        {
+            CommandTimeout = 120
+        };
+        foreach (var parameter in compiled.Parameters)
+        {
+            command.Parameters.Add(parameter);
+        }
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var order = reader.GetInt32(0);
+            if (order < 0 || order >= counts.Length || seen[order])
+            {
+                throw new InvalidOperationException(
+                    "Fabric returned an invalid segment-count stage order.");
+            }
+
+            counts[order] = reader.GetInt64(1);
+            seen[order] = true;
+        }
+
+        if (seen.Any(value => !value))
+        {
+            throw new InvalidOperationException(
+                "Fabric did not return every requested segment-count stage.");
+        }
+
+        return new SegmentCountResponse
+        {
+            Stages = compiled.Stages
+                .Select(stage => new SegmentCountStage
+                {
+                    Order = stage.Order,
+                    Label = stage.Label,
+                    Detail = stage.Detail,
+                    Count = counts[stage.Order]
+                })
+                .ToList(),
+            SourceTables = compiled.SourceTables.ToList(),
+            GeneratedAt = DateTimeOffset.UtcNow,
+            QueryToken = tokenService.IssueQueryToken(request.Query)
+        };
+    }
+}
+#endif

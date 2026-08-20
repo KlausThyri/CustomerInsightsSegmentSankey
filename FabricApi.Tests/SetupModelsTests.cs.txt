@@ -1,0 +1,62 @@
+#if FABRIC_API
+using CustomerInsightsSegmentSankey.FabricApi;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+public sealed class SetupModelsTests
+{
+    [Fact]
+    public void ReadRequiredDataverseTables_ReturnsSafeDefaults()
+    {
+        var previous = Environment.GetEnvironmentVariable(
+            "SEGMENT_PREVIEW_REQUIRED_TABLES");
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                "SEGMENT_PREVIEW_REQUIRED_TABLES",
+                null);
+
+            var tables = SegmentPreviewSetupService.ReadRequiredDataverseTables();
+
+            Assert.Equal(
+                [
+                    "contact",
+                    "msdynmkt_contactpointconsent4",
+                    "msdynmkt_purpose",
+                    "msdynmkt_topic"
+                ],
+                tables);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                "SEGMENT_PREVIEW_REQUIRED_TABLES",
+                previous);
+        }
+    }
+
+    [Fact]
+    public void ReadRequiredDataverseTables_NormalizesConfiguredValues()
+    {
+        var previous = Environment.GetEnvironmentVariable(
+            "SEGMENT_PREVIEW_REQUIRED_TABLES");
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                "SEGMENT_PREVIEW_REQUIRED_TABLES",
+                "lead, contact,Lead");
+
+            var tables = SegmentPreviewSetupService.ReadRequiredDataverseTables();
+
+            Assert.Equal(["contact", "lead"], tables);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                "SEGMENT_PREVIEW_REQUIRED_TABLES",
+                previous);
+        }
+    }
+}
+#endif

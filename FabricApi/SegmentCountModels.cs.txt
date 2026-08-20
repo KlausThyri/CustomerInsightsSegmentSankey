@@ -1,0 +1,142 @@
+#if FABRIC_API
+using System.Text.Json;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+public sealed class SegmentCountRequest
+{
+    public SegmentQueryNode Query { get; set; } = new();
+}
+
+public sealed class SegmentQueryNode
+{
+    public SegmentOperand? FirstOperand { get; set; }
+
+    public List<SegmentSetOperation> SetOperations { get; set; } = [];
+}
+
+public sealed class SegmentSetOperation
+{
+    public string Operator { get; set; } = string.Empty;
+
+    public SegmentOperand? Operand { get; set; }
+
+    public string Label { get; set; } = string.Empty;
+
+    public string Detail { get; set; } = string.Empty;
+}
+
+public sealed class SegmentOperand
+{
+    public string Kind { get; set; } = string.Empty;
+
+    public string ProfileEntity { get; set; } = string.Empty;
+
+    public string BaseLabel { get; set; } = string.Empty;
+
+    public string BaseDetail { get; set; } = string.Empty;
+
+    public List<SegmentFilterStep> Steps { get; set; } = [];
+
+    public string EventLogicalName { get; set; } = string.Empty;
+
+    public string EntityIdField { get; set; } = string.Empty;
+
+    public SegmentCondition? Filter { get; set; }
+
+    public SegmentHaving Having { get; set; } = new();
+
+    public List<Guid> ProfileIds { get; set; } = [];
+
+    public SegmentQueryNode? Query { get; set; }
+}
+
+public sealed class SegmentFilterStep
+{
+    public string Kind { get; set; } = string.Empty;
+
+    public string Label { get; set; } = string.Empty;
+
+    public string Detail { get; set; } = string.Empty;
+
+    public SegmentCondition? Condition { get; set; }
+
+    public string RelatedEntity { get; set; } = string.Empty;
+
+    public string ProfileAttribute { get; set; } = string.Empty;
+
+    public string RelatedAttribute { get; set; } = string.Empty;
+
+    public bool IsOptional { get; set; }
+}
+
+public sealed class SegmentCondition
+{
+    public string Kind { get; set; } = string.Empty;
+
+    public string? Field { get; set; }
+
+    public string? Operator { get; set; }
+
+    public JsonElement? Value { get; set; }
+
+    public List<JsonElement>? Values { get; set; }
+
+    public List<SegmentCondition>? Children { get; set; }
+
+    public string? ProfileEmailField { get; set; }
+
+    public Guid? PurposeId { get; set; }
+
+    public Guid? TopicId { get; set; }
+
+    public string? Channel { get; set; }
+}
+
+public sealed class SegmentHaving
+{
+    public string Metric { get; set; } = "Count";
+
+    public string Operator { get; set; } = ">=";
+
+    public long Threshold { get; set; } = 1;
+
+    public string? WindowFunction { get; set; }
+
+    public int? WindowValue { get; set; }
+}
+
+public sealed class SegmentCountResponse
+{
+    public List<SegmentCountStage> Stages { get; set; } = [];
+
+    public List<SegmentSourceTable> SourceTables { get; set; } = [];
+
+    public DateTimeOffset GeneratedAt { get; set; }
+
+    /// <summary>
+    /// An opaque, authenticated and encrypted token binding the validated
+    /// <see cref="SegmentQueryNode"/> and an expiration to a follow-up call to
+    /// <c>/api/segment-members</c>. The token never exposes stage SQL or PII.
+    /// </summary>
+    public string QueryToken { get; set; } = string.Empty;
+}
+
+public sealed class SegmentCountStage
+{
+    public int Order { get; set; }
+
+    public string Label { get; set; } = string.Empty;
+
+    public string Detail { get; set; } = string.Empty;
+
+    public long Count { get; set; }
+}
+
+public sealed class SegmentSourceTable
+{
+    public string Schema { get; set; } = string.Empty;
+
+    public string Table { get; set; } = string.Empty;
+}
+#endif

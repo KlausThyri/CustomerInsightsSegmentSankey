@@ -1,0 +1,12 @@
+<customapirequestparameter uniquename="klth_segmentid">
+  <description default="ID of the Customer Insights segment to evaluate.">
+    <label description="ID of the Customer Insights segment to evaluate." languagecode="1033" />
+  </description>
+  <displayname default="Segment ID">
+    <label description="Segment ID" languagecode="1033" />
+  </displayname>
+  <iscustomizable>1</iscustomizable>
+  <isoptional>0</isoptional>
+  <name>klth_segmentid</name>
+  <type>12</type>
+</customapirequestparameter>

@@ -1,0 +1,484 @@
+#if FABRIC_API
+using CustomerInsightsSegmentSankey.FabricApi;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+public sealed class SegmentMemberSqlCompilerTests
+{
+    [Fact]
+    public void CompileMemberQuery_Stage_SelectsStageCteDirectlyAndProjectsSortColumns()
+    {
+        var result = Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 1, viewMode: "stage"),
+            Table(
+                "dataverse",
+                "contact",
+                "contactid",
+                "statecode",
+                "address1_country",
+                "fullname"));
+
+        Assert.DoesNotContain("EXCEPT", result.Sql);
+        Assert.Contains("] AS m", result.Sql);
+        Assert.Contains(
+            "INNER JOIN [dataverse].[contact] AS p",
+            result.Sql);
+        Assert.Contains(
+            "ON TRY_CONVERT(uniqueidentifier, p.[contactid]) = m.ProfileId",
+            result.Sql);
+        Assert.Contains("SortIsNull", result.Sql);
+        Assert.Contains("SortValue", result.Sql);
+        Assert.Contains("ORDER BY root.SortIsNull ASC, root.SortValue ASC, root.ProfileId ASC;", result.Sql);
+        Assert.Equal("contact", result.ProfileEntity);
+        Assert.Contains(11, result.Parameters.Select(p => p.Value));
+    }
+
+    [Fact]
+    public void CompileMemberQuery_Removed_UsesPreviousExceptSelected()
+    {
+        var result = Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 1, viewMode: "removed"),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname"));
+
+        Assert.Contains("EXCEPT", result.Sql);
+        var cteBody = ExtractLastCteBody(result.Sql);
+        var exceptIndex = cteBody.IndexOf("EXCEPT", StringComparison.Ordinal);
+        Assert.True(exceptIndex > 0);
+        var beforeExcept = cteBody[..exceptIndex];
+        var afterExcept = cteBody[(exceptIndex + "EXCEPT".Length)..];
+        Assert.Contains("profile_0", beforeExcept);
+        Assert.Contains("profile_step_1", afterExcept);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_Added_UsesSelectedExceptPrevious()
+    {
+        var result = Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 1, viewMode: "added"),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname"));
+
+        Assert.Contains("EXCEPT", result.Sql);
+        var cteBody = ExtractLastCteBody(result.Sql);
+        var exceptIndex = cteBody.IndexOf("EXCEPT", StringComparison.Ordinal);
+        Assert.True(exceptIndex > 0);
+        var beforeExcept = cteBody[..exceptIndex];
+        var afterExcept = cteBody[(exceptIndex + "EXCEPT".Length)..];
+        Assert.Contains("profile_step_1", beforeExcept);
+        Assert.Contains("profile_0", afterExcept);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_RemovedAtStageZero_IsRejected()
+    {
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 0, viewMode: "removed"),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname")));
+
+        Assert.Equal("invalid_view_mode", exception.Code);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_AddedAtStageZero_IsRejected()
+    {
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 0, viewMode: "added"),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname")));
+
+        Assert.Equal("invalid_view_mode", exception.Code);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_UnknownViewMode_IsRejected()
+    {
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 1, viewMode: "bogus"),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname")));
+
+        Assert.Equal("invalid_view_mode", exception.Code);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_StageOrderOutOfRange_IsRejected()
+    {
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 5, viewMode: "stage"),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname")));
+
+        Assert.Equal("invalid_stage_order", exception.Code);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(51)]
+    public void CompileMemberQuery_PageSizeOutOfRange_IsRejected(int pageSize)
+    {
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 1, viewMode: "stage", pageSize: pageSize),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname")));
+
+        Assert.Equal("invalid_page_size", exception.Code);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_DisallowedSortField_IsRejectedEvenIfColumnExists()
+    {
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 1, viewMode: "stage", sortField: "statecode"),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname")));
+
+        Assert.Equal("invalid_field", exception.Code);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_DisallowedFilterField_IsRejected()
+    {
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(
+            TwoStageQuery(),
+            Options(
+                stageOrder: 1,
+                viewMode: "stage",
+                filterField: "address1_country",
+                filterOperator: "equals",
+                filterValue: "DE"),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname")));
+
+        Assert.Equal("invalid_field", exception.Code);
+    }
+
+    [Theory]
+    [InlineData("contains", "%a' OR '1'='1%")]
+    [InlineData("startsWith", "a' OR '1'='1%")]
+    [InlineData("equals", "a' OR '1'='1")]
+    public void CompileMemberQuery_FilterOperators_AreParameterizedNeverInlined(
+        string operatorName,
+        string expectedParameterValue)
+    {
+        const string injectionPayload = "a' OR '1'='1";
+        var result = Compile(
+            TwoStageQuery(),
+            Options(
+                stageOrder: 1,
+                viewMode: "stage",
+                filterField: "fullname",
+                filterOperator: operatorName,
+                filterValue: injectionPayload),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname"));
+
+        Assert.DoesNotContain(injectionPayload, result.Sql);
+        Assert.Contains(expectedParameterValue, result.Parameters.Select(p => p.Value));
+        Assert.Contains("LOWER(p.[fullname])", result.Sql);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_UnknownFilterOperator_IsRejected()
+    {
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(
+            TwoStageQuery(),
+            Options(
+                stageOrder: 1,
+                viewMode: "stage",
+                filterField: "fullname",
+                filterOperator: "regex",
+                filterValue: "a"),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname")));
+
+        Assert.Equal("invalid_filter_operator", exception.Code);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_FilterValueTooLong_IsRejected()
+    {
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(
+            TwoStageQuery(),
+            Options(
+                stageOrder: 1,
+                viewMode: "stage",
+                filterField: "fullname",
+                filterOperator: "contains",
+                filterValue: new string('a', 101)),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname")));
+
+        Assert.Equal("invalid_filter_value", exception.Code);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_Search_ProducesOrPredicateAcrossNameAndEmail()
+    {
+        var result = Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 1, viewMode: "stage", search: "vance"),
+            Table(
+                "dataverse",
+                "contact",
+                "contactid",
+                "statecode",
+                "address1_country",
+                "fullname",
+                "emailaddress1"));
+
+        Assert.Contains(
+            "LOWER(p.[fullname]) LIKE LOWER(",
+            result.Sql);
+        Assert.Contains(
+            "LOWER(p.[emailaddress1]) LIKE LOWER(",
+            result.Sql);
+        Assert.Contains("%vance%", result.Parameters.Select(p => p.Value));
+        Assert.DoesNotContain("vance%", result.Sql);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_SearchWithoutSearchableColumns_IsRejected()
+    {
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 1, viewMode: "stage", search: "vance", sortField: "telephone1"),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "telephone1")));
+
+        Assert.Equal("unsupported_search", exception.Code);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_SearchTooLong_IsRejected()
+    {
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 1, viewMode: "stage", search: new string('a', 101)),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname")));
+
+        Assert.Equal("invalid_search", exception.Code);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_AscendingKeyset_ProducesGreaterThanPredicate()
+    {
+        var lastId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var result = Compile(
+            TwoStageQuery(),
+            Options(
+                stageOrder: 1,
+                viewMode: "stage",
+                ascending: true,
+                cursor: new SegmentMemberCursor(false, "Alice", lastId)),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname"));
+
+        Assert.Contains("root.SortValue > @", result.Sql);
+        Assert.Contains("OR root.SortIsNull = 1", result.Sql);
+        Assert.Contains("Alice", result.Parameters.Select(p => p.Value));
+        Assert.Contains(lastId, result.Parameters.Select(p => p.Value));
+    }
+
+    [Fact]
+    public void CompileMemberQuery_DescendingKeyset_ProducesLessThanPredicate()
+    {
+        var lastId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var result = Compile(
+            TwoStageQuery(),
+            Options(
+                stageOrder: 1,
+                viewMode: "stage",
+                ascending: false,
+                cursor: new SegmentMemberCursor(false, "Zed", lastId)),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname"));
+
+        Assert.Contains("root.SortValue < @", result.Sql);
+        Assert.Contains("ORDER BY root.SortIsNull ASC, root.SortValue DESC, root.ProfileId ASC;", result.Sql);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_NullKeysetCursor_OnlyMatchesNullGroup()
+    {
+        var lastId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+        var result = Compile(
+            TwoStageQuery(),
+            Options(
+                stageOrder: 1,
+                viewMode: "stage",
+                cursor: new SegmentMemberCursor(true, null, lastId)),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname"));
+
+        Assert.Contains(
+            "WHERE root.SortIsNull = 1 AND root.ProfileId > @",
+            result.Sql);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_FirstPage_HasNoKeysetPredicate()
+    {
+        var result = Compile(
+            TwoStageQuery(),
+            Options(stageOrder: 1, viewMode: "stage", cursor: null),
+            Table("dataverse", "contact", "contactid", "statecode", "address1_country", "fullname"));
+
+        Assert.DoesNotContain("SortIsNull = 1 AND root.ProfileId", result.Sql);
+        Assert.DoesNotContain("root.SortValue >", result.Sql);
+        Assert.DoesNotContain("root.SortValue <", result.Sql);
+    }
+
+    [Fact]
+    public void CompileMemberQuery_ReusesSameStageCtesAsCountCompilation()
+    {
+        var query = TwoStageQuery();
+        var catalog = Catalog(Table(
+            "dataverse",
+            "contact",
+            "contactid",
+            "statecode",
+            "address1_country",
+            "fullname"));
+
+        var countResult = new SegmentCountSqlCompiler().Compile(
+            new SegmentCountRequest { Query = query },
+            catalog);
+        var memberResult = new SegmentCountSqlCompiler().CompileMemberQuery(
+            query,
+            catalog,
+            Options(stageOrder: 1, viewMode: "stage"));
+
+        // Both compilations independently walk the same AST from a fresh
+        // CompilationContext. Extracting the exact, byte-identical CTE text
+        // for each shared stage from both outputs proves the member query
+        // reuses (rather than re-derives with different logic) the same
+        // compiled stage bodies used for counts.
+        var baseStageCte = ExtractCte(countResult.Sql, "profile_0");
+        var filterStageCte = ExtractCte(countResult.Sql, "profile_step_1");
+
+        Assert.Contains(baseStageCte, memberResult.Sql);
+        Assert.Contains(filterStageCte, memberResult.Sql);
+    }
+
+    private static string ExtractCte(string sql, string cteName)
+    {
+        var marker = "[" + cteName + "] AS";
+        var start = sql.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"Expected to find CTE '{cteName}' in SQL.");
+        var openParen = sql.IndexOf('(', start);
+        var depth = 0;
+        var end = openParen;
+        for (; end < sql.Length; end++)
+        {
+            if (sql[end] == '(')
+            {
+                depth++;
+            }
+            else if (sql[end] == ')')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    end++;
+                    break;
+                }
+            }
+        }
+
+        return sql[start..end];
+    }
+
+    private static string ExtractLastCteBody(string sql)
+    {
+        // The CTE *definition* ("[member_N] AS (") appears first in the WITH
+        // block; a later reference ("FROM [member_N] AS m") also matches the
+        // "[member_" prefix in the outer query, so use the first occurrence.
+        var memberIndex = sql.IndexOf("[member_", StringComparison.Ordinal);
+        Assert.True(memberIndex >= 0, "Expected a member_ CTE in generated SQL.");
+        var openParen = sql.IndexOf('(', memberIndex);
+        var selectIndex = sql.IndexOf("SELECT TOP", memberIndex, StringComparison.Ordinal);
+        Assert.True(selectIndex > openParen, sql);
+        return sql[openParen..selectIndex];
+    }
+
+    private static SegmentQueryNode TwoStageQuery()
+    {
+        return new SegmentQueryNode
+        {
+            FirstOperand = new SegmentOperand
+            {
+                Kind = "profile",
+                ProfileEntity = "contact",
+                BaseLabel = "Active contacts",
+                BaseDetail = "PROFILE(contact)",
+                Steps =
+                [
+                    new SegmentFilterStep
+                    {
+                        Kind = "profile",
+                        Label = "Country filter",
+                        Detail = "contact.address1_country == 'DE'",
+                        Condition = new SegmentCondition
+                        {
+                            Kind = "predicate",
+                            Field = "address1_country",
+                            Operator = "==",
+                            Value = Json("\"DE\"")
+                        }
+                    }
+                ]
+            }
+        };
+    }
+
+    private static SegmentMemberCompileOptions Options(
+        int stageOrder,
+        string viewMode,
+        string sortField = "fullname",
+        bool ascending = true,
+        string? search = null,
+        string? filterField = null,
+        string? filterOperator = null,
+        string? filterValue = null,
+        int pageSize = 10,
+        SegmentMemberCursor? cursor = null)
+    {
+        return new SegmentMemberCompileOptions(
+            stageOrder,
+            viewMode,
+            sortField,
+            ascending,
+            search,
+            filterField,
+            filterOperator,
+            filterValue,
+            pageSize,
+            cursor);
+    }
+
+    private static CompiledSegmentMemberQuery Compile(
+        SegmentQueryNode query,
+        SegmentMemberCompileOptions options,
+        params EventTableDescriptor[] tables)
+    {
+        return new SegmentCountSqlCompiler().CompileMemberQuery(query, Catalog(tables), options);
+    }
+
+    private static FabricSegmentCatalogSnapshot Catalog(params EventTableDescriptor[] tables)
+    {
+        return new FabricSegmentCatalogSnapshot(DateTimeOffset.UtcNow, tables);
+    }
+
+    private static EventTableDescriptor Table(string schema, string table, params string[] columns)
+    {
+        return new EventTableDescriptor(
+            schema,
+            table,
+            columns.ToDictionary(
+                IdentifierNormalizer.Normalize,
+                column => column,
+                StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static System.Text.Json.JsonElement Json(string json)
+    {
+        return System.Text.Json.JsonDocument.Parse(json).RootElement.Clone();
+    }
+}
+#endif

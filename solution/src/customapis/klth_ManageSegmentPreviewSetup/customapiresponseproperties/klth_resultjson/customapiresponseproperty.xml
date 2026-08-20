@@ -1,0 +1,11 @@
+<customapiresponseproperty uniquename="klth_resultjson">
+  <description default="Structured setup status.">
+    <label description="Structured setup status." languagecode="1033" />
+  </description>
+  <displayname default="Result JSON">
+    <label description="Result JSON" languagecode="1033" />
+  </displayname>
+  <iscustomizable>1</iscustomizable>
+  <name>klth_resultjson</name>
+  <type>10</type>
+</customapiresponseproperty>

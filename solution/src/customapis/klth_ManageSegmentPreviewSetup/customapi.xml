@@ -1,0 +1,19 @@
+<customapi uniquename="klth_ManageSegmentPreviewSetup">
+  <allowedcustomprocessingsteptype>0</allowedcustomprocessingsteptype>
+  <bindingtype>0</bindingtype>
+  <description default="Checks and provisions environment-specific Segment Preview dependencies.">
+    <label description="Checks and provisions environment-specific Segment Preview dependencies." languagecode="1033" />
+  </description>
+  <displayname default="Manage Segment Preview Setup">
+    <label description="Manage Segment Preview Setup" languagecode="1033" />
+  </displayname>
+  <executeprivilegename>prvWriteCustomization</executeprivilegename>
+  <iscustomizable>1</iscustomizable>
+  <isfunction>0</isfunction>
+  <isprivate>0</isprivate>
+  <name>Manage Segment Preview Setup</name>
+  <plugintypeid>
+    <plugintypeexportkey>444a9d53-869c-f111-b8dc-7ced8d762587</plugintypeexportkey>
+  </plugintypeid>
+  <workflowsdkstepenabled>0</workflowsdkstepenabled>
+</customapi>

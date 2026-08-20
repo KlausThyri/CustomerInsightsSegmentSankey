@@ -1,0 +1,55 @@
+#if FABRIC_API
+using Azure.Core;
+using Azure.Identity;
+using Microsoft.Data.SqlClient;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+internal sealed class FabricConnectionFactory
+{
+    private static readonly string[] SqlScopes = ["https://database.windows.net/.default"];
+    private readonly TokenCredential credential = new DefaultAzureCredential();
+    private readonly string connectionString;
+
+    public FabricConnectionFactory()
+    {
+        var server = RequiredSetting("FABRIC_SQL_SERVER");
+        var database = RequiredSetting("FABRIC_SQL_DATABASE");
+        var builder = new SqlConnectionStringBuilder
+        {
+            DataSource = server.Contains(',') ? server : server + ",1433",
+            InitialCatalog = database,
+            Encrypt = true,
+            TrustServerCertificate = false,
+            ConnectTimeout = 30,
+            Pooling = true
+        };
+        connectionString = builder.ConnectionString;
+    }
+
+    public async Task<SqlConnection> OpenAsync(CancellationToken cancellationToken)
+    {
+        var token = await credential.GetTokenAsync(
+            new TokenRequestContext(SqlScopes),
+            cancellationToken);
+        var connection = new SqlConnection(connectionString)
+        {
+            AccessToken = token.Token
+        };
+        await connection.OpenAsync(cancellationToken);
+        return connection;
+    }
+    #endif
+
+    private static string RequiredSetting(string name)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException(
+                $"The application setting '{name}' is not configured.");
+        }
+
+        return value.Trim();
+    }
+}

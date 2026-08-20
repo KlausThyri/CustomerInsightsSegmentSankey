@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Segment members</title>
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("scoutTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      background: var(--cp-bg);
+      color: var(--cp-text);
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+    }
+    button, input, select {
+      font: inherit;
+    }
+    .shell {
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 20px;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 24px;
+      font-weight: 600;
+    }
+    .subtitle {
+      color: var(--cp-text-muted);
+    }
+    .count {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 4px 12px;
+      border: 1px solid var(--cp-border);
+      border-radius: 0.625rem;
+      background: var(--cp-surface);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) 180px 140px minmax(180px, .8fr) auto;
+      gap: 8px;
+      padding: 16px;
+      border: 1px solid var(--cp-border);
+      border-radius: 16px 16px 0 0;
+      background: var(--cp-surface);
+    }
+    .control {
+      width: 100%;
+      height: 36px;
+      border: 1px solid var(--cp-border-strong);
+      border-radius: 0.625rem;
+      background: var(--cp-surface);
+      color: var(--cp-text);
+      padding: 0 10px;
+      outline: none;
+    }
+    .control:focus {
+      border-color: var(--cp-link);
+    }
+    .button {
+      min-height: 36px;
+      border: 1px solid var(--cp-border-strong);
+      border-radius: 0.625rem;
+      background: var(--cp-surface);
+      color: var(--cp-text);
+      padding: 0 16px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .button:hover:not(:disabled) {
+      background: var(--cp-surface-soft);
+    }
+    .button.primary {
+      border-color: var(--cp-accent);
+      background: var(--cp-accent);
+      color: var(--cp-accent-fg);
+    }
+    .button.primary:hover:not(:disabled) {
+      background: var(--cp-accent-hover);
+    }
+    .button:disabled {
+      cursor: default;
+      opacity: .55;
+    }
+    .table-card {
+      border: 1px solid var(--cp-border);
+      border-top: 0;
+      border-radius: 0 0 16px 16px;
+      background: var(--cp-surface);
+      overflow: hidden;
+      box-shadow: 0 0 2px var(--cp-border), 0 1px 2px var(--cp-border);
+    }
+    .status {
+      display: none;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--cp-border);
+      color: var(--cp-text-muted);
+    }
+    .status.visible { display: block; }
+    .status.error {
+      color: var(--cp-danger);
+      background: var(--cp-accent-soft);
+    }
+    .table-wrap {
+      min-height: 360px;
+      overflow: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--cp-border);
+      text-align: left;
+      vertical-align: middle;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--cp-surface-soft);
+      color: var(--cp-text-muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    th:nth-child(1) { width: 23%; }
+    th:nth-child(2) { width: 25%; }
+    th:nth-child(3) { width: 17%; }
+    th:nth-child(4) { width: 17%; }
+    th:nth-child(5) { width: 18%; }
+    .sort {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      cursor: pointer;
+      font-weight: inherit;
+    }
+    .sort.active { color: var(--cp-link); }
+    .contact-link {
+      border: 0;
+      background: transparent;
+      color: var(--cp-link);
+      padding: 0;
+      cursor: pointer;
+      text-align: left;
+      font-weight: 600;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    tbody tr:hover {
+      background: var(--cp-surface-soft);
+    }
+    .empty {
+      padding: 72px 24px;
+      text-align: center;
+      color: var(--cp-text-muted);
+    }
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 16px;
+      background: var(--cp-surface-soft);
+    }
+    .page-info { color: var(--cp-text-muted); }
+    .pager {
+      display: flex;
+      gap: 8px;
+    }
+    .spinner {
+      width: 18px;
+      height: 18px;
+      margin: 0 auto 12px;
+      border: 2px solid var(--cp-border);
+      border-top-color: var(--cp-accent);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 900px) {
+      .toolbar { grid-template-columns: 1fr 1fr; }
+      .toolbar .primary { grid-column: span 2; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div>
+        <h1 id="title">Segment members</h1>
+        <div class="subtitle" id="subtitle">Members in the selected flow element</div>
+      </div>
+      <div class="count" id="member-count">0 members</div>
+    </header>
+
+    <section aria-label="Member search and filters">
+      <div class="toolbar">
+        <input class="control" id="search" type="search"
+          placeholder="Search name or email" aria-label="Search name or email">
+        <select class="control" id="filter-field" aria-label="Filter field">
+          <option value="">No field filter</option>
+          <option value="fullname">Full name</option>
+          <option value="firstname">First name</option>
+          <option value="lastname">Last name</option>
+          <option value="emailaddress1">Email</option>
+          <option value="telephone1">Phone</option>
+          <option value="address1_city">City</option>
+        </select>
+        <select class="control" id="filter-operator" aria-label="Filter operator">
+          <option value="contains">Contains</option>
+          <option value="startsWith">Starts with</option>
+          <option value="equals">Equals</option>
+        </select>
+        <input class="control" id="filter-value" type="text"
+          placeholder="Filter value" aria-label="Filter value">
+        <button class="button primary" id="apply" type="button">Apply</button>
+      </div>
+
+      <div class="table-card">
+        <div class="status" id="status" role="status"></div>
+        <div class="table-wrap" id="table-wrap"></div>
+        <footer class="footer">
+          <div class="page-info" id="page-info">Page 1</div>
+          <div class="pager">
+            <button class="button" id="previous" type="button" disabled>Previous</button>
+            <button class="button" id="next" type="button" disabled>Next</button>
+          </div>
+        </footer>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const ACTION_NAME = "klth_GetSegmentMembers";
+      const PAGE_SIZE = 50;
+      const context = parseContext();
+      const state = {
+        rows: [],
+        page: 1,
+        tokenStack: [null],
+        nextToken: null,
+        hasMore: false,
+        loading: false,
+        sortField: "fullname",
+        sortDirection: "asc"
+      };
+      const columns = [
+        ["fullname", "Full name", true],
+        ["emailaddress1", "Email", true],
+        ["telephone1", "Phone", true],
+        ["address1_city", "City", true],
+        ["companyname", "Company", false]
+      ];
+
+      function parseContext() {
+        const raw = new URLSearchParams(window.location.search).get("data");
+        if (!raw) {
+          return {};
+        }
+        try {
+          return resolveStoredContext(JSON.parse(raw));
+        } catch {
+          try {
+            return resolveStoredContext(JSON.parse(decodeURIComponent(raw)));
+          } catch {
+            return {};
+          }
+        }
+
+        function resolveStoredContext(parsed) {
+          if (!parsed?.contextKey) {
+            return parsed || {};
+          }
+          try {
+            const item = window.top.__klthSegmentMemberContexts?.get(parsed.contextKey);
+            if (item && item.expiresAt > Date.now()) {
+              return item.value;
+            }
+          } catch {
+            return {};
+          }
+          return {};
+        }
+      }
+
+      function getXrm() {
+        return window.parent?.Xrm || window.opener?.Xrm || null;
+      }
+
+      function setStatus(message, kind) {
+        const status = document.getElementById("status");
+        status.textContent = message || "";
+        status.className = "status" + (message ? " visible" : "") +
+          (kind ? " " + kind : "");
+      }
+
+      function setLoading(loading) {
+        state.loading = loading;
+        document.getElementById("apply").disabled = loading;
+        document.getElementById("previous").disabled = loading || state.page <= 1;
+        document.getElementById("next").disabled = loading || !state.hasMore;
+        if (loading) {
+          document.getElementById("table-wrap").innerHTML =
+            '<div class="empty"><div class="spinner"></div>Loading members…</div>';
+        }
+      }
+
+      function requestShape() {
+        const field = document.getElementById("filter-field").value;
+        const filterValue = document.getElementById("filter-value").value.trim();
+        return {
+          evaluationToken: context.evaluationToken,
+          stageOrder: Number(context.stageOrder),
+          viewMode: context.viewMode || "stage",
+          search: document.getElementById("search").value.trim(),
+          filterField: field && filterValue ? field : null,
+          filterOperator: field && filterValue
+            ? document.getElementById("filter-operator").value
+            : null,
+          filterValue: field ? filterValue : null,
+          sortField: state.sortField,
+          sortDirection: state.sortDirection,
+          pageSize: PAGE_SIZE,
+          continuationToken: state.tokenStack[state.page - 1]
+        };
+      }
+
+      async function executeRequest() {
+        const xrm = getXrm();
+        if (!xrm) {
+          return demoResult();
+        }
+        const response = await fetch(
+          xrm.Utility.getGlobalContext().getClientUrl() +
+            "/api/data/v9.2/" + ACTION_NAME,
+          {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Accept": "application/json",
+              "Content-Type": "application/json; charset=utf-8",
+              "OData-MaxVersion": "4.0",
+              "OData-Version": "4.0"
+            },
+            body: JSON.stringify({
+              klth_requestjson: JSON.stringify(requestShape())
+            })
+          }
+        );
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            body?.error?.message || "The member provider returned HTTP " + response.status + "."
+          );
+        }
+        return typeof body.klth_resultjson === "string"
+          ? JSON.parse(body.klth_resultjson)
+          : body;
+      }
+
+      function demoResult() {
+        return {
+          rows: [
+            {
+              id: "11111111-1111-1111-1111-111111111111",
+              fullname: "Adele Vance",
+              emailaddress1: "adele@example.com",
+              telephone1: "+1 555 0100",
+              address1_city: "Vienna",
+              companyname: "Contoso"
+            },
+            {
+              id: "22222222-2222-2222-2222-222222222222",
+              fullname: "Alex Wilber",
+              emailaddress1: "alex@example.com",
+              telephone1: "+1 555 0101",
+              address1_city: "Berlin",
+              companyname: "Fabrikam"
+            }
+          ],
+          nextToken: null,
+          hasMore: false
+        };
+      }
+
+      async function load() {
+        if (state.loading) {
+          return;
+        }
+        setLoading(true);
+        setStatus("", "");
+        try {
+          const result = await executeRequest();
+          state.rows = Array.isArray(result.rows) ? result.rows : [];
+          state.nextToken = result.nextToken || null;
+          state.hasMore = Boolean(result.hasMore && result.nextToken);
+          renderTable();
+        } catch (error) {
+          state.rows = [];
+          state.nextToken = null;
+          state.hasMore = false;
+          document.getElementById("table-wrap").innerHTML =
+            '<div class="empty">Members could not be loaded.</div>';
+          setStatus(error.message || "Members could not be loaded.", "error");
+        } finally {
+          setLoading(false);
+          document.getElementById("page-info").textContent = "Page " + state.page;
+        }
+      }
+
+      function renderTable() {
+        const host = document.getElementById("table-wrap");
+        host.replaceChildren();
+        if (!state.rows.length) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No accessible contacts match this selection.";
+          host.append(empty);
+          return;
+        }
+
+        const table = document.createElement("table");
+        const head = document.createElement("thead");
+        const headRow = document.createElement("tr");
+        for (const [field, label, sortable] of columns) {
+          const th = document.createElement("th");
+          if (!sortable) {
+            th.textContent = label;
+            headRow.append(th);
+            continue;
+          }
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "sort" + (state.sortField === field ? " active" : "");
+          button.textContent = label +
+            (state.sortField === field
+              ? state.sortDirection === "asc" ? " ↑" : " ↓"
+              : "");
+          button.addEventListener("click", () => {
+            state.sortDirection = state.sortField === field &&
+              state.sortDirection === "asc" ? "desc" : "asc";
+            state.sortField = field;
+            resetPaging();
+            load();
+          });
+          th.append(button);
+          headRow.append(th);
+        }
+        head.append(headRow);
+        table.append(head);
+
+        const body = document.createElement("tbody");
+        for (const row of state.rows) {
+          const tr = document.createElement("tr");
+          columns.forEach(([field], index) => {
+            const td = document.createElement("td");
+            const value = row[field] || "";
+            td.title = value;
+            if (index === 0) {
+              const link = document.createElement("button");
+              link.type = "button";
+              link.className = "contact-link";
+              link.textContent = value || "(No name)";
+              link.addEventListener("click", () => openContact(row.id));
+              td.append(link);
+            } else {
+              td.textContent = value;
+            }
+            tr.append(td);
+          });
+          body.append(tr);
+        }
+        table.append(body);
+        host.append(table);
+      }
+
+      function openContact(id) {
+        const xrm = getXrm();
+        if (xrm?.Navigation?.openForm) {
+          xrm.Navigation.openForm({
+            entityName: "contact",
+            entityId: id,
+            openInNewWindow: true
+          });
+        }
+      }
+
+      function resetPaging() {
+        state.page = 1;
+        state.tokenStack = [null];
+        state.nextToken = null;
+        state.hasMore = false;
+      }
+
+      document.getElementById("apply").addEventListener("click", () => {
+        resetPaging();
+        load();
+      });
+      document.getElementById("search").addEventListener("keydown", event => {
+        if (event.key === "Enter") {
+          resetPaging();
+          load();
+        }
+      });
+      document.getElementById("filter-value").addEventListener("keydown", event => {
+        if (event.key === "Enter") {
+          resetPaging();
+          load();
+        }
+      });
+      document.getElementById("previous").addEventListener("click", () => {
+        if (state.page > 1) {
+          state.page -= 1;
+          load();
+        }
+      });
+      document.getElementById("next").addEventListener("click", () => {
+        if (state.hasMore && state.nextToken) {
+          state.tokenStack[state.page] = state.nextToken;
+          state.page += 1;
+          load();
+        }
+      });
+
+      document.getElementById("title").textContent =
+        context.title || "Segment members";
+      document.getElementById("subtitle").textContent =
+        context.subtitle || "Members in the selected flow element";
+      const expectedCount = Number(context.memberCount);
+      document.getElementById("member-count").textContent =
+        Number.isFinite(expectedCount)
+          ? new Intl.NumberFormat("en-US").format(expectedCount) + " members"
+          : "Members";
+      load();
+    })();
+  </script>
+</body>
+</html>

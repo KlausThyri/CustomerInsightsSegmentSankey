@@ -1,0 +1,18 @@
+<customapi uniquename="klth_GetSegmentMembers">
+  <allowedcustomprocessingsteptype>0</allowedcustomprocessingsteptype>
+  <bindingtype>0</bindingtype>
+  <description default="Returns a security-trimmed page of contacts for a selected segment preview element.">
+    <label description="Returns a security-trimmed page of contacts for a selected segment preview element." languagecode="1033" />
+  </description>
+  <displayname default="Get Segment Members">
+    <label description="Get Segment Members" languagecode="1033" />
+  </displayname>
+  <iscustomizable>1</iscustomizable>
+  <isfunction>0</isfunction>
+  <isprivate>0</isprivate>
+  <name>Get Segment Members</name>
+  <plugintypeid>
+    <plugintypeexportkey>03efc3ba-e79b-f111-b8dc-7ced8d762587</plugintypeexportkey>
+  </plugintypeid>
+  <workflowsdkstepenabled>0</workflowsdkstepenabled>
+</customapi>

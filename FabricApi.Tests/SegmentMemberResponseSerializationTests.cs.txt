@@ -1,0 +1,111 @@
+#if FABRIC_API
+using System.Text.Json;
+using CustomerInsightsSegmentSankey.FabricApi;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+/// <summary>
+/// Locks in the exact wire shape of <see cref="SegmentMemberResponse"/> as
+/// consumed by CustomApi's <c>GetSegmentMembersPlugin</c>, which deserializes
+/// the Fabric response using <c>DataContractJsonSerializer</c> into a DTO with
+/// <c>[DataMember(Name = "...")]</c> camelCase keys, a <c>string GeneratedAt</c>
+/// member, and a <c>List&lt;Guid&gt; ProfileIds</c> member. ASP.NET Core's
+/// minimal API serializes with <see cref="JsonSerializerDefaults.Web"/>
+/// (camelCase, no extra converters), so these tests reproduce that exact
+/// serializer configuration rather than assuming it.
+/// </summary>
+public sealed class SegmentMemberResponseSerializationTests
+{
+    private static readonly JsonSerializerOptions WebDefaults = new(JsonSerializerDefaults.Web);
+
+    [Fact]
+    public void SegmentMemberResponse_SerializesWithExpectedCamelCasePropertyNames()
+    {
+        var response = new SegmentMemberResponse
+        {
+            ProfileEntity = "contact",
+            ProfileIds = [Guid.Parse("3fa85f64-5717-4562-b3fc-2c963f66afa6")],
+            NextToken = "abc",
+            HasMore = true,
+            GeneratedAt = DateTimeOffset.UtcNow.ToString("o")
+        };
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(response, WebDefaults));
+        var root = document.RootElement;
+
+        Assert.True(root.TryGetProperty("profileEntity", out _));
+        Assert.True(root.TryGetProperty("profileIds", out _));
+        Assert.True(root.TryGetProperty("nextToken", out _));
+        Assert.True(root.TryGetProperty("hasMore", out _));
+        Assert.True(root.TryGetProperty("generatedAt", out _));
+    }
+
+    [Fact]
+    public void SegmentMemberResponse_GeneratedAt_IsAPlainJsonStringInIso8601Format()
+    {
+        var generatedAt = DateTimeOffset.UtcNow.ToString("o");
+        var response = new SegmentMemberResponse { GeneratedAt = generatedAt };
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(response, WebDefaults));
+        var property = document.RootElement.GetProperty("generatedAt");
+
+        // Must be a bare JSON string token - never a nested object such as
+        // DataContractJsonSerializer's own "/Date(1700000000000)/" notation -
+        // so that a consumer deserializing into a plain `string` member (as
+        // CustomApi's FabricSegmentMemberPage.GeneratedAt does) succeeds.
+        Assert.Equal(JsonValueKind.String, property.ValueKind);
+        Assert.Equal(generatedAt, property.GetString());
+        Assert.True(DateTimeOffset.TryParse(property.GetString(), out _));
+    }
+
+    [Fact]
+    public void SegmentMemberResponse_ProfileIds_SerializeAsJsonArrayOfGuidStrings()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        var response = new SegmentMemberResponse { ProfileIds = [first, second] };
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(response, WebDefaults));
+        var array = document.RootElement.GetProperty("profileIds");
+
+        Assert.Equal(JsonValueKind.Array, array.ValueKind);
+        Assert.Equal(2, array.GetArrayLength());
+        foreach (var element in array.EnumerateArray())
+        {
+            Assert.Equal(JsonValueKind.String, element.ValueKind);
+            Assert.True(Guid.TryParse(element.GetString(), out _));
+        }
+
+        Assert.Equal(first, array[0].GetGuid());
+        Assert.Equal(second, array[1].GetGuid());
+    }
+
+    [Fact]
+    public void SegmentMemberResponse_ProfileIds_EmptyList_SerializesAsEmptyArray_NoPii()
+    {
+        var response = new SegmentMemberResponse
+        {
+            ProfileEntity = "contact",
+            ProfileIds = [],
+            NextToken = null,
+            HasMore = false,
+            GeneratedAt = DateTimeOffset.UtcNow.ToString("o")
+        };
+
+        var json = JsonSerializer.Serialize(response, WebDefaults);
+
+        using var document = JsonDocument.Parse(json);
+        var array = document.RootElement.GetProperty("profileIds");
+        Assert.Equal(JsonValueKind.Array, array.ValueKind);
+        Assert.Equal(0, array.GetArrayLength());
+
+        // Defense-in-depth: the response contract must never carry PII field
+        // names such as name/email/phone alongside the profile identifiers.
+        Assert.False(document.RootElement.TryGetProperty("fullname", out _));
+        Assert.False(document.RootElement.TryGetProperty("email", out _));
+        Assert.False(document.RootElement.TryGetProperty("emailaddress1", out _));
+        Assert.False(document.RootElement.TryGetProperty("telephone1", out _));
+    }
+}
+#endif
