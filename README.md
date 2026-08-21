@@ -4,15 +4,86 @@ Side-pane preview for draft segments in Dynamics 365 Customer Insights - Journey
 
 ## Downloads and installation
 
+**Import the solution, open the setup page, press one button. Nothing is
+installed on your computer.**
+
+1. Import
+   [`CustomerInsightsSegmentPreview_managed.zip`](deployment/dataverse/CustomerInsightsSegmentPreview_managed.zip)
+   into an environment where Customer Insights - Journeys is installed.
+2. Open **Settings > Overview > Segment Preview**.
+3. First time only: expand **Connect this environment**. The page shows the exact
+   redirect URI and permission list, opens the Microsoft Entra admin center for
+   you, and writes the resulting client id back. About two minutes, all in the
+   browser.
+4. Press **Preview** to see the plan and the consent checklist, then
+   **Install everything** and sign in once when the pop-up appears.
+
+The Setup Center deploys the Azure infrastructure and API, discovers or creates
+the Fabric workspace, serving lakehouse, bootstrap notebook and workspace
+permissions, generates the server-side API key, writes the Dataverse environment
+variable values, and verifies the result. It is idempotent and resumable: close
+the page and reopen it and completed steps are skipped.
+
+The two steps that look as if they need a build machine do not. The bootstrap
+notebook ships **inside the solution** as a Jupyter definition, so the browser
+substitutes the resolved workspace and lakehouse ids and publishes it through the
+Fabric item-definition API. The API is deployed as a verified package copy, and
+the copy happens inside Azure rather than in the browser: the page hands the
+pinned release URL and its SHA-256 to the Azure deployment, which downloads the
+ZIP, checks the digest, and stores it as an immutable blob in a private storage
+account in **your own resource group**. The Web App then reads that blob with its
+own managed identity — no shared access signature, nothing that expires. Nothing
+is built, downloaded or executed on your machine.
+
+**Everything stays yours.** The Entra application, the Azure resource group, Web
+App, storage account and Application Insights, the Fabric workspace and lakehouse,
+and every Dataverse value are created in and owned by your own tenant and subscription.
+The API package is copied into your own storage during installation, so the running
+system depends on no service operated by anyone else. No data and no credential
+leaves your tenant.
+
+> **Why the environment has to be connected first.** The page provisions the
+> Azure API the product later talks to, so it cannot use that API to bootstrap
+> itself, and a Dataverse session grants no Azure or Fabric rights. Something must
+> hold delegated Azure/Fabric permissions, and that needs an Entra application.
+> So the first time you open the page you register one **in your own tenant** — a
+> single-page public client with no secret, guided end to end from the page, which
+> you can delete once setup is done.
+>
+> This repository ships **no** client id, service URL or secret and never invents
+> one. An **optional** hosted-service (broker) mode also exists for organisations
+> that would rather run one service than register one app per environment; its
+> source and tests live in [`Broker/`](Broker/), no instance is hosted, and it is
+> never required. Until the environment is connected the Setup Center honestly
+> reports `manual` mode and renders the checklist. See
+> [`documentation/setup-center-contract.md`](documentation/setup-center-contract.md).
+
+A PowerShell orchestrator is also available for CI and scripted re-deployments.
+It is **optional and never required**; run it locally or in
+[Azure Cloud Shell](https://shell.azure.com):
+
+```powershell
+pwsh -File .\deployment\Install-SegmentPreview.ps1 `
+  -DataverseEnvironmentUrl https://contoso.crm4.dynamics.com `
+  -ResourceGroup rg-segment-preview `
+  -WebAppName contoso-segment-preview `
+  -FabricWorkspaceName "Customer Insights Serving"
+```
+
+Run it with `-ConsentReportOnly` first to see the execution plan and the few
+tenant consents that remain interactive.
+
+- [Installation guide, automation coverage, and consent matrix](deployment/README.md)
+- [Setup Center contract](documentation/setup-center-contract.md)
+- [Optional PowerShell orchestrator](deployment/Install-SegmentPreview.ps1)
 - [Managed Dataverse Solution](deployment/dataverse/CustomerInsightsSegmentPreview_managed.zip)
 - [Unmanaged Dataverse Solution](deployment/dataverse/CustomerInsightsSegmentPreview.zip)
-- [Installation guide](deployment/README.md)
 - [System Architecture (PDF)](documentation/CustomerInsightsSegmentSankey-SystemArchitecture.pdf)
 - [System Architecture (Word)](documentation/CustomerInsightsSegmentSankey-SystemArchitecture.docx)
 - [Editable architecture diagrams](documentation/diagrams/)
 
 For production installations, the Managed Solution should be used. The
-GitHub release `v1.0.0` additionally contains a complete download package with
+GitHub release `v1.1.0` additionally contains a complete download package with
 source code, deployment templates, documentation, and both Dataverse solutions.
 
 ## Included web resources
@@ -23,9 +94,13 @@ source code, deployment templates, documentation, and both Dataverse solutions.
 | `webresources/segment-sankey.html` | `klth_/SegmentSankey/segment-sankey.html` | HTML |
 | `webresources/segment-members.html` | `klth_/SegmentSankey/segment-members.html` | HTML |
 | `webresources/segment-preview-setup.html` | `klth_/SegmentSankey/segment-preview-setup.html` | HTML |
+| `webresources/segment-preview-provisioning.js` | `klth_/SegmentSankey/segment-preview-provisioning.js` | JavaScript |
+| `webresources/segment-preview-azure-template.js` | `klth_/SegmentSankey/segment-preview-azure-template.js` | JavaScript |
 | `webresources/segment-sankey-icon.svg` | `klth_/SegmentSankey/segment-sankey-icon.svg` | SVG |
 
 The resource names use the `klth` publisher prefix of the target solution.
+`segment-preview-azure-template.js` is generated from `deployment/azure/main.bicep`;
+regenerate it with `deployment/azure/Update-AzureTemplateWebResource.ps1`.
 
 ## Installable solution
 
@@ -35,10 +110,12 @@ plugins, custom APIs, environment variable definitions, web resources, the
 segment command, and the new **Segment Preview** menu item under
 **Settings > Overview** of the Customer Insights - Journeys app.
 
-After import, the setup center checks the state of Dataverse, Azure, and
-Fabric. Missing Dataverse shortcuts can be installed directly and idempotently.
-The Azure infrastructure is provisioned reproducibly via
-`deployment/azure/main.bicep`. The full process is described in
+After import, the Setup Center provisions and checks the state of Dataverse,
+Azure, and Fabric. Missing Dataverse shortcuts can be installed directly and
+idempotently. The Azure infrastructure is provisioned reproducibly from
+`deployment/azure/main.bicep`. `deployment/Install-SegmentPreview.ps1` automates
+the same installation from a shell; the full process, the automation coverage
+matrix, and the remaining interactive consents are described in
 `deployment/README.md`.
 
 ## Command bar setup
@@ -201,6 +278,13 @@ The names of these two environment variables originate from an earlier
 architecture and are kept unchanged for compatibility reasons; today they
 apply to all Fabric API calls (`/api/segment-counts` and
 `/api/fabric-dependencies`), not only to behavioral-specific queries.
+
+The Setup Center adds five optional variables that ship without default values:
+`klth_SetupProvisioningMode`, `klth_SetupBrokerUrl`, `klth_SetupBrokerScope`,
+`klth_SetupEntraClientId` and `klth_SetupConfiguration`. They configure the
+bootstrap path and hold the resume record; secrets are stripped before the
+configuration is written. See
+[`documentation/setup-center-contract.md`](documentation/setup-center-contract.md).
 
 The key must not be stored in JavaScript web resources or source code.
 The web app authenticates to the Fabric SQL endpoint via managed identity.

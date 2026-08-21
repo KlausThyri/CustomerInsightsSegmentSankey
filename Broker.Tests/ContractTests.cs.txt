@@ -1,0 +1,83 @@
+using System.Text.RegularExpressions;
+using CustomerInsightsSegmentSankey.Broker;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.Broker.Tests;
+
+/// <summary>
+/// The service, the browser engine and the published contract document describe one
+/// protocol. These tests fail the build as soon as the three drift apart.
+/// </summary>
+public class ContractTests
+{
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "webresources", "segment-preview-provisioning.js")))
+        {
+            directory = directory.Parent;
+        }
+        Assert.NotNull(directory);
+        return directory!.FullName;
+    }
+
+    private static string EngineSource() =>
+        File.ReadAllText(Path.Combine(RepositoryRoot(), "webresources", "segment-preview-provisioning.js"));
+
+    [Fact]
+    public void StepIdsMatchTheBrowserEngine()
+    {
+        var source = EngineSource();
+        var array = Regex.Match(source, @"var STEPS = \[(.*?)\];", RegexOptions.Singleline);
+        Assert.True(array.Success, "The STEPS array was not found in the browser engine.");
+
+        var ids = Regex.Matches(array.Groups[1].Value, "id: \"([^\"]+)\"")
+            .Select(match => match.Groups[1].Value)
+            .ToArray();
+
+        Assert.Equal(ids, BrokerContract.Steps);
+    }
+
+    [Fact]
+    public void ContractVersionMatchesTheBrowserEngine()
+    {
+        var version = Regex.Match(EngineSource(), "var CONTRACT_VERSION = \"([^\"]+)\"");
+        Assert.True(version.Success, "CONTRACT_VERSION was not found in the browser engine.");
+        Assert.Equal(BrokerContract.Version, version.Groups[1].Value);
+    }
+
+    [Fact]
+    public void MessageTypeAndHeaderMatchTheBrowserEngine()
+    {
+        var source = EngineSource();
+        var messageType = Regex.Match(source, "var BROKER_MESSAGE_TYPE = \"([^\"]+)\"");
+        Assert.True(messageType.Success, "BROKER_MESSAGE_TYPE was not found in the browser engine.");
+        Assert.Equal(BrokerContract.MessageType, messageType.Groups[1].Value);
+        Assert.Contains(BrokerContract.HeaderName, source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ContractDocumentDescribesTheSameVersion()
+    {
+        var document = File.ReadAllText(Path.Combine(RepositoryRoot(), "documentation", "setup-center-contract.md"));
+        Assert.Contains(BrokerContract.Version, document, StringComparison.Ordinal);
+        Assert.Contains(BrokerContract.HeaderName, document, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BrowserOwnedStepsAreASubsetOfTheSteps()
+    {
+        Assert.All(BrokerContract.BrowserOwnedSteps, step => Assert.Contains(step, BrokerContract.Steps));
+    }
+
+    [Theory]
+    [InlineData("1.1", true)]
+    [InlineData("1.0", true)]
+    [InlineData("1.9", true)]
+    [InlineData("2.0", false)]
+    [InlineData("0.9", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void MajorVersionNegotiation(string? requested, bool expected) =>
+        Assert.Equal(expected, BrokerContract.IsCompatible(requested));
+}

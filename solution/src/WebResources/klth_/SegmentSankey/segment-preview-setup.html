@@ -260,6 +260,118 @@
       animation: spin .85s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Setup center */
+    .panel {
+      margin-bottom: 20px;
+      border: 1px solid var(--cp-border);
+      border-radius: 16px;
+      padding: 20px;
+      background: var(--cp-surface);
+      box-shadow: 0 0 2px var(--cp-border), 0 1px 2px var(--cp-border);
+    }
+    .panel h2 { margin: 0 0 6px; font-size: 17px; }
+    .panel p.lead { margin: 0 0 16px; color: var(--cp-text-muted); line-height: 1.5; }
+    .mode-banner {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 16px;
+      border: 1px solid var(--cp-border);
+      border-left: 4px solid var(--cp-warning);
+      border-radius: .625rem;
+      padding: 12px 16px;
+      background: var(--cp-surface-soft);
+      line-height: 1.5;
+    }
+    .mode-banner.automated { border-left-color: var(--cp-success); }
+    .mode-banner strong { display: block; margin-bottom: 4px; }
+    .mode-banner ul { margin: 8px 0 0; padding-left: 20px; }
+    .mode-banner li { margin: 4px 0; }
+    .connect {
+      margin-bottom: 16px;
+      border: 1px solid var(--cp-border);
+      border-radius: .625rem;
+      padding: 12px 16px;
+      background: var(--cp-surface-soft);
+    }
+    .connect > summary { cursor: pointer; font-weight: 600; }
+    .connect-body { margin-top: 12px; display: flex; flex-direction: column; gap: 14px; }
+    .connect-steps { margin: 0; padding-left: 20px; line-height: 1.6; }
+    .connect-steps li { margin: 2px 0; }
+    .connect-permissions { margin: 0; padding-left: 20px; line-height: 1.6; }
+    .copy-row { display: flex; gap: 8px; align-items: stretch; }
+    .copy-row input { flex: 1 1 auto; min-width: 0; }
+    .label-like { color: var(--cp-text-muted); font-size: 12px; font-weight: 600; }
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+    }
+    .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .field label { color: var(--cp-text-muted); font-size: 12px; font-weight: 600; }
+    .field input {
+      min-height: 38px;
+      border: 1px solid var(--cp-border-strong);
+      border-radius: .5rem;
+      padding: 6px 10px;
+      background: var(--cp-bg-elevated);
+      color: var(--cp-text);
+      font: inherit;
+    }
+    .field input:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 1px; }
+    .field input[aria-invalid="true"] { border-color: var(--cp-danger); }
+    .field .hint { color: var(--cp-text-soft); font-size: 11px; line-height: 1.4; }
+    .field .error { color: var(--cp-danger); font-size: 11px; }
+    .panel-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .panel-actions .note { color: var(--cp-text-soft); font-size: 12px; }
+    .steps { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .step {
+      display: grid;
+      grid-template-columns: 26px 1fr auto;
+      align-items: start;
+      gap: 12px;
+      border: 1px solid var(--cp-border);
+      border-radius: .625rem;
+      padding: 10px 14px;
+      background: var(--cp-bg-elevated);
+    }
+    .step .step-mark {
+      display: grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--cp-surface-soft);
+      color: var(--cp-text-soft);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .step-name { font-weight: 600; }
+    .step-message { margin: 3px 0 0; color: var(--cp-text-muted); font-size: 12px; line-height: 1.45; }
+    .step-phase { color: var(--cp-text-soft); font-size: 11px; white-space: nowrap; }
+    .step.running { border-color: var(--cp-accent); }
+    .step.running .step-mark { color: var(--cp-accent); }
+    .step.succeeded .step-mark, .step.resumed .step-mark { color: var(--cp-success); }
+    .step.failed { border-color: var(--cp-danger); }
+    .step.failed .step-mark { color: var(--cp-danger); }
+    .step.skipped { opacity: .65; }
+    .consent-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+    .consent-item {
+      border-left: 3px solid var(--cp-border-strong);
+      padding-left: 12px;
+      line-height: 1.5;
+    }
+    .consent-item.manual { border-left-color: var(--cp-warning); }
+    .consent-item .role { color: var(--cp-text-soft); font-size: 11px; }
+    .consent-item .guide { margin: 3px 0 0; color: var(--cp-text-muted); font-size: 12px; }
+    .manual-list { margin: 12px 0 0; padding-left: 20px; color: var(--cp-text-muted); line-height: 1.5; }
     @media (max-width: 720px) {
       .page { width: min(100% - 24px, 1180px); padding-top: 24px; }
       .hero { flex-direction: column; }
@@ -267,6 +379,8 @@
       .summary { grid-template-columns: auto 1fr; }
       .summary-meta { grid-column: 2; text-align: left; }
       .cards { grid-template-columns: 1fr; }
+      .step { grid-template-columns: 26px 1fr; }
+      .step-phase { grid-column: 2; }
     }
   </style>
 </head>
@@ -283,7 +397,9 @@
       </div>
       <div class="toolbar">
         <button class="button" id="refreshButton" type="button">Refresh status</button>
-        <button class="button primary" id="installButton" type="button">Install missing components</button>
+        <button class="button" id="previewButton" type="button">Preview run</button>
+        <button class="button" id="startOverButton" type="button">Start over</button>
+        <button class="button primary" id="provisionButton" type="button">Install everything</button>
       </div>
     </header>
 
@@ -297,14 +413,145 @@
     </section>
 
     <div class="notice" id="notice" role="status" hidden></div>
+
+    <section class="panel" id="setupCenter" hidden>
+      <h2>One-click installation</h2>
+      <p class="lead">
+        Enter the target subscription and Fabric workspace once, then press
+        <strong>Install everything</strong>. The setup center generates the API key, deploys the
+        Azure resources, prepares Fabric, and writes the environment variables of this solution.
+        Everything it creates is owned by your own tenant and subscription; no data and no resource
+        leaves them.
+      </p>
+
+      <div class="mode-banner" id="modeBanner" hidden></div>
+
+      <details class="connect" id="connectPanel" hidden>
+        <summary id="connectSummary">Connect this environment</summary>
+        <div class="connect-body">
+          <p class="lead" id="connectLead">
+            Installing uses a single-page application that you register once in your own tenant.
+            This page shows the exact redirect URI and permissions and opens the Microsoft Entra
+            admin center for you. Every resource the installation creates stays in your tenant and
+            your subscription, and nothing is installed on your computer.
+          </p>
+          <ol class="connect-steps" id="connectSteps"></ol>
+          <div class="field">
+            <label for="connectRedirectUri">Redirect URI to register (Single-page application)</label>
+            <div class="copy-row">
+              <input id="connectRedirectUri" type="text" readonly spellcheck="false" />
+              <button class="button" id="copyRedirectButton" type="button">Copy</button>
+            </div>
+          </div>
+          <div class="field">
+            <span class="label-like">Delegated API permissions to add</span>
+            <ul class="connect-permissions" id="connectPermissions"></ul>
+          </div>
+          <div class="field">
+            <label for="connectClientId">Application (client) ID</label>
+            <input id="connectClientId" type="text" autocomplete="off" spellcheck="false"
+                   placeholder="00000000-0000-0000-0000-000000000000" />
+            <p class="error" id="connectClientIdError" hidden></p>
+          </div>
+          <div class="panel-actions">
+            <button class="button" id="openPortalButton" type="button">Open app registrations</button>
+            <button class="button primary" id="connectSaveButton" type="button">Save and connect</button>
+            <button class="button" id="adminConsentButton" type="button" hidden>Grant admin consent</button>
+          </div>
+
+          <details class="connect" id="advancedPanel">
+            <summary id="advancedSummary">Optional: use a hosted provisioning service instead</summary>
+            <div class="connect-body">
+              <p class="lead" id="advancedLead">
+                Optional, and not required for self-service installation. If your organisation runs a
+                provisioning service, this page signs you in on that service instead of registering an
+                application here. The service acts with your delegated permissions; the Azure, Fabric
+                and Dataverse resources still belong to your own tenant.
+              </p>
+              <div class="mode-banner" id="brokerState" hidden></div>
+              <ol class="connect-steps" id="advancedSteps"></ol>
+              <div class="field">
+                <label for="connectBrokerUrl">Provisioning service URL</label>
+                <div class="copy-row">
+                  <input id="connectBrokerUrl" type="url" autocomplete="off" spellcheck="false"
+                         placeholder="https://provisioning.example.com" />
+                  <button class="button" id="connectBrokerSaveButton" type="button">Save service URL</button>
+                </div>
+                <p class="error" id="connectBrokerError" hidden></p>
+              </div>
+            </div>
+          </details>
+
+          <details class="connect" id="packagePanel">
+            <summary id="packageSummary">Optional: mirror the API package yourself</summary>
+            <div class="connect-body">
+              <p class="lead" id="packageLead">
+                The installation downloads the published API package once, checks it against the SHA-256
+                digest below, then copies the verified bytes into a storage account in your own resource
+                group. From that moment the Web App only ever reads the copy you own. Leave this empty to
+                use the package that ships with this version. If your organisation mirrors release assets,
+                paste the https URL of your own copy together with the SHA-256 of that exact file.
+              </p>
+              <div class="mode-banner" id="packageState" hidden></div>
+              <div class="field">
+                <label for="connectPackageUrl">API package URL</label>
+                <input id="connectPackageUrl" type="url" autocomplete="off" spellcheck="false"
+                       placeholder="https://storage.example.com/segment-preview-api.zip" />
+              </div>
+              <div class="field">
+                <label for="connectPackageSha">API package SHA-256</label>
+                <div class="copy-row">
+                  <input id="connectPackageSha" type="text" autocomplete="off" spellcheck="false"
+                         placeholder="64 hexadecimal characters" />
+                  <button class="button" id="connectPackageSaveButton" type="button">Save package</button>
+                </div>
+                <p class="error" id="connectPackageError" hidden></p>
+              </div>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <div class="mode-banner" id="sessionBanner" hidden></div>
+
+      <div class="field-grid" id="targetFields"></div>
+
+      <div class="panel-actions">
+        <button class="button primary" id="panelProvisionButton" type="button">Install everything</button>
+        <button class="button" id="panelPreviewButton" type="button">Preview run</button>
+        <button class="button" id="saveButton" type="button">Save settings</button>
+        <span class="note" id="panelNote"></span>
+      </div>
+
+      <ol class="steps" id="progressList" style="margin-top:18px" hidden></ol>
+      <ul class="manual-list" id="manualList" hidden></ul>
+
+      <details style="margin-top:18px">
+        <summary>Interactive steps that Microsoft requires</summary>
+        <ul class="consent-list" id="consentList" style="margin-top:12px"></ul>
+      </details>
+    </section>
+
     <div class="groups" id="groups">
       <div class="empty"><span class="spinner" aria-hidden="true"></span></div>
     </div>
   </main>
 
+  <script src="segment-preview-azure-template.js"></script>
+  <script src="segment-preview-payload.js"></script>
+  <script src="segment-preview-provisioning.js"></script>
+
   <script>
     (() => {
       "use strict";
+
+      // This page is also the OAuth redirect URI. When it loads inside the
+      // sign-in popup the opener reads the authorization code from the URL and
+      // closes the window, so the setup center itself must not start here.
+      if (window.opener && window.opener !== window && /[#?].*\b(code|error)=/.test(window.location.href)) {
+        document.body.textContent = "Signing in\u2026 you can close this window.";
+        return;
+      }
 
       const ACTION_NAME = "klth_ManageSegmentPreviewSetup";
       const stateLabels = {
@@ -336,7 +583,7 @@
         warning: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 2.5 20h19L12 3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 9v4m0 3h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
         error: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="m9 9 6 6m0-6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
       };
-      const state = { loading: false, result: null };
+      const state = { loading: false, result: null, setup: null, target: null };
 
       const groupsHost = document.getElementById("groups");
       const summary = document.getElementById("summary");
@@ -346,7 +593,62 @@
       const summaryMeta = document.getElementById("summaryMeta");
       const notice = document.getElementById("notice");
       const refreshButton = document.getElementById("refreshButton");
-      const installButton = document.getElementById("installButton");
+      const previewButton = document.getElementById("previewButton");
+      const provisionButton = document.getElementById("provisionButton");
+      const setupCenter = document.getElementById("setupCenter");
+      const modeBanner = document.getElementById("modeBanner");
+      const targetFields = document.getElementById("targetFields");
+      const progressList = document.getElementById("progressList");
+      const manualList = document.getElementById("manualList");
+      const consentList = document.getElementById("consentList");
+      const panelNote = document.getElementById("panelNote");
+      const panelProvisionButton = document.getElementById("panelProvisionButton");
+      const panelPreviewButton = document.getElementById("panelPreviewButton");
+      const saveButton = document.getElementById("saveButton");
+      const connectPanel = document.getElementById("connectPanel");
+      const connectSummary = document.getElementById("connectSummary");
+      const connectLead = document.getElementById("connectLead");
+      const connectSteps = document.getElementById("connectSteps");
+      const brokerState = document.getElementById("brokerState");
+      const connectBrokerUrl = document.getElementById("connectBrokerUrl");
+      const connectBrokerError = document.getElementById("connectBrokerError");
+      const connectBrokerSaveButton = document.getElementById("connectBrokerSaveButton");
+      const sessionBanner = document.getElementById("sessionBanner");
+      const advancedPanel = document.getElementById("advancedPanel");
+      const advancedSteps = document.getElementById("advancedSteps");
+      const connectRedirectUri = document.getElementById("connectRedirectUri");
+      const copyRedirectButton = document.getElementById("copyRedirectButton");
+      const connectPermissions = document.getElementById("connectPermissions");
+      const connectClientId = document.getElementById("connectClientId");
+      const connectClientIdError = document.getElementById("connectClientIdError");
+      const openPortalButton = document.getElementById("openPortalButton");
+      const connectSaveButton = document.getElementById("connectSaveButton");
+      const adminConsentButton = document.getElementById("adminConsentButton");
+      const packagePanel = document.getElementById("packagePanel");
+      const packageState = document.getElementById("packageState");
+      const connectPackageUrl = document.getElementById("connectPackageUrl");
+      const connectPackageSha = document.getElementById("connectPackageSha");
+      const connectPackageError = document.getElementById("connectPackageError");
+      const connectPackageSaveButton = document.getElementById("connectPackageSaveButton");
+      const startOverButton = document.getElementById("startOverButton");
+
+      const engine = window.SegmentPreviewProvisioning || null;
+      const azureTemplate = window.SegmentPreviewAzureTemplate || null;
+      const setupPayload = window.SegmentPreviewPayload || null;
+
+      const FIELDS = [
+        { key: "subscriptionId", label: "Azure subscription id", hint: "GUID of the subscription that will host the API." },
+        { key: "resourceGroup", label: "Resource group", hint: "Created if it does not exist." },
+        { key: "location", label: "Azure region", hint: "For example westeurope." },
+        { key: "webAppName", label: "Web App name", hint: "Becomes <name>.azurewebsites.net and must be globally unique." },
+        { key: "fabricWorkspaceId", label: "Fabric workspace id", hint: "Leave blank to create a workspace from the name and capacity below." },
+        { key: "fabricWorkspaceName", label: "Fabric workspace name", hint: "Used when no workspace id is supplied." },
+        { key: "fabricCapacityId", label: "Fabric capacity id", hint: "Required only when the workspace must be created." },
+        { key: "fabricServingLakehouseId", label: "Serving lakehouse id", hint: "Leave blank to create the serving lakehouse." },
+        { key: "fabricDataverseConnectionId", label: "Fabric Dataverse connection id", hint: "Created interactively in the Fabric portal." },
+        { key: "fabricDataverseDeltaFolder", label: "Dataverse delta folder", hint: "Folder of the Dataverse mirror inside the lakehouse." },
+        { key: "requiredDataverseTables", label: "Required Dataverse tables", hint: "Comma separated list validated during setup." }
+      ];
 
       function getXrm() {
         try {
@@ -356,12 +658,16 @@
         }
       }
 
-      async function execute(action) {
+      function getClientUrl() {
         const xrm = getXrm();
         if (!xrm) {
           throw new Error("This setup page must be opened inside Dynamics 365.");
         }
-        const clientUrl = xrm.Utility.getGlobalContext().getClientUrl();
+        return xrm.Utility.getGlobalContext().getClientUrl();
+      }
+
+      async function execute(action) {
+        const clientUrl = getClientUrl();
         const response = await fetch(
           clientUrl + "/api/data/v9.2/" + ACTION_NAME,
           {
@@ -391,10 +697,17 @@
       function setBusy(value) {
         state.loading = value;
         refreshButton.disabled = value;
-        const canProvision = state.result?.components?.some(
-          item => item.action === "provision-shortcuts"
-        );
-        installButton.disabled = value || !canProvision;
+        const embedded = state.embedded !== false;
+        const automated = Boolean(state.setup?.mode?.automated);
+        provisionButton.disabled = value || !automated || !embedded;
+        panelProvisionButton.disabled = value || !automated || !embedded;
+        previewButton.disabled = value || !engine || !embedded;
+        panelPreviewButton.disabled = value || !engine || !embedded;
+        saveButton.disabled = value || !engine || !embedded;
+        connectSaveButton.disabled = value || !engine || !embedded;
+        connectBrokerSaveButton.disabled = value || !engine || !embedded;
+        connectPackageSaveButton.disabled = value || !engine || !embedded;
+        startOverButton.disabled = value || !engine || !embedded;
         document.body.setAttribute("aria-busy", value ? "true" : "false");
       }
 
@@ -435,12 +748,7 @@
         const actionable = components.some(
           item => item.action === "provision-shortcuts"
         );
-        installButton.disabled = state.loading || !actionable;
-        installButton.textContent = actionable
-          ? "Install missing components"
-          : overallState === "ready"
-          ? "Installation complete"
-          : "No automatic actions available";
+        state.canProvisionShortcuts = actionable;
 
         const byCategory = new Map();
         for (const component of components) {
@@ -562,9 +870,692 @@
         showNotice(guidance[action] || "This component requires manual configuration.");
       }
 
+      // ------------------------------------------------------------ setup center
+
+      function dataverseClient() {
+        return engine.createDataverseClient({ clientUrl: getClientUrl() });
+      }
+
+      function renderModeBanner(mode) {
+        modeBanner.replaceChildren();
+        modeBanner.hidden = false;
+        modeBanner.className = "mode-banner" + (mode.automated ? " automated" : "");
+        const strong = document.createElement("strong");
+        const body = document.createElement("div");
+        if (mode.automated) {
+          strong.textContent =
+            mode.mode === "broker"
+              ? "Installation runs through the hosted provisioning service (optional path)"
+              : "Installation runs from this browser with your own tenant application";
+          body.textContent =
+            mode.mode === "broker"
+              ? "A sign-in window opens on " +
+                (mode.brokerOrigin || "the provisioning service") +
+                " once. Everything listed below then runs there with your delegated permissions, and every resource it creates belongs to your tenant."
+              : "You will be asked to sign in to Microsoft once. Everything listed below then runs automatically, and every resource it creates belongs to your own tenant and subscription.";
+        } else {
+          strong.textContent = "This environment is not connected yet";
+          const intro = document.createElement("p");
+          intro.style.margin = "0";
+          intro.textContent =
+            (mode.reason || "") +
+            " Open 'Connect this environment' below to finish the one-time setup. Everything happens in this browser; nothing is installed on your computer.";
+          const list = document.createElement("ul");
+          mode.blockers
+            .filter(blocker => !blocker.optional)
+            .forEach(blocker => {
+              const item = document.createElement("li");
+              item.textContent = blocker.message;
+              list.append(item);
+            });
+          body.append(intro, list);
+        }
+        const container = document.createElement("div");
+        container.append(strong, body);
+        modeBanner.append(container);
+      }
+
+      function renderFields(target) {
+        targetFields.replaceChildren();
+        FIELDS.forEach(field => {
+          const wrapper = document.createElement("div");
+          wrapper.className = "field";
+          const label = document.createElement("label");
+          label.setAttribute("for", "field-" + field.key);
+          label.textContent = field.label;
+          const input = document.createElement("input");
+          input.id = "field-" + field.key;
+          input.type = "text";
+          input.autocomplete = "off";
+          input.spellcheck = false;
+          input.value = target[field.key] || "";
+          input.dataset.key = field.key;
+          const hint = document.createElement("p");
+          hint.className = "hint";
+          hint.textContent = field.hint;
+          const error = document.createElement("p");
+          error.className = "error";
+          error.id = "error-" + field.key;
+          error.hidden = true;
+          wrapper.append(label, input, hint, error);
+          targetFields.append(wrapper);
+        });
+      }
+
+      function readFields() {
+        const values = {};
+        targetFields.querySelectorAll("input[data-key]").forEach(input => {
+          values[input.dataset.key] = input.value.trim();
+        });
+        return engine.mergeConfiguration(state.target || {}, values);
+      }
+
+      function showFieldErrors(errors) {
+        targetFields.querySelectorAll("input[data-key]").forEach(input => {
+          input.removeAttribute("aria-invalid");
+          const error = document.getElementById("error-" + input.dataset.key);
+          if (error) {
+            error.hidden = true;
+            error.textContent = "";
+          }
+        });
+        errors.forEach(item => {
+          const input = document.getElementById("field-" + item.field);
+          const error = document.getElementById("error-" + item.field);
+          if (input) input.setAttribute("aria-invalid", "true");
+          if (error) {
+            error.textContent = item.message;
+            error.hidden = false;
+          }
+        });
+      }
+
+      function renderConsent(items) {
+        consentList.replaceChildren();
+        items.forEach(item => {
+          const entry = document.createElement("li");
+          entry.className = "consent-item" + (item.automatable ? "" : " manual");
+          const title = document.createElement("div");
+          title.textContent = item.title;
+          title.style.fontWeight = "600";
+          const role = document.createElement("div");
+          role.className = "role";
+          role.textContent = item.role + (item.automatable ? "" : " · not automatable");
+          const guide = document.createElement("p");
+          guide.className = "guide";
+          guide.textContent = item.guidance;
+          entry.append(title, role, guide);
+          consentList.append(entry);
+        });
+      }
+
+      const stepMarks = {
+        pending: "•",
+        running: "…",
+        succeeded: "✓",
+        resumed: "✓",
+        skipped: "–",
+        failed: "!"
+      };
+
+      function renderPlan(plan) {
+        progressList.hidden = false;
+        progressList.replaceChildren();
+        plan.forEach(step => {
+          const item = document.createElement("li");
+          item.className = "step " + (step.skipped ? "skipped" : step.status);
+          item.id = "step-" + step.id;
+          const mark = document.createElement("span");
+          mark.className = "step-mark";
+          mark.textContent = stepMarks[step.skipped ? "skipped" : step.status] || "•";
+          const main = document.createElement("div");
+          const name = document.createElement("div");
+          name.className = "step-name";
+          name.textContent = step.name + (step.interactive ? " (interactive)" : "");
+          const message = document.createElement("p");
+          message.className = "step-message";
+          message.id = "step-message-" + step.id;
+          message.textContent = step.reason || "";
+          main.append(name, message);
+          const phase = document.createElement("span");
+          phase.className = "step-phase";
+          phase.textContent = step.phase;
+          item.append(mark, main, phase);
+          progressList.append(item);
+        });
+      }
+
+      function updateStep(entry) {
+        const item = document.getElementById("step-" + entry.id);
+        if (!item) return;
+        item.className = "step " + entry.status;
+        item.querySelector(".step-mark").textContent = stepMarks[entry.status] || "•";
+        const message = document.getElementById("step-message-" + entry.id);
+        if (message) message.textContent = entry.message || "";
+      }
+
+      function renderManual(messages) {
+        manualList.replaceChildren();
+        manualList.hidden = messages.length === 0;
+        messages.forEach(text => {
+          const item = document.createElement("li");
+          item.textContent = text;
+          manualList.append(item);
+        });
+      }
+
+      function renderConnect(context) {
+        const registration = context.appRegistration || {};
+        const broker = context.broker || {};
+        const mode = context.mode || {};
+        connectPanel.hidden = false;
+        connectPanel.open = !mode.automated;
+        connectSummary.textContent = mode.automated
+          ? "Connect this environment (already connected)"
+          : "Connect this environment (required once)";
+        connectLead.textContent = mode.mode === "broker" && broker.configured
+          ? broker.summary
+          : "Installing uses a single-page application that you register once in your own tenant. This page shows the exact redirect URI and permissions and opens the Microsoft Entra admin center for you. Every resource the installation creates stays in your tenant and your subscription, and nothing is installed on your computer.";
+
+        connectSteps.replaceChildren();
+        (registration.steps || []).forEach(text => {
+          const item = document.createElement("li");
+          item.textContent = text;
+          connectSteps.append(item);
+        });
+
+        brokerState.hidden = false;
+        brokerState.className = "mode-banner" + (broker.configured ? " automated" : "");
+        brokerState.replaceChildren();
+        const brokerHead = document.createElement("strong");
+        brokerHead.textContent = broker.headline || "";
+        const brokerBody = document.createElement("div");
+        brokerBody.textContent = broker.configured
+          ? broker.url || ""
+          : broker.summary || "";
+        const brokerWrap = document.createElement("div");
+        brokerWrap.append(brokerHead, brokerBody);
+        brokerState.append(brokerWrap);
+
+        connectBrokerUrl.value = broker.url || "";
+        connectBrokerError.hidden = true;
+
+        advancedPanel.open = broker.configured || Boolean(broker.invalid);
+        advancedSteps.replaceChildren();
+        (broker.steps || []).forEach(text => {
+          const item = document.createElement("li");
+          item.textContent = text;
+          advancedSteps.append(item);
+        });
+
+        connectRedirectUri.value = registration.redirectUri || "";
+
+        connectPermissions.replaceChildren();
+        (registration.permissions || []).forEach(entry => {
+          const item = document.createElement("li");
+          item.textContent =
+            entry.api +
+            " · " +
+            entry.type +
+            " · " +
+            entry.scopes.join(", ") +
+            (entry.adminConsent ? " (needs admin consent)" : "");
+          connectPermissions.append(item);
+        });
+
+        connectClientId.value = mode.clientId || "";
+        connectClientIdError.hidden = true;
+        adminConsentButton.hidden = !context.adminConsentUrl;
+        adminConsentButton.dataset.url = context.adminConsentUrl || "";
+        openPortalButton.dataset.url = mode.clientId
+          ? registration.appListUrl || ""
+          : registration.newAppUrl || "";
+
+        renderPackagePanel(context);
+      }
+
+      /**
+       * Shows which API package the installation will deploy. The package is
+       * downloaded once, verified against its SHA-256 digest and copied into a
+       * storage account in the customer's own resource group, so the running
+       * Web App has no ongoing dependency on the publisher.
+       */
+      function renderPackagePanel(context) {
+        if (!engine || !packagePanel) return;
+        const pkg = engine.resolveApiPackage(setupPayload, context.apiPackageUrl);
+        const stored = engine.parseApiPackageSetting(context.apiPackageUrl);
+        connectPackageUrl.value = stored.url || "";
+        connectPackageSha.value = stored.sha256 || "";
+        connectPackageError.hidden = true;
+        packageState.hidden = false;
+        packageState.className = "mode-banner " + (pkg.configured ? "automated" : "manual");
+        packageState.replaceChildren();
+        const head = document.createElement("strong");
+        head.textContent = pkg.configured
+          ? "API package " + (pkg.version || "") + " ready to verify and copy"
+          : "No verified API package configured";
+        const body = document.createElement("div");
+        body.textContent = pkg.configured ? pkg.url + " (SHA-256 " + pkg.sha256 + ")" : pkg.hint || "";
+        const wrap = document.createElement("div");
+        wrap.append(head, body);
+        packageState.append(wrap);
+        packagePanel.open = !pkg.configured;
+      }
+
+      function sessionStore() {
+        try {
+          return window.sessionStorage || null;
+        } catch {
+          return null;
+        }
+      }
+
+      function storedSession() {
+        if (!engine) return null;
+        return engine.loadBrokerSession(sessionStore(), {
+          brokerUrl: state.setup?.mode?.brokerUrl || null,
+          environmentDomain: state.setup?.environmentDomain || null
+        });
+      }
+
+      function renderSessionBanner() {
+        const record = storedSession();
+        state.session = record;
+        if (!record) {
+          sessionBanner.hidden = true;
+          sessionBanner.replaceChildren();
+          return;
+        }
+        sessionBanner.hidden = false;
+        sessionBanner.className = "mode-banner automated";
+        sessionBanner.replaceChildren();
+        const strong = document.createElement("strong");
+        strong.textContent = "You are signed in to the provisioning service";
+        const body = document.createElement("div");
+        body.textContent =
+          (record.account ? "Signed in as " + record.account + ". " : "") +
+          (record.runId
+            ? "A run is in progress. Press 'Install everything' to re-attach to it."
+            : "Pressing 'Install everything' reuses this session, so you will not be asked to sign in again.");
+        const actions = document.createElement("div");
+        actions.className = "panel-actions";
+        const forget = document.createElement("button");
+        forget.type = "button";
+        forget.className = "button";
+        forget.textContent = "Sign out of the service";
+        forget.addEventListener("click", () => {
+          engine.clearBrokerSession(sessionStore());
+          renderSessionBanner();
+          showNotice("The provisioning service session was discarded.", "success");
+        });
+        actions.append(forget);
+        const container = document.createElement("div");
+        container.append(strong, body, actions);
+        sessionBanner.append(container);
+      }
+
+      async function connectBroker() {
+        if (!engine || state.loading) return;
+        const value = (connectBrokerUrl.value || "").trim();
+        if (!engine.isHttpsUrl(value)) {
+          connectBrokerError.hidden = false;
+          connectBrokerError.textContent =
+            "Enter the provisioning service URL as an absolute https address, or leave it empty and register an application in your own tenant instead.";
+          return;
+        }
+        connectBrokerError.hidden = true;
+        setBusy(true);
+        showNotice("Saving the provisioning service URL…");
+        try {
+          engine.clearBrokerSession(sessionStore());
+          await engine.saveBrokerUrl(dataverseClient(), value);
+          await loadSetupCenter();
+          showNotice(
+            "The provisioning service is configured. Press 'Install everything' when you are ready.",
+            "success"
+          );
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function connectPackageUrlSave() {
+        if (!engine || state.loading) return;
+        const value = (connectPackageUrl.value || "").trim();
+        const digest = (connectPackageSha.value || "").trim();
+        if (!engine.isHttpsUrl(value)) {
+          connectPackageError.hidden = false;
+          connectPackageError.textContent =
+            "Enter the API package URL as an absolute https address, or leave it empty to use the package that ships with this version.";
+          return;
+        }
+        if (!engine.isSha256(digest)) {
+          connectPackageError.hidden = false;
+          connectPackageError.textContent =
+            "Enter the SHA-256 digest of that exact file as 64 hexadecimal characters. The browser refuses to copy a package it cannot verify.";
+          return;
+        }
+        connectPackageError.hidden = true;
+        setBusy(true);
+        showNotice("Saving the API package…");
+        try {
+          await engine.saveApiPackageUrl(dataverseClient(), value, digest);
+          await loadSetupCenter();
+          showNotice("The API package is saved. Press 'Install everything' to verify and deploy it.", "success");
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      /**
+       * Forgets what earlier runs recorded so the next installation runs every
+       * step again. The target configuration is kept; only the resume state and
+       * the discovered facts are cleared.
+       */
+      async function startOver() {
+        if (!engine || state.loading) return;
+        setBusy(true);
+        showNotice("Clearing the resume state…");
+        try {
+          await engine.saveSetupContext(dataverseClient(), state.target, {}, {});
+          if (state.setup) {
+            state.setup.state = {};
+            state.setup.facts = {};
+          }
+          engine.clearBrokerSession(sessionStore());
+          await loadSetupCenter();
+          await refresh();
+          showNotice("The resume state is cleared. The next installation runs every step again.", "success");
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function connectEnvironment() {
+        if (!engine || state.loading) return;
+        const value = (connectClientId.value || "").trim();
+        if (!engine.isGuid(value)) {
+          connectClientIdError.hidden = false;
+          connectClientIdError.textContent =
+            "Enter the Application (client) ID of the registered application as a GUID.";
+          return;
+        }
+        connectClientIdError.hidden = true;
+        setBusy(true);
+        showNotice("Connecting this environment…");
+        try {
+          await engine.saveClientId(dataverseClient(), value);
+          await loadSetupCenter();
+          showNotice(
+            "This environment is connected. Press 'Install everything' when you are ready.",
+            "success"
+          );
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function loadSetupCenter() {
+        if (!engine) {
+          setupCenter.hidden = false;
+          modeBanner.hidden = false;
+          modeBanner.textContent =
+            "The provisioning script web resource could not be loaded. Reimport the managed solution and reopen this page.";
+          return;
+        }
+        setupCenter.hidden = false;
+        renderConsent(engine.describeConsent());
+        if (!getXrm()) {
+          state.embedded = false;
+          modeBanner.hidden = false;
+          modeBanner.className = "mode-banner";
+          modeBanner.textContent =
+            "This page is not running inside Dynamics 365, so no environment can be read or provisioned. The consent checklist below is shown for reference only.";
+          panelNote.textContent = "Contract " + engine.CONTRACT_VERSION + " · no Dataverse context";
+          setBusy(false);
+          return;
+        }
+        const context = await engine.loadSetupContext(dataverseClient(), getClientUrl(), window.location.href);
+        state.setup = context;
+        state.target = context.target;
+        renderModeBanner(context.mode);
+        renderConnect(context);
+        renderSessionBanner();
+        renderFields(context.target);
+        renderConsent(context.consent);
+        renderPlan(context.plan);
+        panelNote.textContent = context.missingVariables.length
+          ? "Configuration variables missing from this environment: " + context.missingVariables.join(", ")
+          : "Contract " + context.contractVersion + " · mode " + context.mode.mode;
+        setBusy(false);
+      }
+
+      async function runProvisioning(dryRun) {
+        if (state.loading || !engine) return;
+        const mode = state.setup?.mode;
+        if (!dryRun && !mode?.automated) {
+          showNotice(
+            "This environment is not connected yet. Open 'Connect this environment' above and review the blockers.",
+            "error"
+          );
+          return;
+        }
+        const target = readFields();
+        const validation = engine.validateTarget(target);
+        showFieldErrors(validation.errors);
+        if (!validation.valid) {
+          showNotice("Complete the highlighted fields before installing.", "error");
+          return;
+        }
+        state.target = target;
+
+        setBusy(true);
+        showNotice(dryRun ? "Running a preview. Nothing is changed." : "Installing. Keep this page open.");
+        renderManual([]);
+
+        const dataverse = dataverseClient();
+        let tokenProvider = null;
+        let brokerClient = null;
+        let resumeSession = null;
+        if (!dryRun && mode.mode === "broker") {
+          if (!engine.isHttpsUrl(mode.brokerUrl)) {
+            showNotice(
+              "Installing needs the provisioning service URL. Open 'Connect this environment' above and save it first.",
+              "error"
+            );
+            setBusy(false);
+            return;
+          }
+          try {
+            brokerClient = engine.createBrokerSession({
+              baseUrl: mode.brokerUrl,
+              pageOrigin: window.location.origin
+            });
+          } catch (error) {
+            showNotice(error.message || String(error), "error");
+            setBusy(false);
+            return;
+          }
+          resumeSession = storedSession();
+        }
+        if (!dryRun && mode.mode === "direct") {
+          if (!engine.isGuid(mode.clientId)) {
+            showNotice(
+              "Signing in needs an application (client) ID. Open 'Connect this environment' above and register one first.",
+              "error"
+            );
+            setBusy(false);
+            return;
+          }
+          const msal = window.msal;
+          if (msal && msal.PublicClientApplication) {
+            const instance = new msal.PublicClientApplication({
+              auth: { clientId: mode.clientId, authority: "https://login.microsoftonline.com/organizations" },
+              cache: { cacheLocation: "sessionStorage" }
+            });
+            if (instance.initialize) await instance.initialize();
+            tokenProvider = engine.createMsalTokenProvider({ instance });
+          } else {
+            tokenProvider = engine.createAuthClient({
+              clientId: mode.clientId,
+              redirectUri: engine.redirectUriFor(window.location.href)
+            });
+          }
+        }
+
+        const getToken = tokenProvider ? tokenProvider.getToken : async () => "";
+        const orchestrator = engine.createOrchestrator({
+          dataverse,
+          mode: mode.mode,
+          dryRun,
+          target,
+          environmentUrl: getClientUrl(),
+          template: azureTemplate,
+          payload: setupPayload,
+          apiPackageUrl: state.setup?.apiPackageUrl || null,
+          brokerScope: mode.brokerScope,
+          getToken,
+          completed: state.setup.state,
+          facts: state.setup.facts || {},
+          origin: window.location.origin,
+          broker: brokerClient,
+          resumeSession,
+          resumeRunId: resumeSession ? resumeSession.runId || null : null,
+          direct: !dryRun && mode.mode === "direct" ? engine.createDirectClient({ getToken }) : null,
+          hooks: {
+            onProgress: updateStep,
+            onManual: () => {},
+            onSession: session => {
+              const record = Object.assign({}, session, {
+                environmentDomain: state.setup?.environmentDomain || null
+              });
+              engine.saveBrokerSession(sessionStore(), record);
+              renderSessionBanner();
+            },
+            onRun: run => {
+              const current = storedSession();
+              if (!current) return;
+              engine.saveBrokerSession(sessionStore(), Object.assign({}, current, { runId: run.runId }));
+              renderSessionBanner();
+            }
+          }
+        });
+
+        renderPlan(
+          engine.buildPlan({ mode: mode.mode, completed: dryRun ? {} : state.setup.state })
+        );
+
+        try {
+          const result = await orchestrator.run();
+          renderManual(result.manual || []);
+          if (!dryRun) {
+            const completed = Object.assign({}, result.completed || {});
+            completed.apiKeyFingerprint = result.context.apiKeyFingerprint;
+            completed.updatedAt = new Date().toISOString();
+            const facts = Object.assign({}, state.setup.facts || {}, result.facts || {});
+            state.setup.state = completed;
+            state.setup.facts = facts;
+            await engine.saveSetupContext(dataverse, target, completed, facts);
+          }
+          showNotice(
+            result.ok
+              ? dryRun
+                ? "Preview finished. No change was made."
+                : "Installation finished. Review any remaining manual steps below."
+              : "Installation stopped at '" + result.failedStep + "'.",
+            result.ok ? "success" : "error"
+          );
+          if (!dryRun && result.ok) {
+            engine.clearBrokerSession(sessionStore());
+            renderSessionBanner();
+          } else if (!dryRun && mode.mode === "broker") {
+            const current = storedSession();
+            if (current?.runId) {
+              delete current.runId;
+              engine.saveBrokerSession(sessionStore(), current);
+              renderSessionBanner();
+            }
+          }
+        } catch (error) {
+          if (!dryRun && mode.mode === "broker") {
+            const current = storedSession();
+            if (current?.runId) {
+              delete current.runId;
+              engine.saveBrokerSession(sessionStore(), current);
+              renderSessionBanner();
+            }
+          }
+          showNotice(error.message || String(error), "error");
+        } finally {
+          orchestrator.dispose();
+          setBusy(false);
+          if (!dryRun) await refresh();
+        }
+      }
+
       refreshButton.addEventListener("click", refresh);
-      installButton.addEventListener("click", provision);
-      refresh();
+      copyRedirectButton.addEventListener("click", async () => {
+        const value = connectRedirectUri.value || "";
+        if (!value) return;
+        try {
+          await navigator.clipboard.writeText(value);
+          showNotice("Redirect URI copied.", "success");
+        } catch {
+          connectRedirectUri.select();
+          showNotice("Press Ctrl+C to copy the selected redirect URI.");
+        }
+      });
+      openPortalButton.addEventListener("click", () => {
+        const url = openPortalButton.dataset.url;
+        if (url) window.open(url, "_blank", "noopener");
+      });
+      adminConsentButton.addEventListener("click", () => {
+        const url = adminConsentButton.dataset.url;
+        if (url) window.open(url, "_blank", "noopener");
+      });
+      connectSaveButton.addEventListener("click", connectEnvironment);
+      connectBrokerSaveButton.addEventListener("click", connectBroker);
+      connectPackageSaveButton.addEventListener("click", connectPackageUrlSave);
+      startOverButton.addEventListener("click", startOver);
+      previewButton.addEventListener("click", () => runProvisioning(true));
+      panelPreviewButton.addEventListener("click", () => runProvisioning(true));
+      provisionButton.addEventListener("click", () => runProvisioning(false));
+      panelProvisionButton.addEventListener("click", () => runProvisioning(false));
+      saveButton.addEventListener("click", async () => {
+        if (!engine || state.loading) return;
+        setBusy(true);
+        try {
+          state.target = readFields();
+          await engine.saveSetupContext(
+            dataverseClient(),
+            state.target,
+            state.setup?.state || {},
+            state.setup?.facts || {}
+          );
+          showNotice("Settings saved to this environment.", "success");
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      (async () => {
+        try {
+          await loadSetupCenter();
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        }
+        await refresh();
+      })();
     })();
   </script>
 </body>

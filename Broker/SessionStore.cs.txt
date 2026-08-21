@@ -1,0 +1,157 @@
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace CustomerInsightsSegmentSankey.Broker;
+
+public sealed class BrokerSession
+{
+    public string Id { get; init; } = string.Empty;
+    public string Nonce { get; init; } = string.Empty;
+    public string Origin { get; init; } = string.Empty;
+    public string? EnvironmentUrl { get; init; }
+    public string? EnvironmentDomain { get; init; }
+
+    /// <summary>Single-use value that protects /auth/start against being replayed.</summary>
+    public string StartToken { get; init; } = string.Empty;
+    public bool StartTokenUsed { get; set; }
+
+    public string State { get; init; } = string.Empty;
+    public string CodeVerifier { get; init; } = string.Empty;
+
+    public DateTimeOffset ExpiresAt { get; set; }
+
+    /// <summary>SHA-256 of the opaque bearer token handed to the browser. The token itself is never stored.</summary>
+    public string? SessionTokenHash { get; set; }
+
+    public string? RefreshToken { get; set; }
+    public string? Account { get; set; }
+    public string? TenantId { get; set; }
+    public bool Authorized => SessionTokenHash is not null;
+
+    public ConcurrentDictionary<string, RunRecord> Runs { get; } = new(StringComparer.Ordinal);
+}
+
+public sealed class RunRecord
+{
+    public string Id { get; init; } = string.Empty;
+    public string SessionId { get; init; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; init; }
+    public string Status { get; set; } = "running";
+    public List<RunStepStatus> Steps { get; } = new();
+    public Dictionary<string, string?> Outputs { get; } = new();
+    public List<string> Manual { get; } = new();
+    public ErrorBody? Error { get; set; }
+
+    /// <summary>Guards against a second run being started for the same target.</summary>
+    public string Fingerprint { get; init; } = string.Empty;
+
+    public RunStatusResponse ToResponse() => new()
+    {
+        RunId = Id,
+        Status = Status,
+        Steps = Steps.Select(step => new RunStepStatus { Id = step.Id, Status = step.Status, Message = step.Message }).ToList(),
+        Outputs = new Dictionary<string, string?>(Outputs),
+        Manual = new List<string>(Manual),
+        Error = Error
+    };
+}
+
+public interface ISessionStore
+{
+    BrokerSession Create(string origin, string nonce, string? environmentUrl, string? environmentDomain, TimeSpan lifetime);
+    BrokerSession? Get(string sessionId);
+    BrokerSession? Authenticate(string sessionId, string? bearerToken);
+    void Remove(string sessionId);
+    int Sweep();
+}
+
+/// <summary>
+/// Single-instance in-memory store. A multi-instance deployment must replace this
+/// with a distributed implementation; the interface exists for exactly that reason.
+/// </summary>
+public sealed class InMemorySessionStore : ISessionStore
+{
+    private readonly ConcurrentDictionary<string, BrokerSession> _sessions = new(StringComparer.Ordinal);
+    private readonly Func<DateTimeOffset> _now;
+
+    public InMemorySessionStore(Func<DateTimeOffset>? now = null) => _now = now ?? (() => DateTimeOffset.UtcNow);
+
+    public BrokerSession Create(string origin, string nonce, string? environmentUrl, string? environmentDomain, TimeSpan lifetime)
+    {
+        var session = new BrokerSession
+        {
+            Id = "sess-" + Tokens.Random(24),
+            Nonce = nonce,
+            Origin = origin,
+            EnvironmentUrl = environmentUrl,
+            EnvironmentDomain = environmentDomain,
+            StartToken = Tokens.Random(24),
+            State = Tokens.Random(24),
+            CodeVerifier = Tokens.Random(48),
+            ExpiresAt = _now().Add(lifetime)
+        };
+        _sessions[session.Id] = session;
+        return session;
+    }
+
+    public BrokerSession? Get(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId)) return null;
+        if (!_sessions.TryGetValue(sessionId, out var session)) return null;
+        if (session.ExpiresAt <= _now())
+        {
+            _sessions.TryRemove(sessionId, out _);
+            return null;
+        }
+        return session;
+    }
+
+    public BrokerSession? Authenticate(string sessionId, string? bearerToken)
+    {
+        var session = Get(sessionId);
+        if (session is null || session.SessionTokenHash is null) return null;
+        if (string.IsNullOrWhiteSpace(bearerToken)) return null;
+        return Tokens.FixedTimeEquals(session.SessionTokenHash, Tokens.Hash(bearerToken)) ? session : null;
+    }
+
+    public void Remove(string sessionId) => _sessions.TryRemove(sessionId, out _);
+
+    /// <summary>Resolves the session that owns an OAuth state value.</summary>
+    public BrokerSession? FindByState(string? state)
+    {
+        if (string.IsNullOrWhiteSpace(state)) return null;
+        var now = _now();
+        return _sessions.Values.FirstOrDefault(session =>
+            session.ExpiresAt > now && Tokens.FixedTimeEquals(session.State, state));
+    }
+
+    public int Sweep()
+    {
+        var now = _now();
+        var removed = 0;
+        foreach (var pair in _sessions)
+        {
+            if (pair.Value.ExpiresAt <= now && _sessions.TryRemove(pair.Key, out _)) removed++;
+        }
+        return removed;
+    }
+}
+
+public static class Tokens
+{
+    public static string Random(int bytes) =>
+        Base64Url(RandomNumberGenerator.GetBytes(bytes));
+
+    public static string Hash(string value) =>
+        Base64Url(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+
+    public static bool FixedTimeEquals(string left, string right) =>
+        CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(left), Encoding.UTF8.GetBytes(right));
+
+    public static string Challenge(string verifier) =>
+        Base64Url(SHA256.HashData(Encoding.UTF8.GetBytes(verifier)));
+
+    private static string Base64Url(byte[] value) =>
+        Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+}

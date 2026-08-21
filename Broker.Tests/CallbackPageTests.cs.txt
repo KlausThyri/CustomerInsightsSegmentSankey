@@ -1,0 +1,97 @@
+using System.Text;
+using System.Text.Json;
+using CustomerInsightsSegmentSankey.Broker;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.Broker.Tests;
+
+public class CallbackPageTests
+{
+    private static SessionMessage Message(string status = "authorized") => new()
+    {
+        SessionId = "sess-1",
+        Nonce = "nonce-value-0123",
+        Status = status,
+        SessionToken = status == "authorized" ? "opaque-value" : null,
+        Account = "admin@contoso.com"
+    };
+
+    [Fact]
+    public void RendersConcreteTargetOriginNeverWildcard()
+    {
+        var html = CallbackPage.Render(Message(), "https://contoso.crm4.dynamics.com");
+
+        Assert.Contains("postMessage(payload, target)", html);
+        Assert.DoesNotContain("\"*\"", html);
+        Assert.DoesNotContain("'*'", html);
+    }
+
+    [Fact]
+    public void PayloadAndOriginAreBase64EncodedNotInterpolated()
+    {
+        var html = CallbackPage.Render(Message(), "https://contoso.crm4.dynamics.com");
+
+        Assert.DoesNotContain("admin@contoso.com", html);
+        Assert.DoesNotContain("https://contoso.crm4.dynamics.com\"", html);
+
+        var payload = Decode(html, "var payload = JSON.parse(decodeURIComponent(escape(atob(\"");
+        var origin = Decode(html, "var target = decodeURIComponent(escape(atob(\"");
+
+        using var document = JsonDocument.Parse(payload);
+        Assert.Equal(BrokerContract.MessageType, document.RootElement.GetProperty("type").GetString());
+        Assert.Equal("sess-1", document.RootElement.GetProperty("sessionId").GetString());
+        Assert.Equal("nonce-value-0123", document.RootElement.GetProperty("nonce").GetString());
+        Assert.Equal("https://contoso.crm4.dynamics.com", origin);
+    }
+
+    [Fact]
+    public void ScriptInjectionInAccountCannotEscapeThePayload()
+    {
+        var message = Message();
+        message.Account = "</script><script>alert(1)</script>";
+
+        var html = CallbackPage.Render(message, "https://contoso.crm4.dynamics.com");
+
+        Assert.DoesNotContain("alert(1)", html);
+        Assert.Equal(1, CountOccurrences(html, "<script"));
+    }
+
+    [Fact]
+    public void BlankTargetOriginIsRefused()
+    {
+        Assert.Throws<ArgumentException>(() => CallbackPage.Render(Message(), string.Empty));
+        Assert.Throws<ArgumentException>(() => CallbackPage.Render(Message(), "   "));
+    }
+
+    [Fact]
+    public void FailureStatusStillPostsToTheOpener()
+    {
+        var html = CallbackPage.Render(Message("failed"), "https://contoso.crm4.dynamics.com");
+        var payload = Decode(html, "var payload = JSON.parse(decodeURIComponent(escape(atob(\"");
+
+        using var document = JsonDocument.Parse(payload);
+        Assert.Equal("failed", document.RootElement.GetProperty("status").GetString());
+        Assert.Contains("Sign-in did not complete", html);
+    }
+
+    private static string Decode(string html, string marker)
+    {
+        var start = html.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(start > -1, "Marker not found: " + marker);
+        start += marker.Length;
+        var end = html.IndexOf('"', start);
+        return Encoding.UTF8.GetString(Convert.FromBase64String(html[start..end]));
+    }
+
+    private static int CountOccurrences(string value, string needle)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = value.IndexOf(needle, index, StringComparison.Ordinal)) > -1)
+        {
+            count++;
+            index += needle.Length;
+        }
+        return count;
+    }
+}

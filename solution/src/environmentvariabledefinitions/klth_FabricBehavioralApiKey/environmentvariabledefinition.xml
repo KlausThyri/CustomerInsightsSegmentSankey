@@ -1,5 +1,4 @@
 <environmentvariabledefinition schemaname="klth_FabricBehavioralApiKey">
-  <defaultvalue>iu42iN57yVwDVouIxHhX3mhhl/4co+WlP/B8G2W1oSxsquxPUED2RijoJZT0Il7y</defaultvalue>
   <description default="Server-side API key used by the segment analysis plugin. Do not expose in web resources.">
     <label description="Server-side API key used by the segment analysis plugin. Do not expose in web resources." languagecode="1033" />
   </description>

@@ -1,0 +1,13 @@
+<environmentvariabledefinition schemaname="klth_SetupEntraClientId">
+  <description default="Application (client) ID of the single-page Entra application that the setup center registers in your own tenant. This is the normal self-service installation path: the setup center guides the registration, and every resource the installation creates stays in your own tenant and subscription.">
+    <label description="Application (client) ID of the single-page Entra application that the setup center registers in your own tenant. This is the normal self-service installation path: the setup center guides the registration, and every resource the installation creates stays in your own tenant and subscription." languagecode="1033" />
+  </description>
+  <displayname default="Segment Preview Entra Client ID">
+    <label description="Segment Preview Entra Client ID" languagecode="1033" />
+  </displayname>
+  <introducedversion>1.1.0.0</introducedversion>
+  <iscustomizable>1</iscustomizable>
+  <isrequired>0</isrequired>
+  <secretstore>0</secretstore>
+  <type>100000000</type>
+</environmentvariabledefinition>

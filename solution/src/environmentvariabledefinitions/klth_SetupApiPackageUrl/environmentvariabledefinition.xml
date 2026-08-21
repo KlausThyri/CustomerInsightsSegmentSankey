@@ -1,0 +1,13 @@
+<environmentvariabledefinition schemaname="klth_SetupApiPackageUrl">
+  <description default="Optional. HTTPS URL of the published Segment Preview API package. Leave this empty to deploy the release package that ships with this solution version. Set it only when your organisation mirrors release assets to its own storage; the Web App in your subscription downloads the package from that address.">
+    <label description="Optional. HTTPS URL of the published Segment Preview API package. Leave this empty to deploy the release package that ships with this solution version. Set it only when your organisation mirrors release assets to its own storage; the Web App in your subscription downloads the package from that address." languagecode="1033" />
+  </description>
+  <displayname default="Segment Preview API Package URL">
+    <label description="Segment Preview API Package URL" languagecode="1033" />
+  </displayname>
+  <introducedversion>1.1.0.0</introducedversion>
+  <iscustomizable>1</iscustomizable>
+  <isrequired>0</isrequired>
+  <secretstore>0</secretstore>
+  <type>100000000</type>
+</environmentvariabledefinition>

@@ -1,0 +1,13 @@
+<environmentvariabledefinition schemaname="klth_SetupConfiguration">
+  <description default="JSON target configuration and resume state written by the setup center. Never contains secrets.">
+    <label description="JSON target configuration and resume state written by the setup center. Never contains secrets." languagecode="1033" />
+  </description>
+  <displayname default="Segment Preview Setup Configuration">
+    <label description="Segment Preview Setup Configuration" languagecode="1033" />
+  </displayname>
+  <introducedversion>1.1.0.0</introducedversion>
+  <iscustomizable>1</iscustomizable>
+  <isrequired>0</isrequired>
+  <secretstore>0</secretstore>
+  <type>100000000</type>
+</environmentvariabledefinition>

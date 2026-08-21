@@ -1,0 +1,13 @@
+<environmentvariabledefinition schemaname="klth_SetupBrokerScope">
+  <description default="Optional delegated API scope for a self hosted provisioning service that uses token based authorization instead of the browser sign-in session, for example api://APP-ID/Provisioning.ReadWrite.">
+    <label description="Optional delegated API scope for a self hosted provisioning service that uses token based authorization instead of the browser sign-in session, for example api://APP-ID/Provisioning.ReadWrite." languagecode="1033" />
+  </description>
+  <displayname default="Segment Preview Broker Scope">
+    <label description="Segment Preview Broker Scope" languagecode="1033" />
+  </displayname>
+  <introducedversion>1.1.0.0</introducedversion>
+  <iscustomizable>1</iscustomizable>
+  <isrequired>0</isrequired>
+  <secretstore>0</secretstore>
+  <type>100000000</type>
+</environmentvariabledefinition>

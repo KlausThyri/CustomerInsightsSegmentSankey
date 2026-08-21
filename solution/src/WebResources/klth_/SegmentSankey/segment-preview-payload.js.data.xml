@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WebResource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <WebResourceId>{65365942-d2fa-4fef-ba59-7d8f4fbe4c78}</WebResourceId>
+  <Name>klth_/SegmentSankey/segment-preview-payload.js</Name>
+  <DisplayName>Segment Preview Setup Payload</DisplayName>
+  <Description>Bootstrap notebook definition and API package metadata published by the setup center.</Description>
+  <WebResourceType>3</WebResourceType>
+  <IntroducedVersion>1.1.0.0</IntroducedVersion>
+  <IsEnabledForMobileClient>0</IsEnabledForMobileClient>
+  <IsAvailableForMobileOffline>0</IsAvailableForMobileOffline>
+  <IsCustomizable>1</IsCustomizable>
+  <CanBeDeleted>1</CanBeDeleted>
+  <IsHidden>0</IsHidden>
+  <FileName>/WebResources/klth_SegmentSankeysegment-preview-payloadjs65365942-D2FA-4FEF-BA59-7D8F4FBE4C78</FileName>
+</WebResource>

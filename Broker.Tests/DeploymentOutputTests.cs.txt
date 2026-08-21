@@ -1,0 +1,74 @@
+using CustomerInsightsSegmentSankey.Broker;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.Broker.Tests;
+
+public class DeploymentOutputTests
+{
+    [Fact]
+    public void PublishesTheManagedIdentityBeforeTheFabricRoleStepReadsIt()
+    {
+        var outputs = new Dictionary<string, string?>
+        {
+            ["managedIdentityPrincipalId"] = "11111111-2222-3333-4444-555555555555",
+            ["webAppUrl"] = "https://segment-preview.azurewebsites.net/api/"
+        };
+
+        AzureFabricProvisioningExecutor.ApplyDeploymentOutputs(outputs, "segment-preview");
+
+        Assert.Equal("11111111-2222-3333-4444-555555555555", outputs["principalId"]);
+    }
+
+    [Fact]
+    public void KeepsAnAlreadyReportedPrincipalWhenTheTemplateNamesItDirectly()
+    {
+        var outputs = new Dictionary<string, string?>
+        {
+            ["principalId"] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            ["webAppUrl"] = "https://segment-preview.azurewebsites.net/api/"
+        };
+
+        AzureFabricProvisioningExecutor.ApplyDeploymentOutputs(outputs, "segment-preview");
+
+        Assert.Equal("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", outputs["principalId"]);
+    }
+
+    [Fact]
+    public void UsesTheReportedWebAppUrlAsTheApiBaseUrl()
+    {
+        var outputs = new Dictionary<string, string?>
+        {
+            ["webAppUrl"] = "https://segment-preview.azurewebsites.net/api/"
+        };
+
+        AzureFabricProvisioningExecutor.ApplyDeploymentOutputs(outputs, "segment-preview");
+
+        Assert.Equal("https://segment-preview.azurewebsites.net/api/", outputs["apiBaseUrl"]);
+    }
+
+    [Fact]
+    public void FallsBackToTheWebAppNameAndStillEndsInTheApiSegment()
+    {
+        var outputs = new Dictionary<string, string?>();
+
+        AzureFabricProvisioningExecutor.ApplyDeploymentOutputs(outputs, "segment-preview");
+
+        Assert.Equal("https://segment-preview.azurewebsites.net/api/", outputs["apiBaseUrl"]);
+    }
+
+    [Theory]
+    [InlineData("https://segment-preview.azurewebsites.net", "https://segment-preview.azurewebsites.net/api/")]
+    [InlineData("https://segment-preview.azurewebsites.net/", "https://segment-preview.azurewebsites.net/api/")]
+    [InlineData("https://segment-preview.azurewebsites.net/api", "https://segment-preview.azurewebsites.net/api/")]
+    [InlineData("segment-preview.azurewebsites.net", "https://segment-preview.azurewebsites.net/api/")]
+    public void AlwaysReturnsTheApiRoot(string reported, string expected)
+    {
+        Assert.Equal(expected, AzureFabricProvisioningExecutor.NormalizeApiBaseUrl(reported));
+    }
+
+    [Fact]
+    public void RefusesAnEmptyWebAppUrl()
+    {
+        Assert.Throws<InvalidOperationException>(() => AzureFabricProvisioningExecutor.NormalizeApiBaseUrl("  "));
+    }
+}

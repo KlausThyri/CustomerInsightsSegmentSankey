@@ -1,0 +1,80 @@
+#if FABRIC_API
+using CustomerInsightsSegmentSankey.FabricApi;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+/// <summary>
+/// The health endpoint is the only browser-reachable surface of the API, because
+/// the setup page has to poll it after a deployment. These tests pin how narrow
+/// that opening is.
+/// </summary>
+public class SetupHealthCorsTests
+{
+    [Fact]
+    public void DerivesTheOriginFromTheDataverseEnvironmentUrl()
+    {
+        var origins = SetupHealthCors.ResolveOrigins("https://contoso.crm4.dynamics.com/");
+        Assert.Equal(new[] { "https://contoso.crm4.dynamics.com" }, origins);
+    }
+
+    [Fact]
+    public void DropsPathQueryAndFragment()
+    {
+        var origins = SetupHealthCors.ResolveOrigins(
+            "https://contoso.crm4.dynamics.com/main.aspx?pagetype=webresource#x");
+        Assert.Equal(new[] { "https://contoso.crm4.dynamics.com" }, origins);
+    }
+
+    [Fact]
+    public void AssumesHttpsForABareHostName()
+    {
+        Assert.Equal(new[] { "https://contoso.crm4.dynamics.com" },
+            SetupHealthCors.ResolveOrigins("contoso.crm4.dynamics.com"));
+    }
+
+    [Fact]
+    public void KeepsANonDefaultPort()
+    {
+        Assert.Equal(new[] { "https://contoso.example.com:8443" },
+            SetupHealthCors.ResolveOrigins("https://contoso.example.com:8443/"));
+    }
+
+    [Fact]
+    public void AcceptsSeveralEnvironmentsForOneApi()
+    {
+        var origins = SetupHealthCors.ResolveOrigins(
+            "https://one.crm4.dynamics.com, https://two.crm4.dynamics.com");
+        Assert.Equal(new[] { "https://one.crm4.dynamics.com", "https://two.crm4.dynamics.com" }, origins);
+    }
+
+    [Fact]
+    public void DeduplicatesRepeatedOrigins()
+    {
+        var origins = SetupHealthCors.ResolveOrigins(
+            "https://one.crm4.dynamics.com/a https://one.crm4.dynamics.com/b");
+        Assert.Single(origins);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("*")]
+    [InlineData("http://contoso.crm4.dynamics.com")]
+    [InlineData("not a url")]
+    public void RefusesAnythingThatIsNotAConcreteHttpsOrigin(string? value)
+    {
+        Assert.Empty(SetupHealthCors.ResolveOrigins(value));
+    }
+
+    [Fact]
+    public void NeverProducesAWildcardOrigin()
+    {
+        foreach (var origin in SetupHealthCors.ResolveOrigins("https://contoso.crm4.dynamics.com, *"))
+        {
+            Assert.DoesNotContain("*", origin);
+        }
+    }
+}
+#endif

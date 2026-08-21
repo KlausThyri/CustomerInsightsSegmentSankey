@@ -1,0 +1,172 @@
+using System.Text.Json;
+
+namespace CustomerInsightsSegmentSankey.Broker;
+
+public sealed record TokenResult(string AccessToken, string? RefreshToken, string? Account, string? TenantId, DateTimeOffset ExpiresAt);
+
+public interface ITokenClient
+{
+    string BuildAuthorizeUrl(BrokerSession session);
+    Task<TokenResult> RedeemCodeAsync(BrokerSession session, string code, CancellationToken cancellationToken);
+    Task<TokenResult> AcquireForScopeAsync(BrokerSession session, string scope, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Delegated authorization-code flow for the publisher multi-tenant confidential
+/// application. The refresh token stays on the server; the browser only ever sees the
+/// opaque session token issued by <see cref="ISessionStore"/>.
+/// </summary>
+public sealed class EntraTokenClient : ITokenClient
+{
+    private readonly BrokerOptions _options;
+    private readonly HttpClient _http;
+
+    public EntraTokenClient(BrokerOptions options, HttpClient http)
+    {
+        _options = options;
+        _http = http;
+    }
+
+    public string BuildAuthorizeUrl(BrokerSession session)
+    {
+        if (!_options.IsConfigured)
+        {
+            throw new InvalidOperationException("The provisioning service has no Entra application configured.");
+        }
+
+        var query = new Dictionary<string, string>
+        {
+            ["client_id"] = _options.ClientId!,
+            ["response_type"] = "code",
+            ["redirect_uri"] = _options.CallbackUrl,
+            ["response_mode"] = "query",
+            ["scope"] = string.Join(' ', BrokerOptions.RequiredScopes),
+            ["state"] = session.State,
+            ["code_challenge"] = Tokens.Challenge(session.CodeVerifier),
+            ["code_challenge_method"] = "S256",
+            ["prompt"] = "select_account"
+        };
+
+        var pairs = query.Select(pair => Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value));
+        return _options.Authority.TrimEnd('/') + "/oauth2/v2.0/authorize?" + string.Join('&', pairs);
+    }
+
+    public async Task<TokenResult> RedeemCodeAsync(BrokerSession session, string code, CancellationToken cancellationToken)
+    {
+        var form = new Dictionary<string, string>
+        {
+            ["client_id"] = _options.ClientId!,
+            ["client_secret"] = _options.ClientSecret!,
+            ["grant_type"] = "authorization_code",
+            ["code"] = code,
+            ["redirect_uri"] = _options.CallbackUrl,
+            ["code_verifier"] = session.CodeVerifier,
+            ["scope"] = string.Join(' ', BrokerOptions.RequiredScopes)
+        };
+        return await PostAsync(form, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<TokenResult> AcquireForScopeAsync(BrokerSession session, string scope, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(session.RefreshToken))
+        {
+            throw new InvalidOperationException("The session holds no refresh token.");
+        }
+
+        var form = new Dictionary<string, string>
+        {
+            ["client_id"] = _options.ClientId!,
+            ["client_secret"] = _options.ClientSecret!,
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = session.RefreshToken!,
+            ["scope"] = scope
+        };
+        var result = await PostAsync(form, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(result.RefreshToken))
+        {
+            session.RefreshToken = result.RefreshToken;
+        }
+        return result;
+    }
+
+    private async Task<TokenResult> PostAsync(Dictionary<string, string> form, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, _options.Authority.TrimEnd('/') + "/oauth2/v2.0/token")
+        {
+            Content = new FormUrlEncodedContent(form)
+        };
+        using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException("The Microsoft Entra token endpoint rejected the request: " + Describe(body));
+        }
+
+        using var document = JsonDocument.Parse(body);
+        var root = document.RootElement;
+        var accessToken = root.TryGetProperty("access_token", out var token) ? token.GetString() : null;
+        if (string.IsNullOrWhiteSpace(accessToken))
+        {
+            throw new InvalidOperationException("The Microsoft Entra token endpoint returned no access token.");
+        }
+
+        var refresh = root.TryGetProperty("refresh_token", out var refreshToken) ? refreshToken.GetString() : null;
+        var expiresIn = root.TryGetProperty("expires_in", out var expires) && expires.TryGetInt32(out var seconds) ? seconds : 3600;
+        var identity = root.TryGetProperty("id_token", out var idToken) ? IdentityToken.Read(idToken.GetString()) : (null, null);
+
+        return new TokenResult(accessToken!, refresh, identity.Item1, identity.Item2, DateTimeOffset.UtcNow.AddSeconds(expiresIn));
+    }
+
+    /// <summary>Keeps error text free of tokens and of anything secret.</summary>
+    private static string Describe(string body)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.TryGetProperty("error_description", out var description))
+            {
+                var text = description.GetString() ?? string.Empty;
+                return text.Length > 300 ? text[..300] : text;
+            }
+            if (document.RootElement.TryGetProperty("error", out var error))
+            {
+                return error.GetString() ?? "unknown_error";
+            }
+        }
+        catch (JsonException)
+        {
+            // fall through
+        }
+        return "unknown_error";
+    }
+}
+
+/// <summary>Reads only the display claims of an id token. No signature validation is required here
+/// because the token arrives directly from the token endpoint over TLS and is used for display only.</summary>
+public static class IdentityToken
+{
+    public static (string?, string?) Read(string? idToken)
+    {
+        if (string.IsNullOrWhiteSpace(idToken)) return (null, null);
+        var parts = idToken.Split('.');
+        if (parts.Length < 2) return (null, null);
+
+        try
+        {
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            using var document = JsonDocument.Parse(Convert.FromBase64String(payload));
+            var root = document.RootElement;
+            var account =
+                (root.TryGetProperty("preferred_username", out var upn) ? upn.GetString() : null) ??
+                (root.TryGetProperty("email", out var email) ? email.GetString() : null) ??
+                (root.TryGetProperty("name", out var name) ? name.GetString() : null);
+            var tenant = root.TryGetProperty("tid", out var tid) ? tid.GetString() : null;
+            return (account, tenant);
+        }
+        catch (Exception exception) when (exception is FormatException or JsonException)
+        {
+            return (null, null);
+        }
+    }
+}

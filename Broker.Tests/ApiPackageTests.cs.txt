@@ -1,0 +1,150 @@
+using System.Text.Json;
+using CustomerInsightsSegmentSankey.Broker;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.Broker.Tests;
+
+/// <summary>
+/// The service must deploy exactly the package the browser pinned and must never
+/// report a Web App as provisioned when it does not actually run that package.
+/// </summary>
+public class ApiPackageTests
+{
+    private const string Digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    private static ApiPackage Package(string? url = "https://contoso.example.com/api.zip", string? sha = Digest,
+        string? blob = null, string? version = "1.1.0.0") =>
+        new() { Url = url, Sha256 = sha, BlobName = blob, Version = version };
+
+    [Fact]
+    public void AUrlWithAMatchingDigestIsUsable()
+    {
+        Assert.True(Package().IsUsable);
+    }
+
+    [Theory]
+    [InlineData(null, Digest)]
+    [InlineData("", Digest)]
+    [InlineData("http://contoso.example.com/api.zip", Digest)]
+    [InlineData("not a url", Digest)]
+    [InlineData("https://contoso.example.com/api.zip", null)]
+    [InlineData("https://contoso.example.com/api.zip", "")]
+    [InlineData("https://contoso.example.com/api.zip", "abc")]
+    [InlineData("https://contoso.example.com/api.zip", "zzzz56789abcdef0123456789abcdef0123456789abcdef0123456789abcdefg")]
+    public void AnythingUnverifiableIsNotUsable(string? url, string? sha)
+    {
+        Assert.False(Package(url, sha).IsUsable);
+    }
+
+    [Fact]
+    public void TheBlobNameBindsTheVersionAndTheDigest()
+    {
+        Assert.Equal("api-1.1.0.0-" + Digest[..16] + ".zip", Package().ResolvedBlobName);
+    }
+
+    [Fact]
+    public void AnExplicitBlobNameFromTheBrowserWins()
+    {
+        Assert.Equal("api-custom.zip", Package(blob: "api-custom.zip").ResolvedBlobName);
+    }
+
+    [Fact]
+    public void TheContractCarriesThePackageThroughSerialization()
+    {
+        var json = JsonSerializer.Serialize(new StartRunRequest { ApiPackage = Package() });
+        Assert.Contains("\"apiPackage\"", json, StringComparison.Ordinal);
+
+        var round = JsonSerializer.Deserialize<StartRunRequest>(json);
+        Assert.NotNull(round!.ApiPackage);
+        Assert.Equal("https://contoso.example.com/api.zip", round.ApiPackage!.Url);
+        Assert.Equal(Digest, round.ApiPackage.Sha256);
+        Assert.Equal("1.1.0.0", round.ApiPackage.Version);
+        Assert.True(round.ApiPackage.IsUsable);
+    }
+
+    // -------------------------------------------------------------- verification
+
+    private static Dictionary<string, string?> Applied(
+        string? runFromPackage = null, string? identity = "SystemAssigned", string? sha = Digest)
+    {
+        var blob = "api-1.1.0.0-" + Digest[..16] + ".zip";
+        return new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["WEBSITE_RUN_FROM_PACKAGE"] = runFromPackage ??
+                "https://spexample01.blob.core.windows.net/segment-preview-api/" + blob,
+            ["WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID"] = identity,
+            ["SEGMENT_PREVIEW_PACKAGE_SHA256"] = sha
+        };
+    }
+
+    [Fact]
+    public void AcceptsAWebAppThatRunsThePinnedPackageFromCustomerStorage()
+    {
+        AzureFabricProvisioningExecutor.VerifyPackageSettings(Applied(), Package());
+    }
+
+    [Fact]
+    public void RejectsAWebAppWithNoPackageSetting()
+    {
+        var error = Assert.Throws<InvalidOperationException>(
+            () => AzureFabricProvisioningExecutor.VerifyPackageSettings(Applied(runFromPackage: ""), Package()));
+        Assert.Contains("WEBSITE_RUN_FROM_PACKAGE", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RejectsADifferentBlob()
+    {
+        var settings = Applied(runFromPackage:
+            "https://spexample01.blob.core.windows.net/segment-preview-api/api-0.9.0.0-deadbeefdeadbeef.zip");
+        Assert.Throws<InvalidOperationException>(
+            () => AzureFabricProvisioningExecutor.VerifyPackageSettings(settings, Package()));
+    }
+
+    [Fact]
+    public void RejectsAnExpiringSharedAccessSignature()
+    {
+        var blob = "api-1.1.0.0-" + Digest[..16] + ".zip";
+        var settings = Applied(runFromPackage:
+            "https://spexample01.blob.core.windows.net/segment-preview-api/" + blob + "?sv=2021-08-06&sig=x");
+        var error = Assert.Throws<InvalidOperationException>(
+            () => AzureFabricProvisioningExecutor.VerifyPackageSettings(settings, Package()));
+        Assert.Contains("shared access signature", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RejectsADigestThatDoesNotMatchThePinnedOne()
+    {
+        var settings = Applied(sha: new string('a', 64));
+        var error = Assert.Throws<InvalidOperationException>(
+            () => AzureFabricProvisioningExecutor.VerifyPackageSettings(settings, Package()));
+        Assert.Contains("digest", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("UserAssigned")]
+    public void RejectsAWebAppThatDoesNotReadTheBlobWithItsOwnIdentity(string? identity)
+    {
+        var error = Assert.Throws<InvalidOperationException>(
+            () => AzureFabricProvisioningExecutor.VerifyPackageSettings(Applied(identity: identity), Package()));
+        Assert.Contains("WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReadsTheArmAppSettingsResponse()
+    {
+        using var document = JsonDocument.Parse(
+            "{\"properties\":{\"WEBSITE_RUN_FROM_PACKAGE\":\"https://x/y.zip\",\"OTHER\":null}}");
+        var settings = AzureFabricProvisioningExecutor.ReadAppSettings(document.RootElement);
+        Assert.Equal("https://x/y.zip", settings["WEBSITE_RUN_FROM_PACKAGE"]);
+        Assert.Null(settings["OTHER"]);
+    }
+
+    [Fact]
+    public void ReadingAResponseWithoutPropertiesYieldsNoSettings()
+    {
+        using var document = JsonDocument.Parse("{}");
+        Assert.Empty(AzureFabricProvisioningExecutor.ReadAppSettings(document.RootElement));
+    }
+}

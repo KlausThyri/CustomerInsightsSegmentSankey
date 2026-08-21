@@ -1,0 +1,57 @@
+using System.Text;
+using System.Text.Json;
+
+namespace CustomerInsightsSegmentSankey.Broker;
+
+/// <summary>
+/// Renders the page the Entra redirect lands on. It posts the session result to the
+/// opener using the exact allow-listed origin as targetOrigin and then closes itself.
+/// The payload is base64 encoded so no caller-controlled value is ever interpolated
+/// into executable script.
+/// </summary>
+public static class CallbackPage
+{
+    private static readonly JsonSerializerOptions JsonOptions = new() { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never };
+
+    public static string Render(SessionMessage message, string targetOrigin)
+    {
+        if (string.IsNullOrWhiteSpace(targetOrigin))
+        {
+            throw new ArgumentException("A concrete target origin is required; the wildcard '*' is never allowed.", nameof(targetOrigin));
+        }
+
+        var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message, JsonOptions)));
+        var origin = Convert.ToBase64String(Encoding.UTF8.GetBytes(targetOrigin));
+        var headline = message.Status == "authorized"
+            ? "You are signed in. This window closes automatically."
+            : "Sign-in did not complete. Close this window and try again.";
+
+        return $$"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+<title>Segment Preview provisioning</title>
+<style>
+body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 32px; color: #242424; background: #faf9f8; }
+p { max-width: 32rem; line-height: 1.5; }
+</style>
+</head>
+<body>
+<p id="headline">{{headline}}</p>
+<script>
+(function () {
+  var payload = JSON.parse(decodeURIComponent(escape(atob("{{payload}}"))));
+  var target = decodeURIComponent(escape(atob("{{origin}}")));
+  if (window.opener) {
+    window.opener.postMessage(payload, target);
+  }
+  window.setTimeout(function () { window.close(); }, 400);
+})();
+</script>
+</body>
+</html>
+""";
+    }
+}

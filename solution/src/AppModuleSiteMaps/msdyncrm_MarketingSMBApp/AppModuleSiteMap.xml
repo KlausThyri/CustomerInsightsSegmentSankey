@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <AppModuleSiteMap xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <SiteMapUniqueName>msdyncrm_MarketingSMBApp</SiteMapUniqueName>
+  <SiteMapName>Customer Insights - Journeys</SiteMapName>
   <EnableCollapsibleGroups>False</EnableCollapsibleGroups>
   <ShowHome>False</ShowHome>
   <ShowPinned>True</ShowPinned>

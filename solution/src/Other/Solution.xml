@@ -8,7 +8,7 @@
     <Descriptions>
       <Description description="Draft segment visualization, secured member paging, and guided provisioning for Customer Insights - Journeys." languagecode="1033" />
     </Descriptions>
-    <Version>1.0.0.0</Version>
+    <Version>1.1.0.0</Version>
     <Managed>2</Managed>
     <Publisher>
       <UniqueName>KlausThyri</UniqueName>
@@ -85,11 +85,15 @@
       <RootComponent type="1" schemaName="msdynmkt_segmentdefinition" behavior="1" />
       <RootComponent type="61" schemaName="klth_/SegmentSankey/launcher.js" behavior="0" />
       <RootComponent type="61" schemaName="klth_/SegmentSankey/segment-members.html" behavior="0" />
+      <RootComponent type="61" schemaName="klth_/SegmentSankey/segment-preview-azure-template.js" behavior="0" />
+      <RootComponent type="61" schemaName="klth_/SegmentSankey/segment-preview-payload.js" behavior="0" />
+      <RootComponent type="61" schemaName="klth_/SegmentSankey/segment-preview-provisioning.js" behavior="0" />
       <RootComponent type="61" schemaName="klth_/SegmentSankey/segment-preview-setup.html" behavior="0" />
       <RootComponent type="61" schemaName="klth_/SegmentSankey/segment-sankey.html" behavior="0" />
       <RootComponent type="61" schemaName="klth_/SegmentSankey/segment-sankey-icon.svg" behavior="0" />
       <RootComponent type="62" schemaName="msdyncrm_MarketingSMBApp" behavior="0" />
       <RootComponent type="91" id="{458b9dc7-1d9a-f111-b8dc-7ced8d762587}" schemaName="CustomerInsightsSegmentSankey, Version=0.0.17.0, Culture=neutral, PublicKeyToken=7723c9b9c78b183b" behavior="0" />
     </RootComponents>
+    <MissingDependencies />
   </SolutionManifest>
 </ImportExportXml>

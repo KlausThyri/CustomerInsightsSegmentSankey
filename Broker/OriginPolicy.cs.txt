@@ -1,0 +1,67 @@
+namespace CustomerInsightsSegmentSankey.Broker;
+
+/// <summary>
+/// Decides which browser origins may create a session and receive the sign-in
+/// result. The policy denies by default: an empty configuration allows nothing,
+/// so a misconfigured deployment cannot become a redirect oracle.
+/// </summary>
+public sealed class OriginPolicy
+{
+    private readonly HashSet<string> _origins;
+    private readonly string[] _suffixes;
+
+    public OriginPolicy(IEnumerable<string>? origins, IEnumerable<string>? suffixes)
+    {
+        _origins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var origin in origins ?? Enumerable.Empty<string>())
+        {
+            var normalized = Normalize(origin);
+            if (normalized is not null) _origins.Add(normalized);
+        }
+
+        _suffixes = (suffixes ?? Enumerable.Empty<string>())
+            .Select(suffix => suffix?.Trim().TrimStart('*').ToLowerInvariant())
+            .Where(suffix => !string.IsNullOrWhiteSpace(suffix))
+            .Select(suffix => suffix!.StartsWith('.') ? suffix! : "." + suffix!)
+            .ToArray();
+    }
+
+    public bool IsAllowed(string? origin) => Canonicalize(origin) is not null;
+
+    /// <summary>
+    /// Returns the exact origin string to use as the postMessage target, or null when
+    /// the origin is not allowed. Callers must never fall back to "*".
+    /// </summary>
+    public string? Canonicalize(string? origin)
+    {
+        var normalized = Normalize(origin);
+        if (normalized is null) return null;
+        if (_origins.Contains(normalized)) return normalized;
+
+        var host = new Uri(normalized).Host.ToLowerInvariant();
+        foreach (var suffix in _suffixes)
+        {
+            if (host.EndsWith(suffix, StringComparison.Ordinal) && host.Length > suffix.Length)
+            {
+                return normalized;
+            }
+        }
+
+        return null;
+    }
+
+    public IReadOnlyCollection<string> ExactOrigins => _origins;
+
+    /// <summary>Normalizes to scheme://host[:port] and rejects anything that is not https.</summary>
+    private static string? Normalize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri)) return null;
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)) return null;
+        if (string.IsNullOrEmpty(uri.Host)) return null;
+
+        return uri.IsDefaultPort
+            ? uri.Scheme.ToLowerInvariant() + "://" + uri.Host.ToLowerInvariant()
+            : uri.Scheme.ToLowerInvariant() + "://" + uri.Host.ToLowerInvariant() + ":" + uri.Port;
+    }
+}

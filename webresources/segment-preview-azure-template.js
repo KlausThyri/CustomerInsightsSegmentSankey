@@ -1,0 +1,514 @@
+/*!
+ * Segment Preview - Azure Resource Manager template.
+ *
+ * GENERATED FILE - do not edit by hand.
+ * Source:     deployment/azure/main.bicep
+ * Regenerate: pwsh -File deployment/azure/Update-AzureTemplateWebResource.ps1
+ */
+(function (root, factory) {
+  "use strict";
+  var template = factory();
+  if (typeof module === "object" && module && module.exports) {
+    module.exports = template;
+  }
+  if (root) {
+    root.SegmentPreviewAzureTemplate = template;
+  }
+})(typeof globalThis !== "undefined" ? globalThis : this, function () {
+  "use strict";
+  return {
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "metadata": {
+      "_generator": {
+        "name": "bicep",
+        "version": "0.46.1.21595",
+        "templateHash": "11025135368247316816"
+      }
+    },
+    "parameters": {
+      "location": {
+        "type": "string",
+        "defaultValue": "[resourceGroup().location]",
+        "metadata": {
+          "description": "Azure region used for the Segment Preview resources."
+        }
+      },
+      "webAppName": {
+        "type": "string",
+        "metadata": {
+          "description": "Globally unique Azure Web App name."
+        }
+      },
+      "fabricSqlServer": {
+        "type": "string",
+        "metadata": {
+          "description": "Fabric SQL endpoint host name."
+        }
+      },
+      "fabricSqlDatabase": {
+        "type": "string",
+        "metadata": {
+          "description": "Fabric SQL endpoint database name."
+        }
+      },
+      "fabricWorkspaceId": {
+        "type": "string",
+        "metadata": {
+          "description": "Fabric workspace ID."
+        }
+      },
+      "fabricServingLakehouseId": {
+        "type": "string",
+        "metadata": {
+          "description": "Fabric Serving Lakehouse ID."
+        }
+      },
+      "fabricDataverseConnectionId": {
+        "type": "string",
+        "metadata": {
+          "description": "Fabric cloud connection ID for the Dataverse source."
+        }
+      },
+      "fabricDataverseDeltaFolder": {
+        "type": "string",
+        "metadata": {
+          "description": "Dataverse Delta Lake folder used by the Fabric cloud connection."
+        }
+      },
+      "dataverseEnvironmentUrl": {
+        "type": "string",
+        "metadata": {
+          "description": "Dataverse environment URL."
+        }
+      },
+      "behavioralApiKey": {
+        "type": "securestring",
+        "metadata": {
+          "description": "Shared secret accepted only by the server-side Segment Preview API."
+        }
+      },
+      "requiredDataverseTables": {
+        "type": "string",
+        "defaultValue": "contact,msdynmkt_contactpointconsent4,msdynmkt_purpose,msdynmkt_topic",
+        "metadata": {
+          "description": "Required Dataverse shortcuts provisioned by the setup center."
+        }
+      },
+      "apiPackageUrl": {
+        "type": "string",
+        "defaultValue": "",
+        "metadata": {
+          "description": "HTTPS URL of the published Segment Preview API package. Empty leaves the Web App without a package."
+        }
+      },
+      "apiPackageSha256": {
+        "type": "string",
+        "defaultValue": "",
+        "metadata": {
+          "description": "SHA-256 of the published API package, 64 lower-case hexadecimal characters. Required together with apiPackageUrl."
+        }
+      },
+      "apiPackageBlobName": {
+        "type": "string",
+        "defaultValue": "",
+        "metadata": {
+          "description": "Immutable blob name the verified package is stored under. Empty derives it from the digest."
+        }
+      },
+      "apiPackageVersion": {
+        "type": "string",
+        "defaultValue": "",
+        "metadata": {
+          "description": "Version stamped into the Web App settings alongside the package."
+        }
+      },
+      "packageStorageAccountName": {
+        "type": "string",
+        "defaultValue": "",
+        "metadata": {
+          "description": "Storage account that holds the customer-owned copy of the API package. Empty derives a deterministic name."
+        }
+      }
+    },
+    "variables": {
+      "deployPackage": "[and(not(empty(parameters('apiPackageUrl'))), not(empty(parameters('apiPackageSha256'))))]",
+      "storageName": "[if(empty(parameters('packageStorageAccountName')), toLower(format('sp{0}{1}', take(replace(parameters('webAppName'), '-', ''), 11), take(uniqueString(resourceGroup().id, parameters('webAppName')), 11))), parameters('packageStorageAccountName'))]",
+      "containerName": "segment-preview-api",
+      "blobName": "[if(empty(parameters('apiPackageBlobName')), format('api-{0}.zip', take(parameters('apiPackageSha256'), 16)), parameters('apiPackageBlobName'))]",
+      "packageBlobUrl": "[format('https://{0}.blob.{1}/{2}/{3}', variables('storageName'), environment().suffixes.storage, variables('containerName'), variables('blobName'))]",
+      "blobDataContributorRoleId": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+      "blobDataReaderRoleId": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1",
+      "privateBlobDnsZoneName": "[format('privatelink.blob.{0}', environment().suffixes.storage)]"
+    },
+    "resources": [
+      {
+        "type": "Microsoft.Network/virtualNetworks",
+        "apiVersion": "2023-11-01",
+        "name": "[format('{0}-vnet', parameters('webAppName'))]",
+        "location": "[parameters('location')]",
+        "properties": {
+          "addressSpace": {
+            "addressPrefixes": [
+              "10.42.0.0/16"
+            ]
+          },
+          "subnets": [
+            {
+              "name": "package-copy",
+              "properties": {
+                "addressPrefix": "10.42.0.0/24",
+                "delegations": [
+                  {
+                    "name": "aci",
+                    "properties": {
+                      "serviceName": "Microsoft.ContainerInstance/containerGroups"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "web-app",
+              "properties": {
+                "addressPrefix": "10.42.1.0/24",
+                "delegations": [
+                  {
+                    "name": "app-service",
+                    "properties": {
+                      "serviceName": "Microsoft.Web/serverFarms"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "private-endpoints",
+              "properties": {
+                "addressPrefix": "10.42.2.0/24",
+                "privateEndpointNetworkPolicies": "Disabled"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "type": "Microsoft.OperationalInsights/workspaces",
+        "apiVersion": "2023-09-01",
+        "name": "[format('{0}-logs', parameters('webAppName'))]",
+        "location": "[parameters('location')]",
+        "properties": {
+          "retentionInDays": 30,
+          "features": {
+            "enableLogAccessUsingOnlyResourcePermissions": true
+          }
+        }
+      },
+      {
+        "type": "Microsoft.Insights/components",
+        "apiVersion": "2020-02-02",
+        "name": "[format('{0}-insights', parameters('webAppName'))]",
+        "location": "[parameters('location')]",
+        "kind": "web",
+        "properties": {
+          "Application_Type": "web",
+          "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('webAppName')))]"
+        },
+        "dependsOn": [
+          "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('webAppName')))]"
+        ]
+      },
+      {
+        "type": "Microsoft.Web/serverfarms",
+        "apiVersion": "2023-12-01",
+        "name": "[format('{0}-plan', parameters('webAppName'))]",
+        "location": "[parameters('location')]",
+        "kind": "linux",
+        "sku": {
+          "name": "B1",
+          "tier": "Basic",
+          "size": "B1",
+          "capacity": 1
+        },
+        "properties": {
+          "reserved": true
+        }
+      },
+      {
+        "condition": "[variables('deployPackage')]",
+        "type": "Microsoft.Storage/storageAccounts",
+        "apiVersion": "2023-05-01",
+        "name": "[variables('storageName')]",
+        "location": "[parameters('location')]",
+        "kind": "StorageV2",
+        "sku": {
+          "name": "Standard_LRS"
+        },
+        "properties": {
+          "accessTier": "Hot",
+          "allowBlobPublicAccess": false,
+          "allowSharedKeyAccess": false,
+          "supportsHttpsTrafficOnly": true,
+          "minimumTlsVersion": "TLS1_2",
+          "publicNetworkAccess": "Disabled",
+          "networkAcls": {
+            "bypass": "AzureServices",
+            "defaultAction": "Allow"
+          }
+        }
+      },
+      {
+        "condition": "[variables('deployPackage')]",
+        "type": "Microsoft.Network/privateDnsZones",
+        "apiVersion": "2020-06-01",
+        "name": "[variables('privateBlobDnsZoneName')]",
+        "location": "global"
+      },
+      {
+        "condition": "[variables('deployPackage')]",
+        "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+        "apiVersion": "2020-06-01",
+        "name": "[format('{0}/{1}', variables('privateBlobDnsZoneName'), format('{0}-vnet', parameters('webAppName')))]",
+        "location": "global",
+        "properties": {
+          "registrationEnabled": false,
+          "virtualNetwork": {
+            "id": "[resourceId('Microsoft.Network/virtualNetworks', format('{0}-vnet', parameters('webAppName')))]"
+          }
+        },
+        "dependsOn": [
+          "[resourceId('Microsoft.Network/virtualNetworks', format('{0}-vnet', parameters('webAppName')))]",
+          "[resourceId('Microsoft.Network/privateDnsZones', variables('privateBlobDnsZoneName'))]"
+        ]
+      },
+      {
+        "condition": "[variables('deployPackage')]",
+        "type": "Microsoft.Network/privateEndpoints",
+        "apiVersion": "2023-11-01",
+        "name": "[format('{0}-package-blob', parameters('webAppName'))]",
+        "location": "[parameters('location')]",
+        "properties": {
+          "subnet": {
+            "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', format('{0}-vnet', parameters('webAppName')), 'private-endpoints')]"
+          },
+          "privateLinkServiceConnections": [
+            {
+              "name": "blob",
+              "properties": {
+                "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+                "groupIds": [
+                  "blob"
+                ]
+              }
+            }
+          ]
+        },
+        "dependsOn": [
+          "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+          "[resourceId('Microsoft.Network/virtualNetworks', format('{0}-vnet', parameters('webAppName')))]"
+        ]
+      },
+      {
+        "condition": "[variables('deployPackage')]",
+        "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+        "apiVersion": "2023-11-01",
+        "name": "[format('{0}/{1}', format('{0}-package-blob', parameters('webAppName')), 'default')]",
+        "properties": {
+          "privateDnsZoneConfigs": [
+            {
+              "name": "blob",
+              "properties": {
+                "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('privateBlobDnsZoneName'))]"
+              }
+            }
+          ]
+        },
+        "dependsOn": [
+          "[resourceId('Microsoft.Network/privateEndpoints', format('{0}-package-blob', parameters('webAppName')))]",
+          "[resourceId('Microsoft.Network/privateDnsZones', variables('privateBlobDnsZoneName'))]"
+        ]
+      },
+      {
+        "condition": "[variables('deployPackage')]",
+        "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+        "apiVersion": "2023-05-01",
+        "name": "[format('{0}/default/{1}', variables('storageName'), variables('containerName'))]",
+        "properties": {
+          "publicAccess": "None"
+        },
+        "dependsOn": [
+          "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+        ]
+      },
+      {
+        "condition": "[variables('deployPackage')]",
+        "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+        "apiVersion": "2023-01-31",
+        "name": "[format('{0}-package', parameters('webAppName'))]",
+        "location": "[parameters('location')]"
+      },
+      {
+        "condition": "[variables('deployPackage')]",
+        "type": "Microsoft.Authorization/roleAssignments",
+        "apiVersion": "2022-04-01",
+        "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+        "name": "[guid(resourceGroup().id, variables('storageName'), 'package-writer')]",
+        "properties": {
+          "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('blobDataContributorRoleId'))]",
+          "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-package', parameters('webAppName'))), '2023-01-31').principalId]",
+          "principalType": "ServicePrincipal"
+        },
+        "dependsOn": [
+          "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-package', parameters('webAppName')))]",
+          "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+        ]
+      },
+      {
+        "condition": "[variables('deployPackage')]",
+        "type": "Microsoft.ContainerInstance/containerGroups",
+        "apiVersion": "2023-05-01",
+        "name": "[format('{0}-package-copy', parameters('webAppName'))]",
+        "location": "[parameters('location')]",
+        "identity": {
+          "type": "UserAssigned",
+          "userAssignedIdentities": {
+            "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-package', parameters('webAppName'))))]": {}
+          }
+        },
+        "properties": {
+          "osType": "Linux",
+          "restartPolicy": "Never",
+          "subnetIds": [
+            {
+              "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', format('{0}-vnet', parameters('webAppName')), 'package-copy')]"
+            }
+          ],
+          "containers": [
+            {
+              "name": "copy",
+              "properties": {
+                "image": "mcr.microsoft.com/azure-cli:2.61.0",
+                "command": [
+                  "/bin/sh",
+                  "-c",
+                  "printf \"%s\" \"$1\" | tr -d \"\\r\" | /bin/sh -e",
+                  "copy-script",
+                  "work=$(mktemp -d)\r\naz login --identity --allow-no-subscriptions --output none\r\n\r\nexists=false\r\nfor attempt in $(seq 1 30); do\r\n  if az storage blob exists --auth-mode login --account-name \"$ACCOUNT\" \\\r\n      --container-name \"$CONTAINER\" --name \"$BLOB\" --only-show-errors \\\r\n      --query exists -o tsv > \"$work/exists\" 2>\"$work/err\"; then\r\n    exists=$(tr -d '[:space:]' < \"$work/exists\" | tr '[:upper:]' '[:lower:]')\r\n    break\r\n  fi\r\n  echo \"Waiting for the role assignment to take effect (attempt $attempt).\"\r\n  sleep 10\r\ndone\r\n\r\nif [ \"$exists\" = \"true\" ]; then\r\n  echo \"The verified package is already stored as $BLOB; nothing is copied.\"\r\nelse\r\n  python3 -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])' \\\r\n    \"$PACKAGE_URL\" \"$work/package.zip\"\r\n  actual=$(sha256sum \"$work/package.zip\" | cut -d' ' -f1)\r\n  if [ \"$actual\" != \"$PACKAGE_SHA256\" ]; then\r\n    echo \"The downloaded package does not match the pinned digest.\" >&2\r\n    echo \"expected $PACKAGE_SHA256, got $actual\" >&2\r\n    exit 1\r\n  fi\r\n  az storage blob upload --auth-mode login --account-name \"$ACCOUNT\" \\\r\n    --container-name \"$CONTAINER\" --name \"$BLOB\" --file \"$work/package.zip\" \\\r\n    --overwrite false --only-show-errors\r\n  echo \"Copied the verified package to $BLOB.\"\r\nfi\r\n\r\necho \"Verified package copy completed.\"\r\n"
+                ],
+                "environmentVariables": [
+                  {
+                    "name": "PACKAGE_URL",
+                    "value": "[parameters('apiPackageUrl')]"
+                  },
+                  {
+                    "name": "PACKAGE_SHA256",
+                    "value": "[toLower(parameters('apiPackageSha256'))]"
+                  },
+                  {
+                    "name": "ACCOUNT",
+                    "value": "[variables('storageName')]"
+                  },
+                  {
+                    "name": "CONTAINER",
+                    "value": "[variables('containerName')]"
+                  },
+                  {
+                    "name": "BLOB",
+                    "value": "[variables('blobName')]"
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": 1,
+                    "memoryInGB": 1
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "dependsOn": [
+          "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', split(format('{0}/default/{1}', variables('storageName'), variables('containerName')), '/')[0], split(format('{0}/default/{1}', variables('storageName'), variables('containerName')), '/')[1], split(format('{0}/default/{1}', variables('storageName'), variables('containerName')), '/')[2])]",
+          "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-package', parameters('webAppName')))]",
+          "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', format('{0}-package-blob', parameters('webAppName')), 'default')]",
+          "[resourceId('Microsoft.Network/virtualNetworks', format('{0}-vnet', parameters('webAppName')))]",
+          "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, variables('storageName'), 'package-writer'))]"
+        ]
+      },
+      {
+        "type": "Microsoft.Web/sites",
+        "apiVersion": "2023-12-01",
+        "name": "[parameters('webAppName')]",
+        "location": "[parameters('location')]",
+        "kind": "app,linux",
+        "identity": {
+          "type": "SystemAssigned"
+        },
+        "properties": {
+          "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', parameters('webAppName')))]",
+          "virtualNetworkSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', format('{0}-vnet', parameters('webAppName')), 'web-app')]",
+          "httpsOnly": true,
+          "clientAffinityEnabled": false,
+          "siteConfig": {
+            "alwaysOn": true,
+            "ftpsState": "Disabled",
+            "http20Enabled": true,
+            "vnetRouteAllEnabled": true,
+            "minTlsVersion": "1.2",
+            "linuxFxVersion": "DOTNETCORE|8.0",
+            "healthCheckPath": "/api/health",
+            "appSettings": "[concat(createArray(createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', format('{0}-insights', parameters('webAppName'))), '2020-02-02').ConnectionString), createObject('name', 'ApplicationInsightsAgent_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'ASPNETCORE_ENVIRONMENT', 'value', 'Production'), createObject('name', 'BEHAVIORAL_API_KEY', 'value', parameters('behavioralApiKey')), createObject('name', 'FABRIC_SQL_SERVER', 'value', parameters('fabricSqlServer')), createObject('name', 'FABRIC_SQL_DATABASE', 'value', parameters('fabricSqlDatabase')), createObject('name', 'FABRIC_WORKSPACE_ID', 'value', parameters('fabricWorkspaceId')), createObject('name', 'FABRIC_SERVING_LAKEHOUSE_ID', 'value', parameters('fabricServingLakehouseId')), createObject('name', 'FABRIC_DATAVERSE_CONNECTION_ID', 'value', parameters('fabricDataverseConnectionId')), createObject('name', 'FABRIC_DATAVERSE_DELTA_FOLDER', 'value', parameters('fabricDataverseDeltaFolder')), createObject('name', 'DATAVERSE_ENVIRONMENT_URL', 'value', parameters('dataverseEnvironmentUrl')), createObject('name', 'SEGMENT_PREVIEW_REQUIRED_TABLES', 'value', parameters('requiredDataverseTables'))), if(variables('deployPackage'), createArray(createObject('name', 'WEBSITE_RUN_FROM_PACKAGE', 'value', variables('packageBlobUrl')), createObject('name', 'WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID', 'value', 'SystemAssigned'), createObject('name', 'SEGMENT_PREVIEW_PACKAGE_VERSION', 'value', parameters('apiPackageVersion')), createObject('name', 'SEGMENT_PREVIEW_PACKAGE_SHA256', 'value', toLower(parameters('apiPackageSha256')))), createArray()))]"
+          }
+        },
+        "dependsOn": [
+          "[resourceId('Microsoft.Insights/components', format('{0}-insights', parameters('webAppName')))]",
+          "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', parameters('webAppName')))]",
+          "[resourceId('Microsoft.ContainerInstance/containerGroups', format('{0}-package-copy', parameters('webAppName')))]",
+          "[resourceId('Microsoft.Network/virtualNetworks', format('{0}-vnet', parameters('webAppName')))]"
+        ]
+      },
+      {
+        "condition": "[variables('deployPackage')]",
+        "type": "Microsoft.Authorization/roleAssignments",
+        "apiVersion": "2022-04-01",
+        "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+        "name": "[guid(resourceGroup().id, variables('storageName'), parameters('webAppName'), 'package-reader')]",
+        "properties": {
+          "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('blobDataReaderRoleId'))]",
+          "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2023-12-01', 'full').identity.principalId]",
+          "principalType": "ServicePrincipal"
+        },
+        "dependsOn": [
+          "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+          "[resourceId('Microsoft.Web/sites', parameters('webAppName'))]"
+        ]
+      }
+    ],
+    "outputs": {
+      "webAppUrl": {
+        "type": "string",
+        "value": "[format('https://{0}/api/', reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2023-12-01').defaultHostName)]"
+      },
+      "managedIdentityPrincipalId": {
+        "type": "string",
+        "value": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2023-12-01', 'full').identity.principalId]"
+      },
+      "applicationInsightsName": {
+        "type": "string",
+        "value": "[format('{0}-insights', parameters('webAppName'))]"
+      },
+      "packageBlobUrl": {
+        "type": "string",
+        "value": "[if(variables('deployPackage'), variables('packageBlobUrl'), '')]"
+      },
+      "packageStorageAccount": {
+        "type": "string",
+        "value": "[if(variables('deployPackage'), variables('storageName'), '')]"
+      },
+      "packageBlob": {
+        "type": "string",
+        "value": "[if(variables('deployPackage'), variables('blobName'), '')]"
+      }
+    }
+  };
+});

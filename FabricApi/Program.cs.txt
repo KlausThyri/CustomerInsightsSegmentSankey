@@ -15,8 +15,30 @@ builder.Services.AddHttpClient<FabricDataverseShortcutService>();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<SegmentPreviewSetupService>();
 
+// The setup page polls /api/health from the Dataverse origin while it waits for
+// App Service to mount the deployed package. Only that endpoint is opened, only
+// to the configured Dataverse origin, and only for GET.
+var setupHealthOrigins = SetupHealthCors.ResolveOrigins(
+    builder.Configuration["DATAVERSE_ENVIRONMENT_URL"]);
+builder.Services.AddCors(options =>
+    options.AddPolicy(SetupHealthCors.PolicyName, policy =>
+    {
+        if (setupHealthOrigins.Length == 0)
+        {
+            policy.DisallowCredentials();
+            return;
+        }
+
+        policy.WithOrigins(setupHealthOrigins)
+            .WithMethods("GET")
+            .WithHeaders("Accept")
+            .DisallowCredentials();
+    }));
+
 var app = builder.Build();
-app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.UtcNow }));
+app.UseCors();
+app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.UtcNow }))
+    .RequireCors(SetupHealthCors.PolicyName);
 app.MapPost(
     "/api/segment-counts",
     async (

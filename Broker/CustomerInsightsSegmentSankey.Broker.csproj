@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>CustomerInsightsSegmentSankey.Broker</RootNamespace>
+    <AssemblyName>CustomerInsightsSegmentSankey.Broker</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="**\*.cs.txt" />
+  </ItemGroup>
+  <!-- One source of truth: the browser and the service deploy the same template. -->
+  <ItemGroup>
+    <None Include="..\deployment\azure\main.json" Link="azure\main.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

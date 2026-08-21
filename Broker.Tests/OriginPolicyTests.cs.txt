@@ -1,0 +1,59 @@
+using CustomerInsightsSegmentSankey.Broker;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.Broker.Tests;
+
+public class OriginPolicyTests
+{
+    [Fact]
+    public void EmptyConfigurationAllowsNothing()
+    {
+        var policy = new OriginPolicy(Array.Empty<string>(), Array.Empty<string>());
+        Assert.False(policy.IsAllowed("https://contoso.crm4.dynamics.com"));
+        Assert.Null(policy.Canonicalize("https://contoso.crm4.dynamics.com"));
+    }
+
+    [Fact]
+    public void ExactOriginIsAllowedAndNormalized()
+    {
+        var policy = new OriginPolicy(new[] { "https://Contoso.crm4.dynamics.com/" }, Array.Empty<string>());
+        Assert.Equal("https://contoso.crm4.dynamics.com", policy.Canonicalize("https://contoso.crm4.dynamics.com/setup"));
+    }
+
+    [Fact]
+    public void SuffixMatchesSubdomainsOnly()
+    {
+        var policy = new OriginPolicy(Array.Empty<string>(), new[] { ".crm4.dynamics.com" });
+        Assert.Equal("https://contoso.crm4.dynamics.com", policy.Canonicalize("https://contoso.crm4.dynamics.com"));
+        Assert.Null(policy.Canonicalize("https://crm4.dynamics.com"));
+        Assert.Null(policy.Canonicalize("https://evil-crm4.dynamics.com.attacker.test"));
+    }
+
+    [Fact]
+    public void SuffixWithoutLeadingDotIsTreatedAsDomainSuffix()
+    {
+        var policy = new OriginPolicy(Array.Empty<string>(), new[] { "crm4.dynamics.com" });
+        Assert.True(policy.IsAllowed("https://contoso.crm4.dynamics.com"));
+        Assert.False(policy.IsAllowed("https://contosocrm4.dynamics.com"));
+    }
+
+    [Theory]
+    [InlineData("http://contoso.crm4.dynamics.com")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("")]
+    [InlineData(null)]
+    [InlineData("not a url")]
+    public void NonHttpsValuesAreRejected(string? value)
+    {
+        var policy = new OriginPolicy(new[] { "https://contoso.crm4.dynamics.com" }, new[] { ".dynamics.com" });
+        Assert.False(policy.IsAllowed(value));
+    }
+
+    [Fact]
+    public void PortIsPartOfTheOrigin()
+    {
+        var policy = new OriginPolicy(new[] { "https://localhost:44300" }, Array.Empty<string>());
+        Assert.Equal("https://localhost:44300", policy.Canonicalize("https://localhost:44300"));
+        Assert.Null(policy.Canonicalize("https://localhost:44301"));
+    }
+}

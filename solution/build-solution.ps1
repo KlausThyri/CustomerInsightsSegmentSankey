@@ -1,7 +1,11 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Debug', 'Release')]
-    [string] $Configuration = 'Release'
+    [string] $Configuration = 'Release',
+
+    # Cutting a public release requires a verifiable API package, so the payload
+    # must already carry the published URL and its SHA-256.
+    [switch] $Release
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,11 +19,52 @@ dotnet build `
     (Join-Path $repositoryRoot 'CustomerInsightsSegmentSankey.csproj') `
     --configuration $Configuration
 
+$templateSource = Join-Path $repositoryRoot 'deployment\azure\main.json'
+$templateWebResource = Join-Path $repositoryRoot 'webresources\segment-preview-azure-template.js'
+if ((Test-Path -LiteralPath $templateSource) -and (Test-Path -LiteralPath $templateWebResource)) {
+    $script = Get-Content -LiteralPath $templateWebResource -Raw
+    $marker = 'return '
+    $start = $script.LastIndexOf($marker)
+    $end = $script.LastIndexOf('};') + 1
+    $embedded = $script.Substring($start + $marker.Length, $end - $start - $marker.Length)
+    $expected = (Get-Content -LiteralPath $templateSource -Raw | ConvertFrom-Json | ConvertTo-Json -Depth 64 -Compress)
+    $actual = ($embedded | ConvertFrom-Json | ConvertTo-Json -Depth 64 -Compress)
+    if ($expected -ne $actual) {
+        throw "The Azure template web resource is out of date. Run 'pwsh -File deployment/azure/Update-AzureTemplateWebResource.ps1'."
+    }
+}
+
+$payloadWebResource = Join-Path $repositoryRoot 'webresources\segment-preview-payload.js'
+$notebookSource = Join-Path $repositoryRoot 'Fabric\bootstrap-events.py'
+if ((Test-Path -LiteralPath $notebookSource) -and (Test-Path -LiteralPath $payloadWebResource)) {
+    if ((Get-Item -LiteralPath $notebookSource).LastWriteTimeUtc -gt (Get-Item -LiteralPath $payloadWebResource).LastWriteTimeUtc) {
+        throw "The setup payload web resource is older than Fabric/bootstrap-events.py. Run 'pwsh -File deployment/Update-SetupPayloadWebResource.ps1'."
+    }
+}
+
+if ($Release) {
+    # The Setup Center refuses to deploy a package it cannot verify, so shipping
+    # a payload without the URL and digest would leave the API step manual.
+    $payloadText = Get-Content -LiteralPath $payloadWebResource -Raw
+    $start = $payloadText.LastIndexOf('return ')
+    $end = $payloadText.LastIndexOf('};') + 1
+    $payloadJson = $payloadText.Substring($start + 'return '.Length, $end - $start - 'return '.Length) | ConvertFrom-Json
+    if (-not $payloadJson.api.packageUrl -or $payloadJson.api.packageUrl -notmatch '^https://') {
+        throw "The setup payload carries no API package URL. Publish the release asset, then run 'pwsh -File deployment/Update-SetupPayloadWebResource.ps1 -ApiPackageUrl <url> -ApiPackagePath <zip>'."
+    }
+    if ($payloadJson.api.sha256 -notmatch '^[0-9a-f]{64}$') {
+        throw "The setup payload carries no API package SHA-256. Re-run 'pwsh -File deployment/Update-SetupPayloadWebResource.ps1 -ApiPackageUrl <url> -ApiPackagePath <zip>'."
+    }
+}
+
 $webResources = @{
     'webresources\cis_SegmentSankeyLauncher.js' = 'launcher.js'
     'webresources\segment-sankey.html' = 'segment-sankey.html'
     'webresources\segment-members.html' = 'segment-members.html'
     'webresources\segment-preview-setup.html' = 'segment-preview-setup.html'
+    'webresources\segment-preview-provisioning.js' = 'segment-preview-provisioning.js'
+    'webresources\segment-preview-azure-template.js' = 'segment-preview-azure-template.js'
+    'webresources\segment-preview-payload.js' = 'segment-preview-payload.js'
     'webresources\segment-sankey-icon.svg' = 'segment-sankey-icon.svg'
 }
 foreach ($entry in $webResources.GetEnumerator()) {

@@ -1,0 +1,131 @@
+namespace CustomerInsightsSegmentSankey.Broker;
+
+public sealed record StepOutcome(
+    string Status,
+    string? Message,
+    IReadOnlyDictionary<string, string?>? Outputs = null,
+    IReadOnlyList<string>? Manual = null)
+{
+    public static StepOutcome Succeeded(string message, IReadOnlyDictionary<string, string?>? outputs = null) =>
+        new("succeeded", message, outputs);
+
+    public static StepOutcome Skipped(string message) => new("skipped", message);
+
+    public static StepOutcome ActionRequired(string message, params string[] manual) =>
+        new("actionRequired", message, null, manual);
+}
+
+/// <summary>Everything a step needs. The API key is present only for the lifetime of the run.</summary>
+public sealed class ProvisioningContext
+{
+    public required BrokerSession Session { get; init; }
+    public required StartRunRequest Request { get; init; }
+    public Dictionary<string, string?> Outputs { get; } = new();
+}
+
+public interface IProvisioningExecutor
+{
+    Task<StepOutcome> ExecuteAsync(string stepId, ProvisioningContext context, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Walks the contract steps in order. Steps the browser owns are always reported as
+/// skipped, so the two halves of the run never both write the same resource.
+/// </summary>
+public sealed class ProvisioningPipeline
+{
+    private readonly IProvisioningExecutor _executor;
+
+    public ProvisioningPipeline(IProvisioningExecutor executor) => _executor = executor;
+
+    public async Task RunAsync(RunRecord run, ProvisioningContext context, CancellationToken cancellationToken)
+    {
+        foreach (var stepId in BrokerContract.Steps)
+        {
+            var step = new RunStepStatus { Id = stepId, Status = "pending" };
+            run.Steps.Add(step);
+        }
+
+        foreach (var step in run.Steps)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                step.Status = "failed";
+                step.Message = "The run was cancelled.";
+                run.Status = "failed";
+                run.Error = new ErrorBody { Code = "RunCancelled", Message = "The run was cancelled.", Target = step.Id };
+                return;
+            }
+
+            if (BrokerContract.BrowserOwnedSteps.Contains(step.Id))
+            {
+                step.Status = "skipped";
+                step.Message = "Owned by the setup page.";
+                continue;
+            }
+
+            step.Status = "running";
+            try
+            {
+                var outcome = await _executor.ExecuteAsync(step.Id, context, cancellationToken).ConfigureAwait(false);
+                step.Status = outcome.Status;
+                step.Message = outcome.Message;
+                if (outcome.Outputs is not null)
+                {
+                    foreach (var pair in outcome.Outputs) run.Outputs[pair.Key] = pair.Value;
+                }
+                if (outcome.Manual is not null) run.Manual.AddRange(outcome.Manual);
+                if (outcome.Status == "failed")
+                {
+                    run.Status = "failed";
+                    run.Error = new ErrorBody
+                    {
+                        Code = "StepFailed",
+                        Message = outcome.Message ?? "The step failed.",
+                        Target = step.Id,
+                        Manual = outcome.Manual?.ToList() ?? new List<string>()
+                    };
+                    return;
+                }
+            }
+            catch (Exception exception)
+            {
+                step.Status = "failed";
+                step.Message = exception.Message;
+                run.Status = "failed";
+                run.Error = new ErrorBody { Code = "StepFailed", Message = exception.Message, Target = step.Id };
+                return;
+            }
+        }
+
+        run.Status = run.Manual.Count > 0 ? "actionRequired" : "succeeded";
+    }
+}
+
+/// <summary>
+/// Contract-conformant executor that performs no Azure or Fabric work. It backs the
+/// service's dry-run mode and the conformance tests, so the wire contract can be
+/// exercised end to end without any tenant.
+/// </summary>
+public sealed class DryRunProvisioningExecutor : IProvisioningExecutor
+{
+    public Task<StepOutcome> ExecuteAsync(string stepId, ProvisioningContext context, CancellationToken cancellationToken) =>
+        Task.FromResult(StepOutcome.Skipped("Dry run: " + stepId + " was not executed."));
+}
+
+/// <summary>
+/// Returned when the deployment has no Entra identity configured. Every step reports
+/// actionRequired with the maintainer task, so the browser shows an honest checklist
+/// instead of a silent failure.
+/// </summary>
+public sealed class NotConfiguredProvisioningExecutor : IProvisioningExecutor
+{
+    private readonly IReadOnlyList<string> _missing;
+
+    public NotConfiguredProvisioningExecutor(IReadOnlyList<string> missing) => _missing = missing;
+
+    public Task<StepOutcome> ExecuteAsync(string stepId, ProvisioningContext context, CancellationToken cancellationToken) =>
+        Task.FromResult(StepOutcome.ActionRequired(
+            "The provisioning service is not configured for cross-tenant provisioning.",
+            "The service operator must supply: " + string.Join(", ", _missing) + "."));
+}

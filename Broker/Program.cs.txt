@@ -1,0 +1,108 @@
+namespace CustomerInsightsSegmentSankey.Broker;
+
+/// <summary>
+/// Reference implementation of the publisher-hosted provisioning service described in
+/// documentation/setup-center-contract.md. It holds no credentials of its own: the
+/// Entra application identity is supplied entirely through configuration, and the
+/// service refuses to start a sign-in until an operator has done so.
+/// </summary>
+public static class Program
+{
+    public static void Main(string[] args) => Build(args).Run();
+
+    /// <summary>
+    /// Builds the host. The optional hook exists so tests can substitute the session
+    /// store and the token client; production never passes one.
+    /// </summary>
+    public static WebApplication Build(string[] args, Action<WebApplicationBuilder>? configure = null)
+    {
+        var builder = WebApplication.CreateBuilder(args);
+        ConfigureServices(builder);
+        configure?.Invoke(builder);
+
+        var app = builder.Build();
+
+        app.UseCors();
+        app.Use(async (context, next) =>
+        {
+            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            context.Response.Headers["Referrer-Policy"] = "no-referrer";
+            context.Response.Headers["Cache-Control"] = "no-store";
+            await next().ConfigureAwait(false);
+        });
+
+        app.MapBrokerEndpoints();
+        return app;
+    }
+
+    public static void ConfigureServices(WebApplicationBuilder builder)
+    {
+        var options = new BrokerOptions();
+        builder.Configuration.GetSection(BrokerOptions.SectionName).Bind(options);
+        BindList(builder.Configuration, "Broker:AllowedOrigins", options.AllowedOrigins);
+        BindList(builder.Configuration, "Broker:AllowedOriginSuffixes", options.AllowedOriginSuffixes);
+
+        builder.Services.AddSingleton(options);
+        builder.Services.AddSingleton(new OriginPolicy(options.AllowedOrigins, options.AllowedOriginSuffixes));
+        builder.Services.AddSingleton<ISessionStore>(_ => new InMemorySessionStore());
+        builder.Services.AddSingleton<IRunScheduler, BackgroundRunScheduler>();
+        builder.Services.AddHttpClient();
+
+        builder.Services.AddSingleton<ITokenClient>(provider => new EntraTokenClient(
+            provider.GetRequiredService<BrokerOptions>(),
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient("entra")));
+
+        builder.Services.AddSingleton<IArmTemplateSource>(_ => new FileArmTemplateSource(
+            Path.Combine(AppContext.BaseDirectory, "azure", "main.json")));
+
+        builder.Services.AddSingleton<IProvisioningExecutor>(provider =>
+        {
+            var current = provider.GetRequiredService<BrokerOptions>();
+            if (current.DryRun) return new DryRunProvisioningExecutor();
+            if (!current.IsConfigured) return new NotConfiguredProvisioningExecutor(current.DescribeMissingConfiguration());
+            return new AzureFabricProvisioningExecutor(
+                provider.GetRequiredService<ITokenClient>(),
+                provider.GetRequiredService<IHttpClientFactory>().CreateClient("azure"),
+                provider.GetRequiredService<IArmTemplateSource>());
+        });
+
+        builder.Services.AddSingleton(provider => new ProvisioningPipeline(provider.GetRequiredService<IProvisioningExecutor>()));
+
+        // The web resource calls this service cross-origin from the customer's Dataverse
+        // host, so only the configured origins may read a response.
+        builder.Services.AddCors(cors => cors.AddDefaultPolicy(policy =>
+        {
+            var origins = options.AllowedOrigins.ToArray();
+            if (origins.Length > 0) policy.WithOrigins(origins);
+            else if (options.AllowedOriginSuffixes.Count > 0) policy.SetIsOriginAllowed(IsSuffixAllowed(options));
+            else policy.SetIsOriginAllowed(_ => false);
+
+            policy.WithHeaders("Authorization", "Content-Type", BrokerContract.HeaderName)
+                  .WithMethods("GET", "POST", "DELETE");
+        }));
+    }
+
+    private static Func<string, bool> IsSuffixAllowed(BrokerOptions options)
+    {
+        var policy = new OriginPolicy(options.AllowedOrigins, options.AllowedOriginSuffixes);
+        return origin => policy.IsAllowed(origin);
+    }
+
+    private static void BindList(IConfiguration configuration, string key, IList<string> target)
+    {
+        target.Clear();
+        foreach (var child in configuration.GetSection(key).GetChildren())
+        {
+            if (!string.IsNullOrWhiteSpace(child.Value)) target.Add(child.Value!.Trim());
+        }
+
+        var flat = configuration[key];
+        if (target.Count == 0 && !string.IsNullOrWhiteSpace(flat))
+        {
+            foreach (var value in flat.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                target.Add(value);
+            }
+        }
+    }
+}

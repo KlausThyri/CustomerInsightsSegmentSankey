@@ -1,0 +1,13 @@
+<environmentvariabledefinition schemaname="klth_SetupBrokerUrl">
+  <description default="Optional. HTTPS base URL of a hosted provisioning service used by the setup center instead of the self-service path. Leave this empty for the normal installation, where the setup center provisions directly from the browser using an application registered in your own tenant.">
+    <label description="Optional. HTTPS base URL of a hosted provisioning service used by the setup center instead of the self-service path. Leave this empty for the normal installation, where the setup center provisions directly from the browser using an application registered in your own tenant." languagecode="1033" />
+  </description>
+  <displayname default="Segment Preview Broker URL">
+    <label description="Segment Preview Broker URL" languagecode="1033" />
+  </displayname>
+  <introducedversion>1.1.0.0</introducedversion>
+  <iscustomizable>1</iscustomizable>
+  <isrequired>0</isrequired>
+  <secretstore>0</secretstore>
+  <type>100000000</type>
+</environmentvariabledefinition>

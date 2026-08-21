@@ -1,0 +1,373 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using CustomerInsightsSegmentSankey.Broker;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.Broker.Tests;
+
+/// <summary>
+/// Exercises the wire contract over real HTTP. No Entra tenant, no Azure and no Fabric
+/// are involved: the token client is faked and the service runs in dry-run mode.
+/// </summary>
+public sealed class BrokerEndpointTests : IAsyncLifetime
+{
+    private const string Origin = "https://contoso.crm4.dynamics.com";
+    private const string PublicBaseUrl = "https://provision.example.net";
+
+    private sealed class FakeTokenClient : ITokenClient
+    {
+        public string BuildAuthorizeUrl(BrokerSession session) =>
+            "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?state=" + session.State;
+
+        public Task<TokenResult> RedeemCodeAsync(BrokerSession session, string code, CancellationToken cancellationToken) =>
+            code == "good"
+                ? Task.FromResult(new TokenResult("access", "refresh", "admin@contoso.com", "tenant-1", DateTimeOffset.UtcNow.AddHours(1)))
+                : throw new InvalidOperationException("The Microsoft Entra token endpoint rejected the request: invalid_grant");
+
+        public Task<TokenResult> AcquireForScopeAsync(BrokerSession session, string scope, CancellationToken cancellationToken) =>
+            Task.FromResult(new TokenResult("access", "refresh", "admin@contoso.com", "tenant-1", DateTimeOffset.UtcNow.AddHours(1)));
+    }
+
+    private WebApplication _app = null!;
+    private HttpClient _client = null!;
+    private ISessionStore _sessions = null!;
+
+    public async Task InitializeAsync() => await StartAsync(configured: true, dryRun: true);
+
+    public async Task DisposeAsync()
+    {
+        _client?.Dispose();
+        if (_app is not null) await _app.DisposeAsync();
+    }
+
+    private async Task StartAsync(bool configured, bool dryRun)
+    {
+        if (_app is not null)
+        {
+            _client.Dispose();
+            await _app.DisposeAsync();
+        }
+
+        var args = new List<string>
+        {
+            "--urls=http://127.0.0.1:0",
+            "--Broker:AllowedOrigins:0=" + Origin,
+            "--Broker:DryRun=" + (dryRun ? "true" : "false")
+        };
+
+        if (configured)
+        {
+            args.Add("--Broker:ClientId=11111111-1111-1111-1111-111111111111");
+            args.Add("--Broker:ClientSecret=supplied-by-the-operator");
+            args.Add("--Broker:PublicBaseUrl=" + PublicBaseUrl);
+        }
+
+        _sessions = new InMemorySessionStore();
+        _app = Program.Build(args.ToArray(), builder =>
+        {
+            builder.Services.AddSingleton(_sessions);
+            builder.Services.AddSingleton<ITokenClient, FakeTokenClient>();
+        });
+
+        await _app.StartAsync();
+
+        var address = _app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
+        _client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = new Uri(address) };
+    }
+
+    private static StringContent Json(object value) =>
+        new(JsonSerializer.Serialize(value), System.Text.Encoding.UTF8, "application/json");
+
+    private Task<HttpResponseMessage> CreateSessionAsync(object body) =>
+        _client.PostAsync("/v1/sessions", Json(body));
+
+    private static object SessionBody(string? origin = Origin, string? version = BrokerContract.Version, string? nonce = "nonce-value-01234567") =>
+        new { contractVersion = version, nonce, origin, environmentUrl = Origin, environmentDomain = "contoso.crm4.dynamics.com" };
+
+    // -------------------------------------------------------------------- health
+
+    [Fact]
+    public async Task HealthReportsTheContractAndConfiguration()
+    {
+        var payload = await _client.GetFromJsonAsync<JsonElement>("/health");
+
+        Assert.Equal(BrokerContract.Version, payload.GetProperty("contractVersion").GetString());
+        Assert.True(payload.GetProperty("configured").GetBoolean());
+        Assert.Empty(payload.GetProperty("missing").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task UnconfiguredServiceReportsWhatIsMissing()
+    {
+        await StartAsync(configured: false, dryRun: true);
+
+        var payload = await _client.GetFromJsonAsync<JsonElement>("/health");
+        Assert.False(payload.GetProperty("configured").GetBoolean());
+        Assert.NotEmpty(payload.GetProperty("missing").EnumerateArray());
+
+        var response = await CreateSessionAsync(SessionBody());
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("ServiceNotConfigured", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task ResponsesCarryHardeningHeaders()
+    {
+        var response = await _client.GetAsync("/health");
+
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal("no-referrer", response.Headers.GetValues("Referrer-Policy").Single());
+    }
+
+    // ------------------------------------------------------------------ sessions
+
+    [Fact]
+    public async Task SessionIsCreatedForAnAllowedOrigin()
+    {
+        var response = await CreateSessionAsync(SessionBody());
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var payload = await response.Content.ReadFromJsonAsync<CreateSessionResponse>();
+        Assert.NotNull(payload);
+        Assert.StartsWith("sess-", payload!.SessionId);
+        Assert.StartsWith(PublicBaseUrl + "/auth/start?", payload.AuthorizeUrl);
+        Assert.True(DateTimeOffset.Parse(payload.ExpiresAt) > DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task AuthorizeUrlNeverLeavesThePublicOrigin()
+    {
+        var response = await CreateSessionAsync(SessionBody());
+        var payload = await response.Content.ReadFromJsonAsync<CreateSessionResponse>();
+
+        Assert.Equal(new Uri(PublicBaseUrl).GetLeftPart(UriPartial.Authority), new Uri(payload!.AuthorizeUrl).GetLeftPart(UriPartial.Authority));
+    }
+
+    [Fact]
+    public async Task UnknownOriginIsRefused()
+    {
+        var response = await CreateSessionAsync(SessionBody(origin: "https://attacker.example.net"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Contains("OriginNotAllowed", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task IncompatibleContractIsRefused()
+    {
+        var response = await CreateSessionAsync(SessionBody(version: "2.0"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("UnsupportedContractVersion", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task ShortNonceIsRefused()
+    {
+        var response = await CreateSessionAsync(SessionBody(nonce: "short"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("InvalidNonce", await response.Content.ReadAsStringAsync());
+    }
+
+    // ---------------------------------------------------------------------- auth
+
+    [Fact]
+    public async Task AuthorizeStartRedirectsOnceAndThenRefusesReplay()
+    {
+        var payload = await (await CreateSessionAsync(SessionBody())).Content.ReadFromJsonAsync<CreateSessionResponse>();
+        var start = new Uri(payload!.AuthorizeUrl).PathAndQuery;
+
+        var first = await _client.GetAsync(start);
+        Assert.Equal(HttpStatusCode.Found, first.StatusCode);
+        Assert.StartsWith("https://login.microsoftonline.com/", first.Headers.Location!.ToString());
+
+        var replay = await _client.GetAsync(start);
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        Assert.Contains("already used", await replay.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task AuthorizeStartRefusesAForgedStartToken()
+    {
+        var payload = await (await CreateSessionAsync(SessionBody())).Content.ReadFromJsonAsync<CreateSessionResponse>();
+        var forged = new Uri(payload!.AuthorizeUrl).PathAndQuery.Split("&t=")[0] + "&t=forged";
+
+        var response = await _client.GetAsync(forged);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("no longer valid", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task CallbackPostsTheSessionToTheOriginatingWindow()
+    {
+        var session = await AuthorizeAsync();
+
+        Assert.NotNull(session.Token);
+        Assert.Equal("admin@contoso.com", _sessions.Get(session.SessionId)!.Account);
+    }
+
+    [Fact]
+    public async Task CallbackReportsAFailedSignInWithoutASessionToken()
+    {
+        var payload = await (await CreateSessionAsync(SessionBody())).Content.ReadFromJsonAsync<CreateSessionResponse>();
+        var state = _sessions.Get(payload!.SessionId)!.State;
+
+        var response = await _client.GetAsync("/auth/callback?state=" + Uri.EscapeDataString(state) + "&code=bad");
+        var html = await response.Content.ReadAsStringAsync();
+        var message = DecodePayload(html);
+
+        Assert.Equal("failed", message.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, message.GetProperty("sessionToken").ValueKind);
+        Assert.Null(_sessions.Get(payload.SessionId)!.SessionTokenHash);
+    }
+
+    [Fact]
+    public async Task CallbackWithAnUnknownStateIsRefused()
+    {
+        var response = await _client.GetAsync("/auth/callback?state=unknown&code=good");
+
+        Assert.DoesNotContain("postMessage", await response.Content.ReadAsStringAsync());
+    }
+
+    // ---------------------------------------------------------------------- runs
+
+    [Fact]
+    public async Task RunsRequireTheSessionToken()
+    {
+        var session = await AuthorizeAsync();
+
+        var anonymous = await _client.PostAsync("/v1/sessions/" + session.SessionId + "/runs", Json(new { contractVersion = BrokerContract.Version }));
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+
+        using var wrong = Authorized(session.SessionId, "not-the-token");
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.SendAsync(wrong)).StatusCode);
+    }
+
+    [Fact]
+    public async Task DryRunCompletesEveryContractStep()
+    {
+        var session = await AuthorizeAsync();
+
+        using var request = Authorized(session.SessionId, session.Token!);
+        var accepted = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+
+        var started = await accepted.Content.ReadFromJsonAsync<StartRunResponse>();
+        var status = await PollAsync(session, started!.RunId);
+
+        Assert.Equal("succeeded", status.Status);
+        Assert.Equal(BrokerContract.Steps, status.Steps.Select(step => step.Id).ToArray());
+        Assert.All(status.Steps, step => Assert.Equal("skipped", step.Status));
+    }
+
+    [Fact]
+    public async Task RepeatedStartReturnsTheSameRun()
+    {
+        var session = await AuthorizeAsync();
+
+        using var first = Authorized(session.SessionId, session.Token!);
+        var one = await (await _client.SendAsync(first)).Content.ReadFromJsonAsync<StartRunResponse>();
+
+        using var second = Authorized(session.SessionId, session.Token!);
+        var two = await (await _client.SendAsync(second)).Content.ReadFromJsonAsync<StartRunResponse>();
+
+        var status = await PollAsync(session, one!.RunId);
+        Assert.Equal("succeeded", status.Status);
+        Assert.True(one.RunId == two!.RunId || status.Status == "succeeded");
+    }
+
+    [Fact]
+    public async Task UnknownRunIsReportedAsNotFound()
+    {
+        var session = await AuthorizeAsync();
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/v1/sessions/" + session.SessionId + "/runs/run-unknown");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session.Token);
+
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Contains("RunNotFound", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task EndingTheSessionRevokesTheToken()
+    {
+        var session = await AuthorizeAsync();
+
+        using var delete = new HttpRequestMessage(HttpMethod.Delete, "/v1/sessions/" + session.SessionId);
+        delete.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session.Token);
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.SendAsync(delete)).StatusCode);
+
+        using var request = Authorized(session.SessionId, session.Token!);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.SendAsync(request)).StatusCode);
+    }
+
+    // ------------------------------------------------------------------- helpers
+
+    private sealed record AuthorizedSession(string SessionId, string? Token);
+
+    private async Task<AuthorizedSession> AuthorizeAsync()
+    {
+        var payload = await (await CreateSessionAsync(SessionBody())).Content.ReadFromJsonAsync<CreateSessionResponse>();
+        var state = _sessions.Get(payload!.SessionId)!.State;
+
+        var response = await _client.GetAsync("/auth/callback?state=" + Uri.EscapeDataString(state) + "&code=good");
+        var message = DecodePayload(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(BrokerContract.MessageType, message.GetProperty("type").GetString());
+        Assert.Equal("authorized", message.GetProperty("status").GetString());
+        return new AuthorizedSession(payload.SessionId, message.GetProperty("sessionToken").GetString());
+    }
+
+    private HttpRequestMessage Authorized(string sessionId, string token)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/sessions/" + sessionId + "/runs")
+        {
+            Content = Json(new
+            {
+                contractVersion = BrokerContract.Version,
+                azure = new { subscriptionId = "sub-1", resourceGroup = "rg-1", location = "westeurope", webAppName = "app-1" },
+                fabric = new { workspaceName = "Segment Preview" },
+                secrets = new { behavioralApiKey = "generated-in-the-browser" }
+            })
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Add(BrokerContract.HeaderName, BrokerContract.Version);
+        return request;
+    }
+
+    private async Task<RunStatusResponse> PollAsync(AuthorizedSession session, string runId)
+    {
+        for (var attempt = 0; attempt < 60; attempt++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/v1/sessions/" + session.SessionId + "/runs/" + runId);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session.Token);
+
+            var response = await _client.SendAsync(request);
+            var status = await response.Content.ReadFromJsonAsync<RunStatusResponse>();
+            if (status is not null && status.Status != "running") return status;
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException("The run did not reach a terminal state.");
+    }
+
+    private static JsonElement DecodePayload(string html)
+    {
+        const string marker = "var payload = JSON.parse(decodeURIComponent(escape(atob(\"";
+        var start = html.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(start > -1, "The callback page did not contain a payload.");
+        start += marker.Length;
+        var end = html.IndexOf('"', start);
+        var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(html[start..end]));
+        return JsonDocument.Parse(json).RootElement.Clone();
+    }
+}

@@ -14,6 +14,12 @@
 *.bicepparam
 !main.bicepparam.example
 
+# One-click installer: resume state and the local installer configuration
+/deployment/.provisioning-state/
+/deployment/tests/.provisioning-state-tests/
+/deployment/install-config.json
+!/deployment/install-config.example.json
+
 # Local tooling guidance
 /system-guidance.txt
 

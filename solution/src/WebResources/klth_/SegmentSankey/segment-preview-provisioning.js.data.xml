@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WebResource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <WebResourceId>{0c9e0404-072e-4b8b-a978-7ed37d4464b5}</WebResourceId>
+  <Name>klth_/SegmentSankey/segment-preview-provisioning.js</Name>
+  <DisplayName>Segment Preview Provisioning Engine</DisplayName>
+  <Description>Browser provisioning engine used by the Segment Preview setup center.</Description>
+  <WebResourceType>3</WebResourceType>
+  <IntroducedVersion>1.1.0.0</IntroducedVersion>
+  <IsEnabledForMobileClient>0</IsEnabledForMobileClient>
+  <IsAvailableForMobileOffline>0</IsAvailableForMobileOffline>
+  <IsCustomizable>1</IsCustomizable>
+  <CanBeDeleted>1</CanBeDeleted>
+  <IsHidden>0</IsHidden>
+  <FileName>/WebResources/klth_SegmentSankeysegment-preview-provisioningjs0C9E0404-072E-4B8B-A978-7ED37D4464B5</FileName>
+</WebResource>

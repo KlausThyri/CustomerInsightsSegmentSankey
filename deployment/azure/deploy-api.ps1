@@ -25,11 +25,28 @@ if (Test-Path $archivePath) {
 }
 Compress-Archive -Path (Join-Path $publishDirectory '*') -DestinationPath $archivePath
 
-az deployment group create `
-    --resource-group $ResourceGroup `
-    --template-file (Join-Path $PSScriptRoot 'main.bicep') `
-    --parameters $ParametersFile `
-    --output table
+$resolvedParameters = (Resolve-Path -LiteralPath $ParametersFile).ProviderPath
+$deploymentArguments = @(
+    'deployment', 'group', 'create'
+    '--resource-group', $ResourceGroup
+)
+
+# A .bicepparam file carries its own "using" statement, so az rejects it when
+# --template-file is also supplied.
+if ([IO.Path]::GetExtension($resolvedParameters) -eq '.bicepparam') {
+    $deploymentArguments += @('--parameters', $resolvedParameters)
+}
+else {
+    $deploymentArguments += @(
+        '--template-file', (Join-Path $PSScriptRoot 'main.bicep')
+        '--parameters', "@$resolvedParameters"
+    )
+}
+
+az @deploymentArguments --output table
+if ($LASTEXITCODE -ne 0) {
+    throw "az deployment group create failed with exit code $LASTEXITCODE."
+}
 
 az webapp deploy `
     --resource-group $ResourceGroup `
@@ -39,5 +56,8 @@ az webapp deploy `
     --clean true `
     --restart true `
     --output table
+if ($LASTEXITCODE -ne 0) {
+    throw "az webapp deploy failed with exit code $LASTEXITCODE."
+}
 
 Write-Host "API deployment completed: https://$WebAppName.azurewebsites.net/api/health"

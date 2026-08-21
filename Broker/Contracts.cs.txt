@@ -1,0 +1,216 @@
+using System.Text.Json.Serialization;
+
+namespace CustomerInsightsSegmentSankey.Broker;
+
+/// <summary>
+/// Wire contract shared with the Dataverse web resource. The identifiers here must
+/// stay identical to the ones in webresources/segment-preview-provisioning.js and to
+/// documentation/setup-center-contract.md.
+/// </summary>
+public static class BrokerContract
+{
+    public const string Version = "1.1";
+    public const string HeaderName = "x-segment-preview-contract";
+    public const string MessageType = "segment-preview-broker-session";
+
+    /// <summary>Ordered step ids, identical to STEPS in the browser engine.</summary>
+    public static readonly string[] Steps =
+    {
+        "preflight",
+        "consent",
+        "secret",
+        "fabric-discovery",
+        "fabric-notebook",
+        "azure-infra",
+        "fabric-permissions",
+        "azure-app",
+        "dataverse-config",
+        "verify"
+    };
+
+    /// <summary>Steps the browser owns; the service must report them as skipped.</summary>
+    public static readonly string[] BrowserOwnedSteps = { "preflight", "consent", "secret", "dataverse-config", "verify" };
+
+    /// <summary>Accepts any contract whose major version matches.</summary>
+    public static bool IsCompatible(string? requested)
+    {
+        if (string.IsNullOrWhiteSpace(requested)) return false;
+        var theirs = requested.Split('.', 2)[0];
+        var ours = Version.Split('.', 2)[0];
+        return string.Equals(theirs.Trim(), ours, StringComparison.Ordinal);
+    }
+}
+
+public sealed class CreateSessionRequest
+{
+    [JsonPropertyName("contractVersion")] public string? ContractVersion { get; set; }
+    [JsonPropertyName("nonce")] public string? Nonce { get; set; }
+    [JsonPropertyName("origin")] public string? Origin { get; set; }
+    [JsonPropertyName("environmentUrl")] public string? EnvironmentUrl { get; set; }
+    [JsonPropertyName("environmentDomain")] public string? EnvironmentDomain { get; set; }
+}
+
+public sealed class CreateSessionResponse
+{
+    [JsonPropertyName("sessionId")] public string SessionId { get; set; } = string.Empty;
+    [JsonPropertyName("authorizeUrl")] public string AuthorizeUrl { get; set; } = string.Empty;
+    [JsonPropertyName("expiresAt")] public string ExpiresAt { get; set; } = string.Empty;
+}
+
+public sealed class StartRunRequest
+{
+    [JsonPropertyName("contractVersion")] public string? ContractVersion { get; set; }
+    [JsonPropertyName("dataverse")] public DataverseTarget? Dataverse { get; set; }
+    [JsonPropertyName("azure")] public AzureTarget? Azure { get; set; }
+    [JsonPropertyName("fabric")] public FabricTarget? Fabric { get; set; }
+    [JsonPropertyName("secrets")] public RunSecrets? Secrets { get; set; }
+    [JsonPropertyName("apiPackage")] public ApiPackage? ApiPackage { get; set; }
+    [JsonPropertyName("options")] public RunOptions? Options { get; set; }
+}
+
+public sealed class DataverseTarget
+{
+    [JsonPropertyName("environmentUrl")] public string? EnvironmentUrl { get; set; }
+    [JsonPropertyName("requiredTables")] public string[]? RequiredTables { get; set; }
+}
+
+public sealed class AzureTarget
+{
+    [JsonPropertyName("subscriptionId")] public string? SubscriptionId { get; set; }
+    [JsonPropertyName("resourceGroup")] public string? ResourceGroup { get; set; }
+    [JsonPropertyName("location")] public string? Location { get; set; }
+    [JsonPropertyName("webAppName")] public string? WebAppName { get; set; }
+}
+
+public sealed class FabricTarget
+{
+    [JsonPropertyName("workspaceId")] public string? WorkspaceId { get; set; }
+    [JsonPropertyName("workspaceName")] public string? WorkspaceName { get; set; }
+    [JsonPropertyName("capacityId")] public string? CapacityId { get; set; }
+    [JsonPropertyName("servingLakehouseId")] public string? ServingLakehouseId { get; set; }
+    [JsonPropertyName("servingLakehouseName")] public string? ServingLakehouseName { get; set; }
+    [JsonPropertyName("dataverseConnectionId")] public string? DataverseConnectionId { get; set; }
+    [JsonPropertyName("dataverseDeltaFolder")] public string? DataverseDeltaFolder { get; set; }
+}
+
+public sealed class RunSecrets
+{
+    [JsonPropertyName("behavioralApiKey")] public string? BehavioralApiKey { get; set; }
+}
+
+/// <summary>
+/// The published API package the browser resolved from the solution payload.
+/// The service never invents one: it deploys exactly the URL and digest the
+/// caller pinned, and refuses to deploy at all when they are missing, because a
+/// package-less deployment strips the code an existing Web App runs.
+/// </summary>
+public sealed class ApiPackage
+{
+    [JsonPropertyName("url")] public string? Url { get; set; }
+    [JsonPropertyName("sha256")] public string? Sha256 { get; set; }
+    [JsonPropertyName("blobName")] public string? BlobName { get; set; }
+    [JsonPropertyName("version")] public string? Version { get; set; }
+
+    /// <summary>True only when the package can be fetched and verified.</summary>
+    [JsonIgnore]
+    public bool IsUsable =>
+        !string.IsNullOrWhiteSpace(Url) &&
+        Uri.TryCreate(Url!.Trim(), UriKind.Absolute, out var uri) &&
+        string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+        IsSha256(Sha256);
+
+    /// <summary>Blob name the template writes, digest bound so it is immutable.</summary>
+    [JsonIgnore]
+    public string ResolvedBlobName =>
+        string.IsNullOrWhiteSpace(BlobName)
+            ? "api-" + (string.IsNullOrWhiteSpace(Version) ? "0" : Version!.Trim()) + "-" +
+              (Sha256 ?? string.Empty).Trim().ToLowerInvariant()[..Math.Min(16, (Sha256 ?? string.Empty).Trim().Length)] + ".zip"
+            : BlobName!.Trim();
+
+    public static bool IsSha256(string? value)
+    {
+        var text = (value ?? string.Empty).Trim();
+        if (text.Length != 64)
+        {
+            return false;
+        }
+
+        foreach (var character in text)
+        {
+            var lower = char.ToLowerInvariant(character);
+            if (!((lower >= '0' && lower <= '9') || (lower >= 'a' && lower <= 'f')))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+public sealed class RunOptions
+{
+    [JsonPropertyName("skipNotebook")] public bool SkipNotebook { get; set; }
+}
+
+public sealed class StartRunResponse
+{
+    [JsonPropertyName("runId")] public string RunId { get; set; } = string.Empty;
+    [JsonPropertyName("status")] public string Status { get; set; } = "running";
+}
+
+public sealed class RunStatusResponse
+{
+    [JsonPropertyName("runId")] public string RunId { get; set; } = string.Empty;
+    [JsonPropertyName("status")] public string Status { get; set; } = "running";
+    [JsonPropertyName("steps")] public List<RunStepStatus> Steps { get; set; } = new();
+    [JsonPropertyName("outputs")] public Dictionary<string, string?> Outputs { get; set; } = new();
+    [JsonPropertyName("manual")] public List<string> Manual { get; set; } = new();
+    [JsonPropertyName("error")] public ErrorBody? Error { get; set; }
+}
+
+public sealed class RunStepStatus
+{
+    [JsonPropertyName("id")] public string Id { get; set; } = string.Empty;
+    [JsonPropertyName("status")] public string Status { get; set; } = "pending";
+    [JsonPropertyName("message")] public string? Message { get; set; }
+}
+
+public sealed class ErrorEnvelope
+{
+    [JsonPropertyName("error")] public ErrorBody Error { get; set; } = new();
+
+    public static ErrorEnvelope Create(string code, string message, string? target = null, IEnumerable<string>? manual = null) =>
+        new()
+        {
+            Error = new ErrorBody
+            {
+                Code = code,
+                Message = message,
+                Target = target,
+                Manual = manual?.ToList() ?? new List<string>()
+            }
+        };
+}
+
+public sealed class ErrorBody
+{
+    [JsonPropertyName("code")] public string Code { get; set; } = string.Empty;
+    [JsonPropertyName("message")] public string Message { get; set; } = string.Empty;
+    [JsonPropertyName("target")] public string? Target { get; set; }
+    [JsonPropertyName("manual")] public List<string> Manual { get; set; } = new();
+}
+
+/// <summary>Payload posted to the opener window by the callback page.</summary>
+public sealed class SessionMessage
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = BrokerContract.MessageType;
+    [JsonPropertyName("sessionId")] public string SessionId { get; set; } = string.Empty;
+    [JsonPropertyName("nonce")] public string Nonce { get; set; } = string.Empty;
+    [JsonPropertyName("status")] public string Status { get; set; } = "authorized";
+    [JsonPropertyName("sessionToken")] public string? SessionToken { get; set; }
+    [JsonPropertyName("expiresAt")] public string? ExpiresAt { get; set; }
+    [JsonPropertyName("account")] public string? Account { get; set; }
+    [JsonPropertyName("tenantId")] public string? TenantId { get; set; }
+    [JsonPropertyName("error")] public string? Error { get; set; }
+}

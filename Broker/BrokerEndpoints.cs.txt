@@ -1,0 +1,272 @@
+using System.Text.Json;
+
+namespace CustomerInsightsSegmentSankey.Broker;
+
+/// <summary>
+/// Wires the contract endpoints. Everything the browser calls is defined here and in
+/// documentation/setup-center-contract.md; the two must stay in step.
+/// </summary>
+public static class BrokerEndpoints
+{
+    public static void MapBrokerEndpoints(this IEndpointRouteBuilder app)
+    {
+        app.MapGet("/health", (BrokerOptions options) => Results.Json(new
+        {
+            contractVersion = BrokerContract.Version,
+            configured = options.IsConfigured,
+            dryRun = options.DryRun,
+            missing = options.DescribeMissingConfiguration()
+        }));
+
+        app.MapPost("/v1/sessions", CreateSession);
+        app.MapGet("/auth/start", StartAuthorization);
+        app.MapGet("/auth/callback", CompleteAuthorization);
+        app.MapPost("/v1/sessions/{sessionId}/runs", StartRun);
+        app.MapGet("/v1/sessions/{sessionId}/runs/{runId}", GetRun);
+        app.MapDelete("/v1/sessions/{sessionId}", EndSession);
+    }
+
+    private static async Task<IResult> CreateSession(HttpContext http, BrokerOptions options, OriginPolicy policy, ISessionStore sessions)
+    {
+        var request = await ReadAsync<CreateSessionRequest>(http).ConfigureAwait(false);
+        if (request is null)
+        {
+            return Problem(StatusCodes.Status400BadRequest, "InvalidRequest", "The session request could not be read.");
+        }
+
+        if (!BrokerContract.IsCompatible(request.ContractVersion))
+        {
+            return Problem(StatusCodes.Status400BadRequest, "UnsupportedContractVersion",
+                "This service implements contract " + BrokerContract.Version + ".");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Nonce) || request.Nonce!.Length < 16)
+        {
+            return Problem(StatusCodes.Status400BadRequest, "InvalidNonce", "A nonce of at least 16 characters is required.");
+        }
+
+        var origin = policy.Canonicalize(request.Origin);
+        if (origin is null)
+        {
+            return Problem(StatusCodes.Status403Forbidden, "OriginNotAllowed",
+                "This provisioning service does not accept installations started from that address.");
+        }
+
+        if (!options.IsConfigured)
+        {
+            return Problem(StatusCodes.Status503ServiceUnavailable, "ServiceNotConfigured",
+                "The provisioning service is not configured yet.",
+                manual: new[] { "The service operator must supply: " + string.Join(", ", options.DescribeMissingConfiguration()) + "." });
+        }
+
+        var session = sessions.Create(origin, request.Nonce!, request.EnvironmentUrl, request.EnvironmentDomain, options.SessionLifetime);
+        return Results.Json(new CreateSessionResponse
+        {
+            SessionId = session.Id,
+            AuthorizeUrl = options.AuthorizeStartUrl(session.Id, session.StartToken),
+            ExpiresAt = session.ExpiresAt.UtcDateTime.ToString("O")
+        }, statusCode: StatusCodes.Status201Created);
+    }
+
+    private static IResult StartAuthorization(HttpContext http, BrokerOptions options, ISessionStore sessions, ITokenClient tokens)
+    {
+        var sessionId = http.Request.Query["session"].ToString();
+        var startToken = http.Request.Query["t"].ToString();
+        var session = sessions.Get(sessionId);
+
+        if (session is null || string.IsNullOrEmpty(startToken) || !Tokens.FixedTimeEquals(session.StartToken, startToken))
+        {
+            return Results.Text("This sign-in link is no longer valid. Return to the setup page and start again.", "text/plain");
+        }
+
+        if (session.StartTokenUsed)
+        {
+            return Results.Text("This sign-in link was already used. Return to the setup page and start again.", "text/plain");
+        }
+
+        session.StartTokenUsed = true;
+        return Results.Redirect(tokens.BuildAuthorizeUrl(session), permanent: false);
+    }
+
+    private static async Task<IResult> CompleteAuthorization(HttpContext http, BrokerOptions options, ISessionStore sessions, ITokenClient tokens)
+    {
+        var state = http.Request.Query["state"].ToString();
+        var code = http.Request.Query["code"].ToString();
+        var error = http.Request.Query["error_description"].ToString();
+
+        var session = FindByState(sessions, state);
+        if (session is null)
+        {
+            return Results.Text("This sign-in response does not belong to an active session.", "text/plain");
+        }
+
+        if (string.IsNullOrEmpty(code))
+        {
+            return Html(CallbackPage.Render(new SessionMessage
+            {
+                SessionId = session.Id,
+                Nonce = session.Nonce,
+                Status = "failed",
+                Error = string.IsNullOrWhiteSpace(error) ? "Sign-in was cancelled." : error
+            }, session.Origin));
+        }
+
+        try
+        {
+            var result = await tokens.RedeemCodeAsync(session, code, http.RequestAborted).ConfigureAwait(false);
+            var sessionToken = Tokens.Random(32);
+            session.SessionTokenHash = Tokens.Hash(sessionToken);
+            session.RefreshToken = result.RefreshToken;
+            session.Account = result.Account;
+            session.TenantId = result.TenantId;
+            session.ExpiresAt = DateTimeOffset.UtcNow.Add(options.SignedInSessionLifetime);
+
+            return Html(CallbackPage.Render(new SessionMessage
+            {
+                SessionId = session.Id,
+                Nonce = session.Nonce,
+                Status = "authorized",
+                SessionToken = sessionToken,
+                ExpiresAt = session.ExpiresAt.UtcDateTime.ToString("O"),
+                Account = session.Account,
+                TenantId = session.TenantId
+            }, session.Origin));
+        }
+        catch (InvalidOperationException exception)
+        {
+            return Html(CallbackPage.Render(new SessionMessage
+            {
+                SessionId = session.Id,
+                Nonce = session.Nonce,
+                Status = "failed",
+                Error = exception.Message
+            }, session.Origin));
+        }
+    }
+
+    private static async Task<IResult> StartRun(string sessionId, HttpContext http, BrokerOptions options, ISessionStore sessions, IProvisioningExecutor executor, IRunScheduler scheduler)
+    {
+        var session = sessions.Authenticate(sessionId, Bearer(http));
+        if (session is null)
+        {
+            return Problem(StatusCodes.Status401Unauthorized, "SessionNotAuthorized", "Sign in to the provisioning service again.");
+        }
+
+        var request = await ReadAsync<StartRunRequest>(http).ConfigureAwait(false);
+        if (request is null || !BrokerContract.IsCompatible(request.ContractVersion))
+        {
+            return Problem(StatusCodes.Status400BadRequest, "UnsupportedContractVersion",
+                "This service implements contract " + BrokerContract.Version + ".");
+        }
+
+        var fingerprint = Fingerprint(session, request);
+        var existing = session.Runs.Values.FirstOrDefault(run => run.Fingerprint == fingerprint && run.Status == "running");
+        if (existing is not null)
+        {
+            return Results.Json(new StartRunResponse { RunId = existing.Id, Status = existing.Status }, statusCode: StatusCodes.Status202Accepted);
+        }
+
+        var record = new RunRecord
+        {
+            Id = "run-" + Tokens.Random(16),
+            SessionId = session.Id,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Fingerprint = fingerprint
+        };
+        session.Runs[record.Id] = record;
+
+        scheduler.Start(record, new ProvisioningContext { Session = session, Request = request });
+
+        return Results.Json(new StartRunResponse { RunId = record.Id, Status = record.Status }, statusCode: StatusCodes.Status202Accepted);
+    }
+
+    private static IResult GetRun(string sessionId, string runId, HttpContext http, ISessionStore sessions)
+    {
+        var session = sessions.Authenticate(sessionId, Bearer(http));
+        if (session is null)
+        {
+            return Problem(StatusCodes.Status401Unauthorized, "SessionNotAuthorized", "Sign in to the provisioning service again.");
+        }
+
+        return session.Runs.TryGetValue(runId, out var run)
+            ? Results.Json(run.ToResponse())
+            : Problem(StatusCodes.Status404NotFound, "RunNotFound", "That installation run is unknown to this service.");
+    }
+
+    private static IResult EndSession(string sessionId, HttpContext http, ISessionStore sessions)
+    {
+        var session = sessions.Authenticate(sessionId, Bearer(http));
+        if (session is not null) sessions.Remove(sessionId);
+        return Results.NoContent();
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    internal static string Fingerprint(BrokerSession session, StartRunRequest request) =>
+        Tokens.Hash(string.Join('|',
+            session.TenantId ?? string.Empty,
+            request.Azure?.SubscriptionId ?? string.Empty,
+            request.Azure?.ResourceGroup ?? string.Empty,
+            request.Azure?.WebAppName ?? string.Empty));
+
+    private static BrokerSession? FindByState(ISessionStore sessions, string state)
+    {
+        if (string.IsNullOrWhiteSpace(state)) return null;
+        return sessions is InMemorySessionStore store ? store.FindByState(state) : null;
+    }
+
+    private static string? Bearer(HttpContext http)
+    {
+        var header = http.Request.Headers.Authorization.ToString();
+        return header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? header[7..].Trim() : null;
+    }
+
+    private static async Task<T?> ReadAsync<T>(HttpContext http) where T : class
+    {
+        try
+        {
+            return await http.Request.ReadFromJsonAsync<T>().ConfigureAwait(false);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static IResult Html(string content) => Results.Content(content, "text/html; charset=utf-8");
+
+    private static IResult Problem(int status, string code, string message, IEnumerable<string>? manual = null) =>
+        Results.Json(ErrorEnvelope.Create(code, message, manual: manual), statusCode: status);
+}
+
+/// <summary>Runs the pipeline outside the request so the browser can poll for progress.</summary>
+public interface IRunScheduler
+{
+    void Start(RunRecord record, ProvisioningContext context);
+}
+
+public sealed class BackgroundRunScheduler : IRunScheduler
+{
+    private readonly ProvisioningPipeline _pipeline;
+    private readonly ILogger<BackgroundRunScheduler> _logger;
+
+    public BackgroundRunScheduler(ProvisioningPipeline pipeline, ILogger<BackgroundRunScheduler> logger)
+    {
+        _pipeline = pipeline;
+        _logger = logger;
+    }
+
+    public void Start(RunRecord record, ProvisioningContext context) => _ = Task.Run(async () =>
+    {
+        try
+        {
+            await _pipeline.RunAsync(record, context, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            record.Status = "failed";
+            record.Error = new ErrorBody { Code = "RunFailed", Message = exception.Message };
+            _logger.LogError(exception, "Provisioning run {RunId} failed.", record.Id);
+        }
+    });
+}

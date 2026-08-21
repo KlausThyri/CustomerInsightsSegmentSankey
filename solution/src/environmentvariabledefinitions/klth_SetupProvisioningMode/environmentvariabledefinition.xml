@@ -1,0 +1,13 @@
+<environmentvariabledefinition schemaname="klth_SetupProvisioningMode">
+  <description default="Provisioning mode used by the Segment Preview setup center: direct, broker, or manual. Leave blank to detect automatically; the tenant-owned direct path is preferred when it is configured.">
+    <label description="Provisioning mode used by the Segment Preview setup center: direct, broker, or manual. Leave blank to detect automatically; the tenant-owned direct path is preferred when it is configured." languagecode="1033" />
+  </description>
+  <displayname default="Segment Preview Setup Mode">
+    <label description="Segment Preview Setup Mode" languagecode="1033" />
+  </displayname>
+  <introducedversion>1.1.0.0</introducedversion>
+  <iscustomizable>1</iscustomizable>
+  <isrequired>0</isrequired>
+  <secretstore>0</secretstore>
+  <type>100000000</type>
+</environmentvariabledefinition>

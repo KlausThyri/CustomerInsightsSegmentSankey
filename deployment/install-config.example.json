@@ -1,0 +1,28 @@
+{
+  "_comment": "Copy to install-config.json and replace every <placeholder>. Values left as <placeholder> are ignored, so you can delete or keep the lines you do not need. Never put the behavioural API key in this file - the installer generates and stores it for you.",
+
+  "DataverseEnvironmentUrl": "<https://yourorg.crm4.dynamics.com>",
+
+  "SubscriptionId": "<azure-subscription-guid>",
+  "ResourceGroup": "<rg-segment-preview>",
+  "Location": "westeurope",
+  "WebAppName": "<globally-unique-web-app-name>",
+
+  "FabricWorkspaceName": "<Fabric workspace display name>",
+  "FabricWorkspaceId": "<fabric-workspace-guid>",
+  "FabricCapacityId": "<fabric-capacity-guid>",
+
+  "FabricServingLakehouseName": "SegmentPreviewServing",
+  "FabricServingLakehouseId": "<serving-lakehouse-guid>",
+
+  "FabricDataverseLakehouseName": "<Dataverse mirror lakehouse display name>",
+  "FabricDataverseLakehouseId": "<dataverse-mirror-lakehouse-guid>",
+  "FabricDataverseConnectionId": "<fabric-dataverse-cloud-connection-guid>",
+  "FabricDataverseDeltaFolder": "deltalake",
+
+  "RequiredDataverseTables": "contact,msdynmkt_contactpointconsent4,msdynmkt_purpose,msdynmkt_topic",
+
+  "SolutionPackagePath": "<absolute-or-relative-path-to-CustomerInsightsSegmentPreview_managed.zip>",
+  "DeploymentName": "<friendly-name-used-for-the-resume-state-file>",
+  "StateDirectory": "<absolute-path-for-resume-state>"
+}

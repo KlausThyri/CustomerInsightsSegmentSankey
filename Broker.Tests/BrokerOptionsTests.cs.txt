@@ -1,0 +1,86 @@
+using CustomerInsightsSegmentSankey.Broker;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.Broker.Tests;
+
+public class BrokerOptionsTests
+{
+    private static BrokerOptions Configured()
+    {
+        var options = new BrokerOptions
+        {
+            ClientId = "00000000-0000-0000-0000-000000000000",
+            ClientSecret = "supplied-by-the-operator",
+            PublicBaseUrl = "https://provision.example.net/"
+        };
+        options.AllowedOriginSuffixes.Add(".crm4.dynamics.com");
+        return options;
+    }
+
+    [Fact]
+    public void ShippedDefaultsCarryNoIdentity()
+    {
+        var options = new BrokerOptions();
+
+        Assert.Null(options.ClientId);
+        Assert.Null(options.ClientSecret);
+        Assert.Null(options.PublicBaseUrl);
+        Assert.False(options.IsConfigured);
+    }
+
+    [Fact]
+    public void MissingConfigurationIsDescribedForTheOperator()
+    {
+        var missing = new BrokerOptions().DescribeMissingConfiguration();
+
+        Assert.Contains("Broker:ClientId", missing);
+        Assert.Contains("Broker:ClientSecret", missing);
+        Assert.Contains(missing, entry => entry.StartsWith("Broker:PublicBaseUrl", StringComparison.Ordinal));
+        Assert.Contains(missing, entry => entry.StartsWith("Broker:AllowedOrigins", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ConfiguredOptionsExposeAFixedCallbackUrl()
+    {
+        var options = Configured();
+
+        Assert.True(options.IsConfigured);
+        Assert.Empty(options.DescribeMissingConfiguration());
+        Assert.Equal("https://provision.example.net/auth/callback", options.CallbackUrl);
+    }
+
+    [Fact]
+    public void AuthorizeStartUrlStaysOnThePublicOrigin()
+    {
+        var options = Configured();
+        var url = options.AuthorizeStartUrl("sess-1", "start token/with+chars");
+
+        Assert.StartsWith("https://provision.example.net/auth/start?", url);
+        Assert.Contains("session=sess-1", url);
+        Assert.DoesNotContain(" ", url);
+        Assert.DoesNotContain("/with+chars", url);
+    }
+
+    [Fact]
+    public void HttpBaseUrlIsRejected()
+    {
+        var options = Configured();
+        options.PublicBaseUrl = "http://provision.example.net";
+
+        Assert.False(options.IsConfigured);
+    }
+
+    [Fact]
+    public void RequiredScopesCoverArmFabricAndRefresh()
+    {
+        Assert.Contains("offline_access", BrokerOptions.RequiredScopes);
+        Assert.Contains(BrokerOptions.RequiredScopes, scope => scope.StartsWith("https://management.azure.com/", StringComparison.Ordinal));
+        Assert.Contains(BrokerOptions.RequiredScopes, scope => scope.StartsWith("https://api.fabric.microsoft.com/", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AuthorityExcludesPersonalAccounts()
+    {
+        Assert.Equal("https://login.microsoftonline.com/organizations", new BrokerOptions().Authority);
+    }
+}

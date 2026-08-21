@@ -1,0 +1,520 @@
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+
+namespace CustomerInsightsSegmentSankey.Broker;
+
+/// <summary>
+/// Performs the Azure Resource Manager and Fabric REST work with the delegated
+/// permissions of the signed-in administrator. The call shapes mirror the browser
+/// engine's direct client exactly, so both paths converge on the same resources.
+/// </summary>
+public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
+{
+    private const string ArmRoot = "https://management.azure.com";
+    private const string ArmApiVersion = "2021-04-01";
+    private const string WebApiVersion = "2022-03-01";
+    private const string FabricRoot = "https://api.fabric.microsoft.com/v1";
+    private const string ArmScope = "https://management.azure.com/.default";
+    private const string FabricScope = "https://api.fabric.microsoft.com/.default";
+
+    private readonly ITokenClient _tokens;
+    private readonly HttpClient _http;
+    private readonly IArmTemplateSource _template;
+    private readonly TimeProvider _time;
+
+    public AzureFabricProvisioningExecutor(ITokenClient tokens, HttpClient http, IArmTemplateSource template, TimeProvider? time = null)
+    {
+        _tokens = tokens;
+        _http = http;
+        _template = template;
+        _time = time ?? TimeProvider.System;
+    }
+
+    public Task<StepOutcome> ExecuteAsync(string stepId, ProvisioningContext context, CancellationToken cancellationToken) => stepId switch
+    {
+        "fabric-discovery" => DiscoverFabricAsync(context, cancellationToken),
+        "fabric-notebook" => Task.FromResult(NotebookOutcome(context)),
+        "azure-infra" => DeployAzureAsync(context, cancellationToken),
+        "fabric-permissions" => GrantFabricAccessAsync(context, cancellationToken),
+        "azure-app" => ConfigureWebAppAsync(context, cancellationToken),
+        _ => Task.FromResult(StepOutcome.Skipped("No service-side work is defined for " + stepId + "."))
+    };
+
+    // ------------------------------------------------------------------ Fabric
+
+    private async Task<StepOutcome> DiscoverFabricAsync(ProvisioningContext context, CancellationToken cancellationToken)
+    {
+        var fabric = context.Request.Fabric ?? throw new InvalidOperationException("The run carries no Fabric target.");
+        var workspaceId = Trim(fabric.WorkspaceId);
+
+        if (workspaceId is null)
+        {
+            var name = Trim(fabric.WorkspaceName) ?? throw new InvalidOperationException("Supply a Fabric workspace id or a workspace name.");
+            var workspaces = await FabricCollectionAsync(context, "workspaces", cancellationToken).ConfigureAwait(false);
+            workspaceId = workspaces
+                .FirstOrDefault(item => string.Equals(Text(item, "displayName"), name, StringComparison.OrdinalIgnoreCase))
+                is { } existing ? Text(existing, "id") : null;
+
+            if (workspaceId is null)
+            {
+                var capacityId = Trim(fabric.CapacityId);
+                if (capacityId is null)
+                {
+                    return StepOutcome.ActionRequired(
+                        "The Fabric workspace '" + name + "' does not exist and no capacity id was supplied.",
+                        "Assign a Fabric capacity and supply its id, or create the workspace '" + name + "' manually, then install again.");
+                }
+
+                var created = await FabricAsync(context, HttpMethod.Post, "workspaces",
+                    new { displayName = name, capacityId }, cancellationToken).ConfigureAwait(false);
+                workspaceId = Text(created, "id");
+            }
+        }
+
+        var lakehouseId = Trim(fabric.ServingLakehouseId);
+        if (lakehouseId is null)
+        {
+            var lakehouseName = Trim(fabric.ServingLakehouseName) ?? "SegmentServing";
+            var lakehouses = await FabricCollectionAsync(context, "workspaces/" + workspaceId + "/lakehouses", cancellationToken).ConfigureAwait(false);
+            lakehouseId = lakehouses
+                .FirstOrDefault(item => string.Equals(Text(item, "displayName"), lakehouseName, StringComparison.OrdinalIgnoreCase))
+                is { } existing ? Text(existing, "id") : null;
+
+            if (lakehouseId is null)
+            {
+                var created = await FabricAsync(context, HttpMethod.Post, "workspaces/" + workspaceId + "/lakehouses",
+                    new { displayName = lakehouseName }, cancellationToken).ConfigureAwait(false);
+                lakehouseId = Text(created, "id");
+            }
+        }
+
+        context.Outputs["workspaceId"] = workspaceId;
+        context.Outputs["servingLakehouseId"] = lakehouseId;
+
+        var sqlEndpoint = await ReadSqlEndpointAsync(context, workspaceId!, lakehouseId!, cancellationToken).ConfigureAwait(false);
+        if (sqlEndpoint is not null) context.Outputs["fabricSqlServer"] = sqlEndpoint;
+
+        return StepOutcome.Succeeded(
+            "Fabric workspace and serving lakehouse are ready.",
+            new Dictionary<string, string?>
+            {
+                ["workspaceId"] = workspaceId,
+                ["servingLakehouseId"] = lakehouseId,
+                ["fabricSqlServer"] = sqlEndpoint
+            });
+    }
+
+    private async Task<string?> ReadSqlEndpointAsync(ProvisioningContext context, string workspaceId, string lakehouseId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var lakehouse = await FabricAsync(context, HttpMethod.Get, "workspaces/" + workspaceId + "/lakehouses/" + lakehouseId, null, cancellationToken).ConfigureAwait(false);
+            if (lakehouse.TryGetProperty("properties", out var properties) &&
+                properties.TryGetProperty("sqlEndpointProperties", out var endpoint) &&
+                endpoint.TryGetProperty("connectionString", out var connection))
+            {
+                return connection.GetString();
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // The endpoint is provisioned asynchronously by Fabric; absence is not an error.
+        }
+        return null;
+    }
+
+    private static StepOutcome NotebookOutcome(ProvisioningContext context)
+    {
+        if (context.Request.Options?.SkipNotebook == true)
+        {
+            return StepOutcome.Skipped("The bootstrap notebook was skipped on request.");
+        }
+
+        return StepOutcome.ActionRequired(
+            "The serving bootstrap notebook was not published by the service.",
+            "Import Fabric/segment_serving_bootstrap notebook into the workspace and schedule it daily. " +
+            "The service does not ship the notebook definition, so this step stays with the workspace administrator.");
+    }
+
+    private async Task<StepOutcome> GrantFabricAccessAsync(ProvisioningContext context, CancellationToken cancellationToken)
+    {
+        var workspaceId = context.Outputs.TryGetValue("workspaceId", out var value) ? value : null;
+        var principalId = context.Outputs.TryGetValue("principalId", out var principal) ? principal : null;
+
+        if (workspaceId is null || principalId is null)
+        {
+            return StepOutcome.ActionRequired(
+                "The managed identity could not be granted access because the workspace or identity is unknown.",
+                "Add the Web App managed identity as a Contributor of the Fabric workspace.");
+        }
+
+        try
+        {
+            await FabricAsync(context, HttpMethod.Post, "workspaces/" + workspaceId + "/roleAssignments",
+                new { principal = new { id = principalId, type = "ServicePrincipal" }, role = "Contributor" },
+                cancellationToken).ConfigureAwait(false);
+            return StepOutcome.Succeeded("The managed identity is a Contributor of the Fabric workspace.");
+        }
+        catch (InvalidOperationException exception)
+        {
+            return StepOutcome.ActionRequired(
+                "The workspace role assignment was refused: " + exception.Message,
+                "Enable the Fabric tenant setting 'Service principals can use Fabric APIs' for a security group that contains the Web App managed identity, then install again.");
+        }
+    }
+
+    // ------------------------------------------------------------------- Azure
+
+    private async Task<StepOutcome> DeployAzureAsync(ProvisioningContext context, CancellationToken cancellationToken)
+    {
+        var azure = context.Request.Azure ?? throw new InvalidOperationException("The run carries no Azure target.");
+        var subscriptionId = Require(azure.SubscriptionId, "subscriptionId");
+        var resourceGroup = Require(azure.ResourceGroup, "resourceGroup");
+        var location = Trim(azure.Location) ?? "westeurope";
+        var webAppName = Require(azure.WebAppName, "webAppName");
+
+        await ArmAsync(context, HttpMethod.Put,
+            "/subscriptions/" + subscriptionId + "/resourcegroups/" + Uri.EscapeDataString(resourceGroup),
+            new { location }, ArmApiVersion, cancellationToken).ConfigureAwait(false);
+
+        var template = _template.Read();
+        if (template is null)
+        {
+            return StepOutcome.ActionRequired(
+                "The service has no ARM template available.",
+                "Deploy deployment/azure/main.bicep into the target resource group, then install again.");
+        }
+
+        var fabric = context.Request.Fabric;
+        var package = context.Request.ApiPackage;
+        if (package is null || !package.IsUsable)
+        {
+            // The template writes the application settings as a complete set, so a
+            // package-less deployment would remove WEBSITE_RUN_FROM_PACKAGE from a
+            // Web App that already serves the API. Nothing is deployed instead.
+            return StepOutcome.ActionRequired(
+                "No verified API package was supplied, so the Azure deployment was not started.",
+                "The setup page must send an https package URL together with its SHA-256 digest. " +
+                "Set klth_SetupApiPackageUrl to '<https url> <64 hex sha-256>' on the setup page and install again.");
+        }
+
+        var blobName = package.ResolvedBlobName;
+        var parameters = new Dictionary<string, object?>
+        {
+            ["location"] = location,
+            ["webAppName"] = webAppName,
+            ["fabricSqlServer"] = context.Outputs.TryGetValue("fabricSqlServer", out var sql) ? sql ?? string.Empty : string.Empty,
+            ["fabricSqlDatabase"] = Trim(fabric?.ServingLakehouseName) ?? "SegmentServing",
+            ["fabricWorkspaceId"] = context.Outputs.TryGetValue("workspaceId", out var workspace) ? workspace ?? string.Empty : string.Empty,
+            ["fabricServingLakehouseId"] = context.Outputs.TryGetValue("servingLakehouseId", out var lakehouse) ? lakehouse ?? string.Empty : string.Empty,
+            ["fabricDataverseConnectionId"] = Trim(fabric?.DataverseConnectionId) ?? string.Empty,
+            ["fabricDataverseDeltaFolder"] = Trim(fabric?.DataverseDeltaFolder) ?? "deltalake",
+            ["dataverseEnvironmentUrl"] = Trim(context.Request.Dataverse?.EnvironmentUrl) ?? string.Empty,
+            ["behavioralApiKey"] = context.Request.Secrets?.BehavioralApiKey ?? string.Empty,
+            ["requiredDataverseTables"] = string.Join(',', context.Request.Dataverse?.RequiredTables ?? Array.Empty<string>()),
+            ["apiPackageUrl"] = package.Url!.Trim(),
+            ["apiPackageSha256"] = package.Sha256!.Trim().ToLowerInvariant(),
+            ["apiPackageBlobName"] = blobName,
+            ["apiPackageVersion"] = Trim(package.Version) ?? string.Empty
+        };
+
+        context.Outputs["packageBlob"] = blobName;
+        context.Outputs["packageSha256"] = package.Sha256!.Trim().ToLowerInvariant();
+
+        var wrapped = parameters.ToDictionary(pair => pair.Key, pair => (object)new { value = pair.Value });
+        var path = "/subscriptions/" + subscriptionId + "/resourcegroups/" + Uri.EscapeDataString(resourceGroup) +
+                   "/providers/Microsoft.Resources/deployments/segment-preview";
+
+        await ArmAsync(context, HttpMethod.Put, path,
+            new { properties = new { mode = "Incremental", template, parameters = wrapped } },
+            ArmApiVersion, cancellationToken).ConfigureAwait(false);
+
+        for (var poll = 0; poll < 240; poll++)
+        {
+            var snapshot = await ArmAsync(context, HttpMethod.Get, path, null, ArmApiVersion, cancellationToken).ConfigureAwait(false);
+            var state = snapshot.TryGetProperty("properties", out var properties) && properties.TryGetProperty("provisioningState", out var provisioning)
+                ? provisioning.GetString()
+                : null;
+
+            if (state == "Succeeded")
+            {
+                if (properties.TryGetProperty("outputs", out var outputs))
+                {
+                    foreach (var output in outputs.EnumerateObject())
+                    {
+                        if (output.Value.TryGetProperty("value", out var outputValue) && outputValue.ValueKind == JsonValueKind.String)
+                        {
+                            context.Outputs[output.Name] = outputValue.GetString();
+                        }
+                    }
+                }
+
+                ApplyDeploymentOutputs(context.Outputs, webAppName);
+                return StepOutcome.Succeeded("The Azure infrastructure was deployed.",
+                    new Dictionary<string, string?>
+                    {
+                        ["apiBaseUrl"] = context.Outputs["apiBaseUrl"],
+                        ["principalId"] = context.Outputs.TryGetValue("principalId", out var mapped) ? mapped : null
+                    });
+            }
+
+            if (state is "Failed" or "Canceled")
+            {
+                throw new InvalidOperationException("The Azure deployment finished with state '" + state + "'.");
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(5), _time, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new InvalidOperationException("The Azure deployment did not finish within the expected time.");
+    }
+
+    private async Task<StepOutcome> ConfigureWebAppAsync(ProvisioningContext context, CancellationToken cancellationToken)
+    {
+        var azure = context.Request.Azure ?? throw new InvalidOperationException("The run carries no Azure target.");
+        var subscriptionId = Require(azure.SubscriptionId, "subscriptionId");
+        var resourceGroup = Require(azure.ResourceGroup, "resourceGroup");
+        var webAppName = Require(azure.WebAppName, "webAppName");
+        var site = "/subscriptions/" + subscriptionId + "/resourceGroups/" + Uri.EscapeDataString(resourceGroup) +
+                   "/providers/Microsoft.Web/sites/" + Uri.EscapeDataString(webAppName);
+
+        var package = context.Request.ApiPackage;
+        if (package is null || !package.IsUsable)
+        {
+            return StepOutcome.ActionRequired(
+                "No verified API package was supplied, so the Web App cannot be confirmed to run the API.",
+                "Send an https package URL together with its SHA-256 digest and install again.");
+        }
+
+        var identity = await ArmAsync(context, HttpMethod.Get, site, null, WebApiVersion, cancellationToken).ConfigureAwait(false);
+        if (identity.TryGetProperty("identity", out var identityBlock) &&
+            identityBlock.TryGetProperty("principalId", out var principalId) &&
+            principalId.ValueKind == JsonValueKind.String)
+        {
+            context.Outputs["principalId"] = principalId.GetString();
+        }
+
+        // The deployment, not this service, copied and verified the package. This
+        // step reads back what Azure actually applied so a codeless Web App can
+        // never be reported as a success.
+        var settings = await ArmAsync(context, HttpMethod.Post, site + "/config/appsettings/list", null, WebApiVersion, cancellationToken)
+            .ConfigureAwait(false);
+        var applied = ReadAppSettings(settings);
+        VerifyPackageSettings(applied, package);
+
+        await ArmAsync(context, HttpMethod.Post, site + "/restart", null, WebApiVersion, cancellationToken).ConfigureAwait(false);
+
+        var blobUrl = applied.TryGetValue(RunFromPackageSetting, out var deployed) ? deployed : null;
+        context.Outputs["packageBlobUrl"] = blobUrl;
+
+        return StepOutcome.Succeeded(
+            "The Web App runs API package " + (Trim(package.Version) ?? package.ResolvedBlobName) +
+            " from the customer's own storage account and was restarted.",
+            new Dictionary<string, string?>
+            {
+                ["principalId"] = context.Outputs.TryGetValue("principalId", out var value) ? value : null,
+                ["packageBlobUrl"] = blobUrl
+            });
+    }
+
+    internal const string RunFromPackageSetting = "WEBSITE_RUN_FROM_PACKAGE";
+    internal const string PackageIdentitySetting = "WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID";
+    internal const string PackageShaSetting = "SEGMENT_PREVIEW_PACKAGE_SHA256";
+    internal const string PackageContainer = "segment-preview-api";
+
+    /// <summary>Flattens the ARM app-settings response into a plain dictionary.</summary>
+    public static Dictionary<string, string?> ReadAppSettings(JsonElement response)
+    {
+        var settings = new Dictionary<string, string?>(StringComparer.Ordinal);
+        if (response.ValueKind == JsonValueKind.Object &&
+            response.TryGetProperty("properties", out var properties) &&
+            properties.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var setting in properties.EnumerateObject())
+            {
+                settings[setting.Name] = setting.Value.ValueKind == JsonValueKind.String ? setting.Value.GetString() : null;
+            }
+        }
+
+        return settings;
+    }
+
+    /// <summary>
+    /// Fails the run unless the Web App really reads the pinned package from
+    /// customer-owned storage with its own identity and no expiring signature.
+    /// </summary>
+    public static void VerifyPackageSettings(IReadOnlyDictionary<string, string?> settings, ApiPackage package)
+    {
+        var blobName = package.ResolvedBlobName;
+        var deployed = settings.TryGetValue(RunFromPackageSetting, out var value) ? value ?? string.Empty : string.Empty;
+
+        if (deployed.IndexOf("/" + PackageContainer + "/" + blobName, StringComparison.Ordinal) < 0)
+        {
+            throw new InvalidOperationException(
+                "The Web App does not run the expected API package. Its " + RunFromPackageSetting + " setting is " +
+                (deployed.Length == 0 ? "empty" : deployed) + " instead of a blob named " + blobName + ".");
+        }
+
+        if (deployed.Contains('?', StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The Web App reads the API package through a shared access signature, which expires.");
+        }
+
+        var digest = (package.Sha256 ?? string.Empty).Trim().ToLowerInvariant();
+        var reported = (settings.TryGetValue(PackageShaSetting, out var sha) ? sha ?? string.Empty : string.Empty)
+            .Trim().ToLowerInvariant();
+        if (!string.Equals(reported, digest, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The Web App reports API package digest " + (reported.Length == 0 ? "none" : reported) +
+                " instead of the pinned " + digest + ".");
+        }
+
+        var identity = settings.TryGetValue(PackageIdentitySetting, out var mi) ? mi : null;
+        if (!string.Equals(identity, "SystemAssigned", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The Web App is not configured to read the package with its own managed identity (" +
+                PackageIdentitySetting + " is " + (string.IsNullOrEmpty(identity) ? "empty" : identity) + ").");
+        }
+    }
+
+    // ------------------------------------------------------------------- plumbing
+
+    /// <summary>
+    /// Returns the API root the Dataverse plugin talks to. The Web App serves
+    /// the API under /api/, so a bare host name is not a usable base URL.
+    /// </summary>
+    public static string NormalizeApiBaseUrl(string? value)
+    {
+        var text = (value ?? string.Empty).Trim();
+        if (text.Length == 0)
+        {
+            throw new InvalidOperationException("The Azure deployment reported no Web App URL.");
+        }
+        if (!text.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !text.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            text = "https://" + text;
+        }
+        var uri = new Uri(text, UriKind.Absolute);
+        return "https://" + uri.Authority + "/api/";
+    }
+
+    /// <summary>
+    /// Turns the raw template outputs into the facts the later steps read. The
+    /// Fabric role assignment runs before the Web App step, so the managed
+    /// identity has to be published under 'principalId' as soon as the
+    /// deployment reports it rather than when the Web App is configured.
+    /// </summary>
+    public static void ApplyDeploymentOutputs(IDictionary<string, string?> outputs, string webAppName)
+    {
+        ArgumentNullException.ThrowIfNull(outputs);
+
+        if (outputs.TryGetValue("managedIdentityPrincipalId", out var identityPrincipal) &&
+            !string.IsNullOrWhiteSpace(identityPrincipal))
+        {
+            outputs["principalId"] = identityPrincipal;
+        }
+
+        var reported = outputs.TryGetValue("webAppUrl", out var webAppUrl) && !string.IsNullOrWhiteSpace(webAppUrl)
+            ? webAppUrl
+            : "https://" + webAppName + ".azurewebsites.net";
+        outputs["apiBaseUrl"] = NormalizeApiBaseUrl(reported);
+    }
+
+    private async Task<JsonElement> ArmAsync(ProvisioningContext context, HttpMethod method, string path, object? body, string apiVersion, CancellationToken cancellationToken)
+    {
+        var token = await _tokens.AcquireForScopeAsync(context.Session, ArmScope, cancellationToken).ConfigureAwait(false);
+        var separator = path.Contains('?') ? "&" : "?";
+        return await SendAsync(method, ArmRoot + path + separator + "api-version=" + apiVersion, token.AccessToken, body, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<JsonElement> FabricAsync(ProvisioningContext context, HttpMethod method, string path, object? body, CancellationToken cancellationToken)
+    {
+        var token = await _tokens.AcquireForScopeAsync(context.Session, FabricScope, cancellationToken).ConfigureAwait(false);
+        var url = path.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? path : FabricRoot + "/" + path.TrimStart('/');
+        return await SendAsync(method, url, token.AccessToken, body, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<JsonElement>> FabricCollectionAsync(ProvisioningContext context, string path, CancellationToken cancellationToken)
+    {
+        var items = new List<JsonElement>();
+        string? next = path;
+        for (var guard = 0; next is not null && guard < 100; guard++)
+        {
+            var payload = await FabricAsync(context, HttpMethod.Get, next, null, cancellationToken).ConfigureAwait(false);
+            if (payload.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.Array)
+            {
+                items.AddRange(value.EnumerateArray().Select(item => item.Clone()));
+            }
+            next = payload.TryGetProperty("continuationUri", out var continuation) ? continuation.GetString() : null;
+        }
+        return items;
+    }
+
+    private async Task<JsonElement> SendAsync(HttpMethod method, string url, string token, object? body, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(method, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        if (body is not null)
+        {
+            request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        }
+
+        using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(
+                method.Method + " " + Redact(url) + " failed with " + (int)response.StatusCode + ".");
+        }
+
+        if (string.IsNullOrWhiteSpace(text)) return default;
+        using var document = JsonDocument.Parse(text);
+        return document.RootElement.Clone();
+    }
+
+    /// <summary>Removes query strings so no token or key can reach a log or an error message.</summary>
+    private static string Redact(string url)
+    {
+        var index = url.IndexOf('?');
+        return index > -1 ? url[..index] : url;
+    }
+
+    private static string? Trim(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string Require(string? value, string name) =>
+        Trim(value) ?? throw new InvalidOperationException("The run is missing the required value '" + name + "'.");
+
+    private static string? Text(JsonElement element, string property) =>
+        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+}
+
+public interface IArmTemplateSource
+{
+    JsonElement? Read();
+}
+
+/// <summary>
+/// Loads the same compiled ARM template the browser uses. The file is copied from
+/// deployment/azure/main.json at build time, so there is one source of truth.
+/// </summary>
+public sealed class FileArmTemplateSource : IArmTemplateSource
+{
+    private readonly string _path;
+    private JsonDocument? _cached;
+
+    public FileArmTemplateSource(string path) => _path = path;
+
+    public JsonElement? Read()
+    {
+        if (_cached is not null) return _cached.RootElement;
+        if (!File.Exists(_path)) return null;
+        _cached = JsonDocument.Parse(File.ReadAllText(_path));
+        return _cached.RootElement;
+    }
+}

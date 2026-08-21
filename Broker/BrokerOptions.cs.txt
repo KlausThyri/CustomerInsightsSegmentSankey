@@ -1,0 +1,95 @@
+using System.Text.RegularExpressions;
+
+namespace CustomerInsightsSegmentSankey.Broker;
+
+/// <summary>
+/// Configuration of the publisher provisioning service. Every identity value is
+/// supplied by the environment (App Service settings, Key Vault references, or
+/// user secrets) and nothing is ever committed to source control.
+/// </summary>
+public sealed class BrokerOptions
+{
+    public const string SectionName = "Broker";
+
+    /// <summary>Application (client) id of the publisher multi-tenant confidential app.</summary>
+    public string? ClientId { get; set; }
+
+    /// <summary>Client secret of that app. Prefer a Key Vault reference or a certificate.</summary>
+    public string? ClientSecret { get; set; }
+
+    /// <summary>Authority used for the delegated flow. "organizations" excludes personal accounts.</summary>
+    public string Authority { get; set; } = "https://login.microsoftonline.com/organizations";
+
+    /// <summary>
+    /// Absolute https base URL this service is reachable on. The authorize URL handed
+    /// to the browser must live on this origin, because the web resource refuses to
+    /// open a window on any other origin.
+    /// </summary>
+    public string? PublicBaseUrl { get; set; }
+
+    /// <summary>Exact origins allowed to start a session and to receive the postMessage.</summary>
+    public IList<string> AllowedOrigins { get; } = new List<string>();
+
+    /// <summary>
+    /// Host suffixes accepted in addition to <see cref="AllowedOrigins"/>, for example
+    /// ".crm4.dynamics.com". Empty by default: the service denies unknown origins.
+    /// </summary>
+    public IList<string> AllowedOriginSuffixes { get; } = new List<string>();
+
+    public TimeSpan SessionLifetime { get; set; } = TimeSpan.FromMinutes(15);
+
+    public TimeSpan SignedInSessionLifetime { get; set; } = TimeSpan.FromMinutes(60);
+
+    public TimeSpan RunRetention { get; set; } = TimeSpan.FromHours(2);
+
+    /// <summary>
+    /// When true the service accepts requests and reports every step as skipped instead
+    /// of touching Azure or Fabric. Used for contract conformance testing.
+    /// </summary>
+    public bool DryRun { get; set; }
+
+    public static readonly string[] RequiredScopes =
+    {
+        "openid",
+        "profile",
+        "offline_access",
+        "https://management.azure.com/user_impersonation",
+        "https://api.fabric.microsoft.com/Workspace.ReadWrite.All",
+        "https://api.fabric.microsoft.com/Item.ReadWrite.All",
+        "https://api.fabric.microsoft.com/Capacity.Read.All",
+        "https://api.fabric.microsoft.com/Connection.Read.All"
+    };
+
+    /// <summary>True when an identity has been supplied, so the sign-in flow can run.</summary>
+    public bool IsConfigured =>
+        !string.IsNullOrWhiteSpace(ClientId) &&
+        !string.IsNullOrWhiteSpace(ClientSecret) &&
+        IsAbsoluteHttps(PublicBaseUrl);
+
+    public string CallbackUrl => TrimEnd(PublicBaseUrl) + "/auth/callback";
+
+    public string AuthorizeStartUrl(string sessionId, string startToken) =>
+        TrimEnd(PublicBaseUrl) + "/auth/start?session=" + Uri.EscapeDataString(sessionId) +
+        "&t=" + Uri.EscapeDataString(startToken);
+
+    /// <summary>Explains, in the words the administrator sees, what is still missing.</summary>
+    public IReadOnlyList<string> DescribeMissingConfiguration()
+    {
+        var missing = new List<string>();
+        if (string.IsNullOrWhiteSpace(ClientId)) missing.Add("Broker:ClientId");
+        if (string.IsNullOrWhiteSpace(ClientSecret)) missing.Add("Broker:ClientSecret");
+        if (!IsAbsoluteHttps(PublicBaseUrl)) missing.Add("Broker:PublicBaseUrl (absolute https URL)");
+        if (AllowedOrigins.Count == 0 && AllowedOriginSuffixes.Count == 0)
+        {
+            missing.Add("Broker:AllowedOrigins or Broker:AllowedOriginSuffixes");
+        }
+        return missing;
+    }
+
+    internal static bool IsAbsoluteHttps(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+
+    private static string TrimEnd(string? value) =>
+        Regex.Replace(value ?? string.Empty, "/+$", string.Empty);
+}

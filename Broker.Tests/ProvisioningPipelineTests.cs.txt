@@ -1,0 +1,160 @@
+using CustomerInsightsSegmentSankey.Broker;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.Broker.Tests;
+
+public class ProvisioningPipelineTests
+{
+    private sealed class RecordingExecutor : IProvisioningExecutor
+    {
+        private readonly Func<string, StepOutcome> _handler;
+        public List<string> Executed { get; } = new();
+
+        public RecordingExecutor(Func<string, StepOutcome> handler) => _handler = handler;
+
+        public Task<StepOutcome> ExecuteAsync(string stepId, ProvisioningContext context, CancellationToken cancellationToken)
+        {
+            Executed.Add(stepId);
+            return Task.FromResult(_handler(stepId));
+        }
+    }
+
+    private static (RunRecord Run, ProvisioningContext Context) NewRun()
+    {
+        var store = new InMemorySessionStore();
+        var session = store.Create("https://contoso.crm4.dynamics.com", "nonce-value-0123", null, null, TimeSpan.FromMinutes(15));
+        var run = new RunRecord { Id = "run-1", SessionId = session.Id, CreatedAt = DateTimeOffset.UtcNow };
+        var context = new ProvisioningContext { Session = session, Request = new StartRunRequest { ContractVersion = BrokerContract.Version } };
+        return (run, context);
+    }
+
+    [Fact]
+    public async Task ReportsEveryContractStepInOrder()
+    {
+        var (run, context) = NewRun();
+        var executor = new RecordingExecutor(_ => StepOutcome.Succeeded("done"));
+
+        await new ProvisioningPipeline(executor).RunAsync(run, context, CancellationToken.None);
+
+        Assert.Equal(BrokerContract.Steps, run.Steps.Select(step => step.Id).ToArray());
+        Assert.Equal("succeeded", run.Status);
+    }
+
+    [Fact]
+    public async Task BrowserOwnedStepsAreSkippedAndNeverExecuted()
+    {
+        var (run, context) = NewRun();
+        var executor = new RecordingExecutor(_ => StepOutcome.Succeeded("done"));
+
+        await new ProvisioningPipeline(executor).RunAsync(run, context, CancellationToken.None);
+
+        foreach (var owned in BrokerContract.BrowserOwnedSteps)
+        {
+            Assert.Equal("skipped", run.Steps.Single(step => step.Id == owned).Status);
+            Assert.DoesNotContain(owned, executor.Executed);
+        }
+
+        Assert.Equal(
+            BrokerContract.Steps.Where(step => !BrokerContract.BrowserOwnedSteps.Contains(step)).ToArray(),
+            executor.Executed.ToArray());
+    }
+
+    [Fact]
+    public async Task FailureStopsTheRunAndRecordsTheTarget()
+    {
+        var (run, context) = NewRun();
+        var executor = new RecordingExecutor(step => step == "azure-infra"
+            ? new StepOutcome("failed", "The deployment failed.")
+            : StepOutcome.Succeeded("done"));
+
+        await new ProvisioningPipeline(executor).RunAsync(run, context, CancellationToken.None);
+
+        Assert.Equal("failed", run.Status);
+        Assert.Equal("azure-infra", run.Error?.Target);
+        Assert.Equal("The deployment failed.", run.Error?.Message);
+        Assert.DoesNotContain("azure-app", executor.Executed);
+        Assert.Equal("pending", run.Steps.Single(step => step.Id == "azure-app").Status);
+    }
+
+    [Fact]
+    public async Task ThrownExceptionsBecomeStepFailures()
+    {
+        var (run, context) = NewRun();
+        var executor = new RecordingExecutor(step => step == "fabric-discovery"
+            ? throw new InvalidOperationException("Fabric is unreachable.")
+            : StepOutcome.Succeeded("done"));
+
+        await new ProvisioningPipeline(executor).RunAsync(run, context, CancellationToken.None);
+
+        Assert.Equal("failed", run.Status);
+        Assert.Equal("StepFailed", run.Error?.Code);
+        Assert.Equal("fabric-discovery", run.Error?.Target);
+    }
+
+    [Fact]
+    public async Task ManualStepsSurfaceAsActionRequired()
+    {
+        var (run, context) = NewRun();
+        var executor = new RecordingExecutor(step => step == "fabric-notebook"
+            ? StepOutcome.ActionRequired("Publish the notebook.", "Import the bootstrap notebook.")
+            : StepOutcome.Succeeded("done"));
+
+        await new ProvisioningPipeline(executor).RunAsync(run, context, CancellationToken.None);
+
+        Assert.Equal("actionRequired", run.Status);
+        Assert.Contains("Import the bootstrap notebook.", run.Manual);
+    }
+
+    [Fact]
+    public async Task OutputsAreCollectedOnTheRun()
+    {
+        var (run, context) = NewRun();
+        var executor = new RecordingExecutor(step => step == "azure-infra"
+            ? StepOutcome.Succeeded("done", new Dictionary<string, string?> { ["apiBaseUrl"] = "https://api.example.net" })
+            : StepOutcome.Succeeded("done"));
+
+        await new ProvisioningPipeline(executor).RunAsync(run, context, CancellationToken.None);
+
+        Assert.Equal("https://api.example.net", run.Outputs["apiBaseUrl"]);
+        Assert.Equal("https://api.example.net", run.ToResponse().Outputs["apiBaseUrl"]);
+    }
+
+    [Fact]
+    public async Task CancellationIsReportedAsAFailedRun()
+    {
+        var (run, context) = NewRun();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await new ProvisioningPipeline(new RecordingExecutor(_ => StepOutcome.Succeeded("done")))
+            .RunAsync(run, context, cancellation.Token);
+
+        Assert.Equal("failed", run.Status);
+        Assert.Equal("RunCancelled", run.Error?.Code);
+    }
+
+    [Fact]
+    public async Task DryRunExecutorTouchesNothing()
+    {
+        var (run, context) = NewRun();
+
+        await new ProvisioningPipeline(new DryRunProvisioningExecutor()).RunAsync(run, context, CancellationToken.None);
+
+        Assert.Equal("succeeded", run.Status);
+        Assert.All(run.Steps, step => Assert.Equal("skipped", step.Status));
+    }
+
+    [Fact]
+    public async Task UnconfiguredServiceReportsTheMaintainerTask()
+    {
+        var (run, context) = NewRun();
+        var options = new BrokerOptions();
+
+        await new ProvisioningPipeline(new NotConfiguredProvisioningExecutor(options.DescribeMissingConfiguration()))
+            .RunAsync(run, context, CancellationToken.None);
+
+        Assert.Equal("actionRequired", run.Status);
+        Assert.Contains(run.Manual, entry => entry.Contains("Broker:ClientId", StringComparison.Ordinal));
+        Assert.Contains(run.Manual, entry => entry.Contains("Broker:ClientSecret", StringComparison.Ordinal));
+    }
+}

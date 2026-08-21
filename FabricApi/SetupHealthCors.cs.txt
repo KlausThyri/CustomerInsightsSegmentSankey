@@ -1,0 +1,87 @@
+#if FABRIC_API
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+/// <summary>
+/// Cross-origin policy for the health endpoint only.
+///
+/// The Segment Preview setup page lives on the Dataverse origin and has to poll
+/// the freshly deployed API to know whether App Service finished mounting the
+/// package. Nothing else in this API is reachable from a browser, so the policy
+/// is deliberately narrow: the single Dataverse origin the deployment was
+/// configured with, GET only, no credentials, and only on /api/health.
+/// </summary>
+public static class SetupHealthCors
+{
+    /// <summary>Name of the policy the health endpoint opts into.</summary>
+    public const string PolicyName = "segment-preview-setup-health";
+
+    /// <summary>
+    /// Turns the configured Dataverse environment URL into the exact list of
+    /// origins the health endpoint answers. An origin is scheme + host + port,
+    /// so any path, query or trailing slash is dropped. A blank, relative or
+    /// non-https value yields no origin at all, which leaves the endpoint
+    /// closed to browsers rather than open to everything.
+    /// </summary>
+    public static string[] ResolveOrigins(string? dataverseEnvironmentUrl)
+    {
+        var text = (dataverseEnvironmentUrl ?? string.Empty).Trim();
+        if (text.Length == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var origins = new List<string>();
+        foreach (var candidate in text.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var origin = NormalizeOrigin(candidate);
+            if (origin is not null && !origins.Contains(origin, StringComparer.Ordinal))
+            {
+                origins.Add(origin);
+            }
+        }
+
+        return origins.ToArray();
+    }
+
+    private static string? NormalizeOrigin(string candidate)
+    {
+        var value = candidate.Trim();
+        if (value.Length == 0 || value == "*")
+        {
+            return null;
+        }
+
+        if (!value.Contains("://", StringComparison.Ordinal))
+        {
+            value = "https://" + value;
+        }
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(uri.Host))
+        {
+            return null;
+        }
+
+        // A bare word parses as a host name, so "not a url" would otherwise turn
+        // into three origins. A real environment host is dotted.
+        if (!uri.Host.Contains('.', StringComparison.Ordinal) &&
+            !string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return uri.IsDefaultPort
+            ? "https://" + uri.Host
+            : "https://" + uri.Host + ":" + uri.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+}
+#endif

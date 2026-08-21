@@ -1,0 +1,115 @@
+using CustomerInsightsSegmentSankey.Broker;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.Broker.Tests;
+
+public class SessionStoreTests
+{
+    private static InMemorySessionStore Store(Func<DateTimeOffset>? now = null) => new(now);
+
+    [Fact]
+    public void CreateIssuesDistinctSecrets()
+    {
+        var store = Store();
+        var first = store.Create("https://contoso.crm4.dynamics.com", new string('n', 32), null, "contoso.crm4.dynamics.com", TimeSpan.FromMinutes(15));
+        var second = store.Create("https://contoso.crm4.dynamics.com", new string('n', 32), null, null, TimeSpan.FromMinutes(15));
+
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.NotEqual(first.StartToken, second.StartToken);
+        Assert.NotEqual(first.State, second.State);
+        Assert.NotEqual(first.CodeVerifier, second.CodeVerifier);
+        Assert.False(first.Authorized);
+    }
+
+    [Fact]
+    public void ExpiredSessionsAreNotReturned()
+    {
+        var clock = DateTimeOffset.UtcNow;
+        var store = Store(() => clock);
+        var session = store.Create("https://contoso.crm4.dynamics.com", "nonce-value-0123", null, null, TimeSpan.FromMinutes(15));
+
+        Assert.NotNull(store.Get(session.Id));
+        clock = clock.AddMinutes(16);
+        Assert.Null(store.Get(session.Id));
+    }
+
+    [Fact]
+    public void AuthenticateRequiresTheExactSessionToken()
+    {
+        var store = Store();
+        var session = store.Create("https://contoso.crm4.dynamics.com", "nonce-value-0123", null, null, TimeSpan.FromMinutes(15));
+
+        Assert.Null(store.Authenticate(session.Id, "anything"));
+
+        var issued = Tokens.Random(32);
+        session.SessionTokenHash = Tokens.Hash(issued);
+
+        Assert.NotNull(store.Authenticate(session.Id, issued));
+        Assert.Null(store.Authenticate(session.Id, issued + "x"));
+        Assert.Null(store.Authenticate(session.Id, null));
+        Assert.Null(store.Authenticate("sess-unknown", issued));
+    }
+
+    [Fact]
+    public void RawSessionTokenIsNeverStored()
+    {
+        var store = Store();
+        var session = store.Create("https://contoso.crm4.dynamics.com", "nonce-value-0123", null, null, TimeSpan.FromMinutes(15));
+        var issued = Tokens.Random(32);
+        session.SessionTokenHash = Tokens.Hash(issued);
+
+        Assert.NotEqual(issued, session.SessionTokenHash);
+        Assert.DoesNotContain(issued, session.SessionTokenHash);
+    }
+
+    [Fact]
+    public void FindByStateResolvesTheOwningSession()
+    {
+        var store = Store();
+        var session = store.Create("https://contoso.crm4.dynamics.com", "nonce-value-0123", null, null, TimeSpan.FromMinutes(15));
+
+        Assert.Equal(session.Id, store.FindByState(session.State)?.Id);
+        Assert.Null(store.FindByState("other-state"));
+        Assert.Null(store.FindByState(null));
+    }
+
+    [Fact]
+    public void SweepRemovesExpiredSessions()
+    {
+        var clock = DateTimeOffset.UtcNow;
+        var store = Store(() => clock);
+        store.Create("https://contoso.crm4.dynamics.com", "nonce-value-0123", null, null, TimeSpan.FromMinutes(5));
+        store.Create("https://contoso.crm4.dynamics.com", "nonce-value-4567", null, null, TimeSpan.FromMinutes(30));
+
+        clock = clock.AddMinutes(10);
+        Assert.Equal(1, store.Sweep());
+    }
+
+    [Fact]
+    public void RemoveDropsTheSession()
+    {
+        var store = Store();
+        var session = store.Create("https://contoso.crm4.dynamics.com", "nonce-value-0123", null, null, TimeSpan.FromMinutes(15));
+        store.Remove(session.Id);
+        Assert.Null(store.Get(session.Id));
+    }
+
+    [Fact]
+    public void TokenHelpersAreUrlSafe()
+    {
+        var value = Tokens.Random(32);
+        Assert.DoesNotContain("+", value);
+        Assert.DoesNotContain("/", value);
+        Assert.DoesNotContain("=", value);
+        Assert.True(Tokens.FixedTimeEquals(value, value));
+        Assert.False(Tokens.FixedTimeEquals(value, value + "a"));
+    }
+
+    [Fact]
+    public void ChallengeIsDeterministicAndDiffersFromTheVerifier()
+    {
+        var verifier = Tokens.Random(48);
+        Assert.Equal(Tokens.Challenge(verifier), Tokens.Challenge(verifier));
+        Assert.NotEqual(verifier, Tokens.Challenge(verifier));
+    }
+}
