@@ -257,7 +257,7 @@
     "api": {
       "version": "1.1.0.0",
       "packageUrl": "https://github.com/KlausThyri/CustomerInsightsSegmentSankey/releases/download/v1.1.0/segment-preview-api-1.1.0.zip",
-      "sha256": "b3c5da2451603fddf0686c76b5537184416eef65847e98e7fd4184b2c993f456",
+      "sha256": "f6c57fa4cb2754db028483806fe0977692567a576ac8038c44a668621d2b1fc7",
       "packageUrlTemplate": "https://github.com/KlausThyri/CustomerInsightsSegmentSankey/releases/download/v{version}/segment-preview-api-{version}.zip"
     }
   };

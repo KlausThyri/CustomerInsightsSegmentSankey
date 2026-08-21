@@ -1,0 +1,58 @@
+#if FABRIC_API
+using Microsoft.Extensions.Configuration;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+public sealed class FabricRuntimeOptionsTests
+{
+    [Fact]
+    public void UsesColdStartSafeDefaults()
+    {
+        var options = CreateOptions([]);
+
+        Assert.Equal(TimeSpan.FromHours(1), options.CatalogCacheDuration);
+        Assert.Equal(TimeSpan.FromMinutes(4), options.WarmupInterval);
+    }
+
+    [Fact]
+    public void UsesConfiguredDurations()
+    {
+        var options = CreateOptions(new Dictionary<string, string?>
+        {
+            ["FABRIC_CATALOG_CACHE_MINUTES"] = "360",
+            ["FABRIC_WARMUP_INTERVAL_MINUTES"] = "3"
+        });
+
+        Assert.Equal(TimeSpan.FromHours(6), options.CatalogCacheDuration);
+        Assert.Equal(TimeSpan.FromMinutes(3), options.WarmupInterval);
+    }
+
+    [Theory]
+    [InlineData("FABRIC_CATALOG_CACHE_MINUTES", "4")]
+    [InlineData("FABRIC_CATALOG_CACHE_MINUTES", "1441")]
+    [InlineData("FABRIC_WARMUP_INTERVAL_MINUTES", "0")]
+    [InlineData("FABRIC_WARMUP_INTERVAL_MINUTES", "61")]
+    [InlineData("FABRIC_WARMUP_INTERVAL_MINUTES", "invalid")]
+    public void RejectsInvalidDurations(string name, string value)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { [name] = value })
+            .Build();
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => new FabricRuntimeOptions(configuration));
+
+        Assert.Contains(name, exception.Message);
+    }
+
+    private static FabricRuntimeOptions CreateOptions(
+        IEnumerable<KeyValuePair<string, string?>> values)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(values)
+            .Build();
+        return new FabricRuntimeOptions(configuration);
+    }
+}
+#endif

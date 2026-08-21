@@ -1,24 +1,39 @@
 #if FABRIC_API
+using Azure.Identity;
 using Microsoft.Data.SqlClient;
 
 namespace CustomerInsightsSegmentSankey.FabricApi;
 
 internal sealed class FabricSegmentCatalog(
     FabricConnectionFactory connectionFactory,
+    FabricRuntimeOptions runtimeOptions,
     ILogger<FabricSegmentCatalog> logger)
 {
     private static readonly string[] Schemas = ["dataverse", "journeys"];
     private readonly SemaphoreSlim refreshLock = new(1, 1);
-    private readonly TimeSpan cacheDuration = TimeSpan.FromMinutes(5);
+    private readonly TimeSpan cacheDuration = runtimeOptions.CatalogCacheDuration;
     private volatile FabricSegmentCatalogSnapshot? snapshot;
 
     public async Task<FabricSegmentCatalogSnapshot> GetSnapshotAsync(
         CancellationToken cancellationToken)
     {
         var current = snapshot;
-        if (current is not null && DateTimeOffset.UtcNow - current.LoadedAt < cacheDuration)
+        if (current is not null)
         {
             return current;
+        }
+
+        await RefreshAsync(cancellationToken);
+        return snapshot ?? throw new InvalidOperationException(
+            "The Fabric segment catalog could not be initialized.");
+    }
+
+    public async Task RefreshAsync(CancellationToken cancellationToken)
+    {
+        var current = snapshot;
+        if (current is not null && DateTimeOffset.UtcNow - current.LoadedAt < cacheDuration)
+        {
+            return;
         }
 
         await refreshLock.WaitAsync(cancellationToken);
@@ -27,11 +42,25 @@ internal sealed class FabricSegmentCatalog(
             current = snapshot;
             if (current is not null && DateTimeOffset.UtcNow - current.LoadedAt < cacheDuration)
             {
-                return current;
+                return;
             }
 
-            snapshot = await LoadWithRetryAsync(cancellationToken);
-            return snapshot;
+            try
+            {
+                snapshot = await LoadWithRetryAsync(cancellationToken);
+            }
+            catch (SqlException exception) when (current is not null)
+            {
+                logger.LogWarning(
+                    exception,
+                    "The Fabric segment catalog refresh failed; the existing snapshot remains active.");
+            }
+            catch (AuthenticationFailedException exception) when (current is not null)
+            {
+                logger.LogWarning(
+                    exception,
+                    "The Fabric segment catalog refresh could not authenticate; the existing snapshot remains active.");
+            }
         }
         finally
         {

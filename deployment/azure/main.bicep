@@ -418,6 +418,14 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
           value: fabricSqlDatabase
         }
         {
+          name: 'FABRIC_CATALOG_CACHE_MINUTES'
+          value: '60'
+        }
+        {
+          name: 'FABRIC_WARMUP_INTERVAL_MINUTES'
+          value: '4'
+        }
+        {
           name: 'FABRIC_WORKSPACE_ID'
           value: fabricWorkspaceId
         }

@@ -1,0 +1,53 @@
+#if FABRIC_API
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+internal sealed class FabricRuntimeOptions
+{
+    private const int DefaultCatalogCacheMinutes = 60;
+    private const int DefaultWarmupIntervalMinutes = 4;
+
+    public FabricRuntimeOptions(IConfiguration configuration)
+    {
+        CatalogCacheDuration = TimeSpan.FromMinutes(ReadMinutes(
+            configuration,
+            "FABRIC_CATALOG_CACHE_MINUTES",
+            DefaultCatalogCacheMinutes,
+            5,
+            1440));
+        WarmupInterval = TimeSpan.FromMinutes(ReadMinutes(
+            configuration,
+            "FABRIC_WARMUP_INTERVAL_MINUTES",
+            DefaultWarmupIntervalMinutes,
+            1,
+            60));
+    }
+
+    public TimeSpan CatalogCacheDuration { get; }
+
+    public TimeSpan WarmupInterval { get; }
+
+    private static int ReadMinutes(
+        IConfiguration configuration,
+        string name,
+        int defaultValue,
+        int minimum,
+        int maximum)
+    {
+        var configured = configuration[name];
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return defaultValue;
+        }
+
+        if (!int.TryParse(configured, out var value) ||
+            value < minimum ||
+            value > maximum)
+        {
+            throw new InvalidOperationException(
+                $"The application setting '{name}' must be an integer from {minimum} through {maximum}.");
+        }
+
+        return value;
+    }
+}
+#endif

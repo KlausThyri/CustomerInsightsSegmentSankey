@@ -1,0 +1,66 @@
+#if FABRIC_API
+using Azure.Identity;
+using Microsoft.Data.SqlClient;
+using System.IO;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+internal sealed class FabricSqlWarmupService(
+    FabricConnectionFactory connectionFactory,
+    FabricSegmentCatalog catalog,
+    FabricRuntimeOptions runtimeOptions,
+    ILogger<FabricSqlWarmupService> logger) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await WarmAsync(stoppingToken);
+
+        using var timer = new PeriodicTimer(runtimeOptions.WarmupInterval);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
+        {
+            await WarmAsync(stoppingToken);
+        }
+    }
+
+    private async Task WarmAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await catalog.RefreshAsync(cancellationToken);
+            await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+            await using var command = new SqlCommand("SELECT 1;", connection)
+            {
+                CommandTimeout = 30
+            };
+            await command.ExecuteScalarAsync(cancellationToken);
+            logger.LogInformation(
+                "Fabric SQL warm-up completed; the catalog remains cached for {CacheMinutes} minutes.",
+                runtimeOptions.CatalogCacheDuration.TotalMinutes);
+        }
+        catch (SqlException exception)
+        {
+            logger.LogWarning(exception, "Fabric SQL warm-up failed and will be retried.");
+        }
+        catch (AuthenticationFailedException exception)
+        {
+            logger.LogWarning(exception, "Fabric SQL warm-up authentication failed and will be retried.");
+        }
+        catch (HttpRequestException exception)
+        {
+            logger.LogWarning(exception, "Fabric SQL warm-up could not reach a dependency and will be retried.");
+        }
+        catch (IOException exception)
+        {
+            logger.LogWarning(exception, "Fabric SQL warm-up encountered an I/O failure and will be retried.");
+        }
+        catch (InvalidOperationException exception)
+        {
+            logger.LogWarning(exception, "Fabric SQL warm-up could not initialize and will be retried.");
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "Fabric SQL warm-up timed out and will be retried.");
+        }
+    }
+}
+#endif
