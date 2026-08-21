@@ -17,7 +17,7 @@
   function normalizeId(id) {
     const value = String(id || "").replace(/[{}]/g, "");
     return /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)
-      ? value
+      ? value.toLowerCase()
       : "";
   }
 
