@@ -694,6 +694,10 @@
         notice.className = "notice" + (message ? " visible" : "") + (kind ? " " + kind : "");
       }
 
+      function isStaticSegmentWithoutFilterQuery(error) {
+        return /does not contain an MQL query/i.test(String(error?.message || ""));
+      }
+
       function setLoading(isLoading) {
         const button = document.getElementById("refresh-button");
         button.disabled = isLoading;
@@ -1745,6 +1749,19 @@
           clearAutomaticRetry();
           return true;
         } catch (error) {
+          if (isStaticSegmentWithoutFilterQuery(error)) {
+            document.getElementById("updated-at").textContent = "Static segment";
+            document.getElementById("load-duration").textContent = "No filter steps";
+            document.getElementById("summary").hidden = true;
+            setNotice(
+              "This is a static segment with a fixed member list. A filter-by-filter preview is only available for dynamic segments.",
+              ""
+            );
+            document.getElementById("chart").innerHTML =
+              '<div class="empty">There are no filter steps to display for this static segment.</div>';
+            clearAutomaticRetry();
+            return false;
+          }
           if (isAutomatic &&
             error.retryAutomatically &&
             state.retryCount < MAX_AUTOMATIC_RETRIES) {
