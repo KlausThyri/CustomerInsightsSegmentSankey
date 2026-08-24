@@ -309,6 +309,15 @@
       gap: 14px;
     }
     .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .selector-field { grid-column: 1 / -1; width: min(100%, 560px); }
+    .selector-control, .selector-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+    }
+    .selector-actions { align-items: flex-start; }
+    .selector-actions select { width: 100%; min-width: 0; }
     .field label { color: var(--cp-text-muted); font-size: 12px; font-weight: 600; }
     .field input, .field select {
       min-height: 38px;
@@ -934,7 +943,11 @@
         targetFields.replaceChildren();
         FIELDS.forEach(field => {
           const wrapper = document.createElement("div");
-          wrapper.className = "field";
+          wrapper.className =
+            "field" +
+            (field.key === "subscriptionId" || field.key === "resourceGroup"
+              ? " selector-field"
+              : "");
           const label = document.createElement("label");
           label.setAttribute("for", "field-" + field.key);
           label.textContent = field.label;
@@ -976,7 +989,7 @@
 
       function createSubscriptionControl(currentValue) {
         const row = document.createElement("div");
-        row.className = "copy-row";
+        row.className = "selector-actions";
         const select = document.createElement("select");
         select.id = "field-subscriptionId";
         select.dataset.key = "subscriptionId";
@@ -1022,8 +1035,9 @@
 
       function createResourceGroupControl(currentValue) {
         const container = document.createElement("div");
+        container.className = "selector-control";
         const row = document.createElement("div");
-        row.className = "copy-row";
+        row.className = "selector-actions";
         const select = document.createElement("select");
         select.id = "field-resourceGroup";
         select.dataset.key = "resourceGroup";
