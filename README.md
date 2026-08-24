@@ -2,6 +2,26 @@
 
 Side-pane preview for draft segments in Dynamics 365 Customer Insights - Journeys.
 
+## Product experience
+
+### Draft segment preview
+
+See cumulative member counts for every filter stage without leaving the
+Customer Insights segment editor.
+
+<img src="documentation/images/segment-preview-sankey.png"
+     alt="Segment Preview side pane with cumulative member counts and Sankey flow"
+     width="620">
+
+### Browser-only installation
+
+The Setup Center provisions and verifies Dataverse, Azure, and Microsoft
+Fabric directly from Dynamics 365.
+
+<img src="documentation/images/setup-center-ready.png"
+     alt="Segment Preview Setup Center showing a completed installation"
+     width="1000">
+
 ## Downloads and installation
 
 **Import the solution, open the setup page, press one button. Nothing is
