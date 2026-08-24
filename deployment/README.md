@@ -32,8 +32,10 @@ Both drive the same steps, use the same step ids, and produce the same result.
    single-page application in your own tenant (guided by the page).
 4. Fill in the target fields (subscription, resource group, location, web app
    name, Fabric workspace/lakehouse). The page pre-fills everything it can read.
-   After entering the subscription id, **Load groups** lists its existing Azure
-   Resource Groups; the same selector also offers **Create a new resource group**.
+   In direct mode, **Load subscriptions** lists the enabled subscriptions in your
+   Azure tenant. Selecting one loads its existing Resource Groups; the same
+   selector also offers **Create a new resource group**. Broker mode keeps a
+   manual subscription-id field because Azure discovery is not available there.
 5. Press **Preview** to see the plan, the consent checklist and the exact set of
    changes - nothing is written.
 6. Press **Install everything**. You are asked to sign in to Microsoft once, in a

@@ -1100,6 +1100,68 @@ test("direct client lists Azure resource groups alphabetically", async () => {
   assert.equal(fetchImpl.calls.length, 2);
 });
 
+test("direct client lists enabled Azure subscriptions alphabetically", async () => {
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.url.includes("/subscriptions?api-version=2020-01-01"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              subscriptionId: "22222222-2222-2222-2222-222222222222",
+              displayName: "Zeta",
+              state: "Enabled",
+              tenantId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            },
+            {
+              subscriptionId: "33333333-3333-3333-3333-333333333333",
+              displayName: "Disabled",
+              state: "Disabled"
+            }
+          ],
+          nextLink: "https://management.azure.com/subscriptions?skiptoken=next"
+        })
+    },
+    {
+      match: (request) => request.url.endsWith("/subscriptions?skiptoken=next"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              subscriptionId: "11111111-1111-1111-1111-111111111111",
+              displayName: "Alpha",
+              state: "Enabled",
+              tenantId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            }
+          ]
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  const subscriptions = await direct.listSubscriptions();
+
+  assert.deepEqual(subscriptions, [
+    {
+      id: "11111111-1111-1111-1111-111111111111",
+      name: "Alpha",
+      state: "Enabled",
+      tenantId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    },
+    {
+      id: "22222222-2222-2222-2222-222222222222",
+      name: "Zeta",
+      state: "Enabled",
+      tenantId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    }
+  ]);
+  assert.equal(fetchImpl.calls.length, 2);
+});
+
 test("direct client follows Fabric continuation links", async () => {
   const fetchImpl = createFetchMock([
     {

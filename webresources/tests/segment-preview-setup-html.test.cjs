@@ -97,6 +97,16 @@ test("the setup center loads Azure resource groups into a selector", () => {
   assert.ok(code.includes('loadButton.hidden = state.setup?.mode?.mode !== "direct"'));
 });
 
+test("the setup center loads tenant subscriptions into a selector", () => {
+  const code = inlineScripts(html).join("\n");
+  assert.ok(code.includes('"Select an Azure subscription"'));
+  assert.ok(code.includes("direct.listSubscriptions()"));
+  assert.ok(code.includes('"Load subscriptions"'));
+  assert.ok(code.includes('merged.subscriptionId = values.subscriptionId || ""'));
+  assert.ok(code.includes('state.setup?.mode?.mode === "direct"'));
+  assert.ok(code.includes("state.azureTokenProvider?.dispose?.()"));
+});
+
 test("the setup center never renders a raw API key", () => {
   assert.ok(!/textContent\s*=\s*[^;]*\.apiKey\b/.test(html), "an API key must never be written to the DOM");
 });

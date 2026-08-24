@@ -35,8 +35,9 @@ installed on your computer.**
    redirect URI and permission list, opens the Microsoft Entra admin center for
    you, and writes the resulting client id back. About two minutes, all in the
    browser.
-4. Enter the Azure subscription id and press **Load groups** to select an
-   existing Resource Group, or choose **Create a new resource group**.
+4. Press **Load subscriptions**, select an enabled subscription from your Azure
+   tenant, and then select an existing Resource Group or choose
+   **Create a new resource group**.
 5. Press **Preview** to see the plan and the consent checklist, then
    **Install everything** and sign in once when the pop-up appears.
 

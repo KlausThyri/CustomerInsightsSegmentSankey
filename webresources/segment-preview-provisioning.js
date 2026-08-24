@@ -1955,6 +1955,33 @@
       return items;
     }
 
+    async function listSubscriptions() {
+      var subscriptions = [];
+      var next = "/subscriptions";
+      var guard = 0;
+      while (next && guard++ < 100) {
+        var response = await arm("GET", next, undefined, "2020-01-01");
+        var payload = response.body || {};
+        if (Array.isArray(payload.value)) subscriptions = subscriptions.concat(payload.value);
+        next = payload.nextLink || null;
+      }
+      return subscriptions
+        .map(function (subscription) {
+          return {
+            id: subscription.subscriptionId || "",
+            name: subscription.displayName || subscription.subscriptionId || "",
+            state: subscription.state || "",
+            tenantId: subscription.tenantId || ""
+          };
+        })
+        .filter(function (subscription) {
+          return subscription.id && (!subscription.state || subscription.state === "Enabled");
+        })
+        .sort(function (left, right) {
+          return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+        });
+    }
+
     async function ensureResourceGroup(subscriptionId, name, location) {
       var response = await arm(
         "PUT",
@@ -2135,6 +2162,7 @@
       fabric: fabric,
       fabricResult: fabricResult,
       fabricCollection: fabricCollection,
+      listSubscriptions: listSubscriptions,
       listResourceGroups: listResourceGroups,
       ensureResourceGroup: ensureResourceGroup,
       deployTemplate: deployTemplate,

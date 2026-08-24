@@ -588,8 +588,11 @@
         result: null,
         setup: null,
         target: null,
+        subscriptions: [],
         resourceGroups: [],
-        resourceGroupSubscriptionId: ""
+        resourceGroupSubscriptionId: "",
+        azureTokenProvider: null,
+        azureTokenClientId: ""
       };
 
       const groupsHost = document.getElementById("groups");
@@ -715,6 +718,8 @@
         connectBrokerSaveButton.disabled = value || !engine || !embedded;
         connectPackageSaveButton.disabled = value || !engine || !embedded;
         startOverButton.disabled = value || !engine || !embedded;
+        const subscriptionButton = document.getElementById("loadSubscriptionsButton");
+        if (subscriptionButton) subscriptionButton.disabled = value || !engine || !embedded;
         const resourceGroupButton = document.getElementById("loadResourceGroupsButton");
         if (resourceGroupButton) resourceGroupButton.disabled = value || !engine || !embedded;
         document.body.setAttribute("aria-busy", value ? "true" : "false");
@@ -939,7 +944,15 @@
           error.className = "error";
           error.id = "error-" + field.key;
           error.hidden = true;
-          if (field.key === "resourceGroup") {
+          if (field.key === "subscriptionId" &&
+              state.setup?.mode?.mode === "direct") {
+            wrapper.append(
+              label,
+              createSubscriptionControl(target[field.key] || ""),
+              hint,
+              error
+            );
+          } else if (field.key === "resourceGroup") {
             wrapper.append(
               label,
               createResourceGroupControl(target[field.key] || ""),
@@ -954,24 +967,56 @@
             input.spellcheck = false;
             input.value = target[field.key] || "";
             input.dataset.key = field.key;
-            if (field.key === "subscriptionId") {
-              input.addEventListener("change", () => {
-                if (!state.resourceGroups.length ||
-                    input.value.trim() === state.resourceGroupSubscriptionId) {
-                  return;
-                }
-                const current = readFields();
-                current.subscriptionId = input.value.trim();
-                current.resourceGroup = "";
-                state.resourceGroups = [];
-                state.resourceGroupSubscriptionId = "";
-                renderFields(current);
-              });
-            }
             wrapper.append(label, input, hint, error);
           }
           targetFields.append(wrapper);
         });
+      }
+
+      function createSubscriptionControl(currentValue) {
+        const row = document.createElement("div");
+        row.className = "copy-row";
+        const select = document.createElement("select");
+        select.id = "field-subscriptionId";
+        select.dataset.key = "subscriptionId";
+
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Select an Azure subscription";
+        select.append(placeholder);
+
+        const subscriptions = Array.isArray(state.subscriptions) ? state.subscriptions : [];
+        subscriptions.forEach(subscription => {
+          const option = document.createElement("option");
+          option.value = subscription.id;
+          option.textContent = subscription.name + " (" + subscription.id + ")";
+          select.append(option);
+        });
+        if (currentValue && !subscriptions.some(subscription => subscription.id === currentValue)) {
+          const configured = document.createElement("option");
+          configured.value = currentValue;
+          configured.textContent = currentValue + " (configured)";
+          select.append(configured);
+        }
+        select.value = currentValue || "";
+        select.addEventListener("change", () => {
+          const current = readFields();
+          current.subscriptionId = select.value;
+          current.resourceGroup = "";
+          state.resourceGroups = [];
+          state.resourceGroupSubscriptionId = "";
+          renderFields(current);
+        });
+
+        const loadButton = document.createElement("button");
+        loadButton.className = "button";
+        loadButton.id = "loadSubscriptionsButton";
+        loadButton.type = "button";
+        loadButton.textContent = subscriptions.length ? "Reload" : "Load subscriptions";
+        loadButton.hidden = state.setup?.mode?.mode !== "direct";
+        loadButton.addEventListener("click", loadSubscriptions);
+        row.append(select, loadButton);
+        return row;
       }
 
       function createResourceGroupControl(currentValue) {
@@ -1049,6 +1094,7 @@
             : input.value.trim();
         });
         const merged = engine.mergeConfiguration(state.target || {}, values);
+        merged.subscriptionId = values.subscriptionId || "";
         merged.resourceGroup = values.resourceGroup || "";
         return merged;
       }
@@ -1084,7 +1130,11 @@
             "Azure sign-in needs an application (client) ID. Open 'Connect this environment' and register one first."
           );
         }
+        if (state.azureTokenProvider && state.azureTokenClientId === mode.clientId) {
+          return state.azureTokenProvider;
+        }
         const msal = window.msal;
+        let provider;
         if (msal && msal.PublicClientApplication) {
           const instance = new msal.PublicClientApplication({
             auth: {
@@ -1094,12 +1144,48 @@
             cache: { cacheLocation: "sessionStorage" }
           });
           if (instance.initialize) await instance.initialize();
-          return engine.createMsalTokenProvider({ instance });
+          provider = engine.createMsalTokenProvider({ instance });
+        } else {
+          provider = engine.createAuthClient({
+            clientId: mode.clientId,
+            redirectUri: engine.redirectUriFor(window.location.href)
+          });
         }
-        return engine.createAuthClient({
-          clientId: mode.clientId,
-          redirectUri: engine.redirectUriFor(window.location.href)
-        });
+        state.azureTokenProvider = provider;
+        state.azureTokenClientId = mode.clientId;
+        return provider;
+      }
+
+      async function loadSubscriptions() {
+        if (state.loading || !engine) return;
+        const mode = state.setup?.mode;
+        if (mode?.mode !== "direct") {
+          showNotice(
+            "Loading Azure subscriptions is available when this environment uses direct browser provisioning.",
+            "error"
+          );
+          return;
+        }
+
+        const current = readFields();
+        setBusy(true);
+        showNotice("Signing in to Azure and loading subscriptions…");
+        try {
+          const tokenProvider = await createDirectTokenProvider(mode);
+          const direct = engine.createDirectClient({ getToken: tokenProvider.getToken });
+          state.subscriptions = await direct.listSubscriptions();
+          renderFields(current);
+          showNotice(
+            state.subscriptions.length
+              ? state.subscriptions.length + " Azure subscription(s) loaded."
+              : "No enabled Azure subscriptions are available for this account.",
+            state.subscriptions.length ? "success" : "error"
+          );
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        } finally {
+          setBusy(false);
+        }
       }
 
       async function loadResourceGroups() {
@@ -1502,6 +1588,13 @@
         const context = await engine.loadSetupContext(dataverseClient(), getClientUrl(), window.location.href);
         state.setup = context;
         state.target = context.target;
+        if (state.azureTokenClientId &&
+            state.azureTokenClientId !== context.mode.clientId) {
+          state.azureTokenProvider?.dispose?.();
+          state.azureTokenProvider = null;
+          state.azureTokenClientId = "";
+          state.subscriptions = [];
+        }
         if (state.resourceGroupSubscriptionId &&
             state.resourceGroupSubscriptionId !== context.target.subscriptionId) {
           state.resourceGroups = [];
