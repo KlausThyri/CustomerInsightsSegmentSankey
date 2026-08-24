@@ -1035,12 +1035,12 @@ test("saveBrokerUrl validates and normalises the service url", async () => {
 
 // ------------------------------------------------------------- direct client
 
-test("direct client appends the ARM api-version and bearer token", async () => {
+test("direct client reuses an existing Resource Group and its Azure location", async () => {
   const fetchImpl = createFetchMock([
     {
       repeat: true,
       match: () => true,
-      respond: () => jsonResponse(200, { id: "/subscriptions/x" })
+      respond: () => jsonResponse(200, { id: "/subscriptions/x", location: "eastus" })
     }
   ]);
   const direct = engine.createDirectClient({
@@ -1048,11 +1048,43 @@ test("direct client appends the ARM api-version and bearer token", async () => {
     getToken: async (scope) => `token-for-${scope}`,
     timer: immediateTimer
   });
-  await direct.ensureResourceGroup("6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6", "rg-segment-preview", "westeurope");
+  const group = await direct.ensureResourceGroup(
+    "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6",
+    "rg-segment-preview",
+    "westeurope"
+  );
   const call = fetchImpl.calls[0];
   assert.match(call.url, /\/resourcegroups\/rg-segment-preview\?api-version=/);
   assert.equal(call.init.headers.Authorization, `Bearer token-for-${engine.ARM_SCOPE}`);
-  assert.deepEqual(JSON.parse(call.init.body), { location: "westeurope" });
+  assert.equal(call.init.method, "GET");
+  assert.equal(call.init.body, undefined);
+  assert.equal(group.location, "eastus");
+});
+
+test("direct client creates a missing Resource Group in the requested location", async () => {
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.init.method === "GET",
+      respond: () => jsonResponse(404, { error: { message: "not found" } })
+    },
+    {
+      match: (request) => request.init.method === "PUT",
+      respond: () => jsonResponse(200, { location: "westeurope" })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+  const group = await direct.ensureResourceGroup(
+    "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6",
+    "rg-new",
+    "westeurope"
+  );
+  assert.equal(fetchImpl.calls.length, 2);
+  assert.deepEqual(JSON.parse(fetchImpl.calls[1].init.body), { location: "westeurope" });
+  assert.equal(group.location, "westeurope");
 });
 
 test("direct client lists Azure resource groups alphabetically", async () => {
@@ -1899,7 +1931,7 @@ function directHarness(options = {}) {
     },
     async ensureResourceGroup(subscriptionId, resourceGroup) {
       calls.push({ kind: "ensureResourceGroup", subscriptionId, resourceGroup });
-      return true;
+      return { location: options.resourceGroupLocation || "westeurope" };
     },
     async deployTemplate(subscriptionId, resourceGroup, name, template, parameters) {
       calls.push({ kind: "deployTemplate", subscriptionId, resourceGroup, name, parameters });
@@ -2301,6 +2333,19 @@ test("the direct run has Azure copy the verified package into the customer's own
   assert.equal(step.status, "succeeded");
   assert.doesNotMatch(step.message, /\.ps1|powershell|script|manual/i);
   assert.equal(result.facts.packageBlobUrl, settings.WEBSITE_RUN_FROM_PACKAGE);
+});
+
+test("an existing Resource Group location overrides the default deployment region", async () => {
+  const direct = directHarness({ resourceGroupLocation: "eastus" });
+  const digest = await sha256Of(direct.packageBytes);
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: { apiPackageUrl: "https://contoso.example.com/a.zip " + digest }
+  });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  const deploy = direct.calls.find((call) => call.kind === "deployTemplate");
+  assert.equal(deploy.parameters.location, "eastus");
 });
 
 test("the browser never downloads the package itself", async () => {

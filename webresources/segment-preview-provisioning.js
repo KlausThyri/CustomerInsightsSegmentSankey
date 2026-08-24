@@ -2139,9 +2139,16 @@
     }
 
     async function ensureResourceGroup(subscriptionId, name, location) {
+      var path = "/subscriptions/" + subscriptionId + "/resourcegroups/" + encodeURIComponent(name);
+      try {
+        var existing = await arm("GET", path);
+        if (existing.body && existing.body.location) return existing.body;
+      } catch (error) {
+        if (error.status !== 404) throw error;
+      }
       var response = await arm(
         "PUT",
-        "/subscriptions/" + subscriptionId + "/resourcegroups/" + encodeURIComponent(name),
+        path,
         { location: location }
       );
       return response.body;
@@ -2851,14 +2858,21 @@
               pkg.hint
           );
         }
-        await direct.ensureResourceGroup(target.subscriptionId, target.resourceGroup, target.location);
+        var resourceGroup = await direct.ensureResourceGroup(
+          target.subscriptionId,
+          target.resourceGroup,
+          target.location
+        );
+        var deploymentLocation =
+          trimOrNull(resourceGroup && resourceGroup.location) || target.location;
+        target.location = deploymentLocation;
         var outputs = await direct.deployTemplate(
           target.subscriptionId,
           target.resourceGroup,
           "segment-preview",
           template,
           {
-            location: target.location,
+            location: deploymentLocation,
             webAppName: target.webAppName,
             fabricSqlServer: context.fabricSqlServer || "",
             fabricSqlDatabase: context.fabricSqlDatabase || "",

@@ -677,9 +677,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.3"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.3"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.3"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.4"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.4"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.4"></script>
 
   <script>
     (() => {
@@ -1569,6 +1569,12 @@
         const merged = engine.mergeConfiguration(state.target || {}, values);
         merged.subscriptionId = values.subscriptionId || "";
         merged.resourceGroup = values.resourceGroup || "";
+        const selectedResourceGroup = state.resourceGroups.find(
+          group => group.name === merged.resourceGroup
+        );
+        if (selectedResourceGroup?.location) {
+          merged.location = selectedResourceGroup.location;
+        }
         merged.fabricWorkspaceId = values.fabricWorkspaceId || "";
         merged.fabricServingLakehouseId = values.fabricServingLakehouseId || "";
         merged.fabricDataverseConnectionId = values.fabricDataverseConnectionId || "";
