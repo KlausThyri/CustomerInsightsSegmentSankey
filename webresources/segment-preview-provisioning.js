@@ -1182,6 +1182,24 @@
     } catch (error) {
       return null;
     }
+    var webResourceMarker = "/webresources/";
+    var markerIndex = parsed.pathname.toLowerCase().indexOf(webResourceMarker);
+    if (markerIndex >= 0) {
+      return (
+        parsed.origin +
+        "/WebResources/" +
+        parsed.pathname.substring(markerIndex + webResourceMarker.length)
+      );
+    }
+    if (
+      parsed.pathname.toLowerCase().endsWith("/main.aspx") &&
+      String(parsed.searchParams.get("pagetype") || "").toLowerCase() === "webresource"
+    ) {
+      var webResourceName = trimOrNull(parsed.searchParams.get("webresourceName"));
+      if (webResourceName) {
+        return parsed.origin + "/WebResources/" + webResourceName.replace(/^\/+/, "");
+      }
+    }
     return parsed.origin + parsed.pathname;
   }
 

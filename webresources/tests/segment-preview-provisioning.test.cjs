@@ -2829,6 +2829,24 @@ test("describeAppRegistration derives the redirect URI from the page URL", () =>
 test(registration.newAppUrl));
   assert.ok(/^https:\/\/entra\.microsoft\.com\//.
 test(registration.appListUrl));});
+test("redirectUriFor removes the Dynamics cache-busting web-resource path", () => {
+  assert.equal(
+    engine.redirectUriFor(
+      "https://contoso.crm4.dynamics.com/%7B639231564490000157%7D/webresources/klth_/SegmentSankey/segment-preview-setup.html"
+    ),
+    "https://contoso.crm4.dynamics.com/WebResources/klth_/SegmentSankey/segment-preview-setup.html"
+  );
+});
+
+test("redirectUriFor resolves a Unified Interface web-resource page", () => {
+  assert.equal(
+    engine.redirectUriFor(
+      "https://contoso.crm4.dynamics.com/main.aspx?appid=app-id&pagetype=webresource&webresourceName=klth_%2FSegmentSankey%2Fsegment-preview-setup.html"
+    ),
+    "https://contoso.crm4.dynamics.com/WebResources/klth_/SegmentSankey/segment-preview-setup.html"
+  );
+});
+
 test("describeAppRegistration lists exactly the delegated permissions the engine uses", () => {
   const registration = engine.describeAppRegistration("https://contoso.crm4.dynamics.com/x.html");
   const arm = registration.permissions.find((entry) => entry.api === "Azure Service Management");
