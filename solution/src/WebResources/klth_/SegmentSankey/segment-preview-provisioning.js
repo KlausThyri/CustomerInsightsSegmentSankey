@@ -2709,7 +2709,7 @@
         var mirrorId = target.fabricDataverseLakehouseId;
         if (!isGuid(mirrorId)) {
           addManual(
-            "A Dataverse mirror lakehouse id is still missing. This is separate from notebook publication: enable 'Link to Microsoft Fabric', enter the mirror lakehouse id under Advanced options, and install again so Dataverse tables can be linked into the serving lakehouse."
+            "A Dataverse mirror lakehouse id is still missing. In make.powerapps.com select this environment, open Tables > Analyze > Link to Microsoft Fabric, and mirror the required tables. Then open the created Lakehouse in Fabric, copy the GUID after /lakehouses/ from its URL into Advanced options > Dataverse mirror Lakehouse ID, and install again."
           );
           mirrorId = EMPTY_GUID;
         }

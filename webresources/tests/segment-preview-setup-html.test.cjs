@@ -65,7 +65,7 @@ test("the provisioning engine and Azure template are loaded before the inline lo
 test("all external setup scripts use the current cache-busting revision", () => {
   const external = externalScripts(html);
   assert.equal(external.length, 3);
-  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.2$/));
+  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.3$/));
 });
 
 test("every statically referenced element id exists in the markup", () => {
@@ -145,7 +145,14 @@ test("new installation exposes only subscription and resource group as required"
   assert.match(html, /id="targetAdvanced"[\s\S]*Advanced options \(optional\)/);
   assert.ok(code.includes("engine.applyAutomaticTarget(readFields())"));
   assert.equal((code.match(/requirement:\s*"required"/g) || []).length, 2);
-  assert.equal((code.match(/requirement:\s*"optional"/g) || []).length, 9);
+  assert.equal((code.match(/requirement:\s*"optional"/g) || []).length, 10);
+});
+
+test("the Dataverse mirror field explains Link to Microsoft Fabric end to end", () => {
+  assert.match(html, /Dataverse mirror Lakehouse ID/);
+  assert.match(html, /make\.powerapps\.com/);
+  assert.match(html, /Tables > Analyze > Link to Microsoft Fabric/);
+  assert.match(html, /GUID after \/lakehouses\//);
 });
 
 test("provisioning is presented and gated as a three-step workflow", () => {
