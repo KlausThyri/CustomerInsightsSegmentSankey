@@ -2732,7 +2732,7 @@
             });
             var updated = await direct.fabric(
               "POST",
-              workspacePath + "/notebooks/" + existing.id +
+              workspacePath + "/items/" + existing.id +
                 "/updateDefinition?updateMetadata=" + String(updateMetadata),
               { definition: definition }
             );
@@ -2750,7 +2750,7 @@
         } catch (error) {
           if (/insufficient scopes|does not have sufficient scopes/i.test(String(error && error.message))) {
             var permissionMessage =
-              "The tenant application is missing a Fabric notebook permission. In Microsoft Entra, add the delegated Power BI Service permission Item.ReadWrite.All (or Notebook.ReadWrite.All), grant admin consent, and confirm that your user has at least the Contributor role in this Fabric workspace. Then close and reopen this setup page before installing again.";
+              "Fabric rejected the notebook update for insufficient scopes. Confirm that the tenant application has the delegated Power BI Service permission Item.ReadWrite.All with admin consent and that your user has at least the Contributor role in this Fabric workspace. Then close and reopen this setup page before installing again.";
             addManual(permissionMessage);
             throw new Error(permissionMessage);
           }

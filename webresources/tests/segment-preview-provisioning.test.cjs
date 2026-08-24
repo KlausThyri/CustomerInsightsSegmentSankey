@@ -1848,7 +1848,7 @@ function directHarness(options = {}) {
       if (
         options.notebookScopeFails &&
         method === "POST" &&
-        (/\/notebooks$/.test(path) || /\/notebooks\/[^/]+\/updateDefinition/.test(path))
+        (/\/notebooks$/.test(path) || /\/items\/[^/]+\/updateDefinition/.test(path))
       ) {
         throw new Error("The caller does not have sufficient scopes to perform this operation");
       }
@@ -2142,7 +2142,7 @@ test("an existing notebook is updated in place instead of duplicated", async () 
   assert.ok(update, "the existing notebook must be updated");
   assert.equal(
     update.path,
-    `workspaces/${VALID_TARGET.fabricWorkspaceId}/notebooks/eeee0000-1111-2222-3333-444444444444/updateDefinition?updateMetadata=true`
+    `workspaces/${VALID_TARGET.fabricWorkspaceId}/items/eeee0000-1111-2222-3333-444444444444/updateDefinition?updateMetadata=true`
   );
   assert.ok(
     update.body.definition.parts.some((part) => part.path === ".platform"),
@@ -2170,7 +2170,7 @@ test("missing notebook scopes produce actionable Entra and Fabric guidance", asy
   assert.equal(result.ok, false);
   const step = result.results.find((entry) => entry.id === "fabric-notebook");
   assert.match(step.message, /Item\.ReadWrite\.All/);
-  assert.match(step.message, /grant admin consent/i);
+  assert.match(step.message, /admin consent/i);
   assert.match(step.message, /Contributor role/i);
   assert.match(step.message, /close and reopen/i);
 });
