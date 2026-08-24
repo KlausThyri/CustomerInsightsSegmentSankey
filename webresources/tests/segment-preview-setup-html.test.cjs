@@ -51,15 +51,21 @@ test("every inline script parses as JavaScript", () => {
 
 test("the provisioning engine and Azure template are loaded before the inline logic", () => {
   const external = externalScripts(html);
-  assert.ok(external.includes("segment-preview-provisioning.js"));
-  assert.ok(external.includes("segment-preview-azure-template.js"));
+  assert.ok(external.some((source) => source.startsWith("segment-preview-provisioning.js?rev=")));
+  assert.ok(external.some((source) => source.startsWith("segment-preview-azure-template.js?rev=")));
 
-  const engineAt = html.indexOf('src="segment-preview-provisioning.js"');
-  const templateAt = html.indexOf('src="segment-preview-azure-template.js"');
+  const engineAt = html.indexOf('src="segment-preview-provisioning.js?rev=');
+  const templateAt = html.indexOf('src="segment-preview-azure-template.js?rev=');
   const logicAt = html.indexOf("SegmentPreviewProvisioning");
   assert.ok(engineAt > -1 && templateAt > -1 && logicAt > -1);
   assert.ok(engineAt < logicAt, "the engine must be loaded before it is used");
   assert.ok(templateAt < logicAt, "the template must be loaded before it is used");
+});
+
+test("all external setup scripts use the current cache-busting revision", () => {
+  const external = externalScripts(html);
+  assert.equal(external.length, 3);
+  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.2$/));
 });
 
 test("every statically referenced element id exists in the markup", () => {

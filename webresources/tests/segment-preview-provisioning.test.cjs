@@ -1852,6 +1852,9 @@ function directHarness(options = {}) {
       ) {
         throw new Error("The caller does not have sufficient scopes to perform this operation");
       }
+      if (options.scheduleScopeFails && method === "POST" && /\/schedules$/.test(path)) {
+        throw new Error("The caller does not have sufficient scopes to perform this operation");
+      }
       if (method === "GET" && /\/lakehouses\/[^/]+$/.test(path)) {
         return {
           body: {
@@ -2172,6 +2175,17 @@ test("missing notebook scopes produce actionable Entra and Fabric guidance", asy
   assert.match(step.message, /Item\.ReadWrite\.All/);
   assert.match(step.message, /admin consent/i);
   assert.match(step.message, /Contributor role/i);
+  assert.match(step.message, /close and reopen/i);
+});
+
+test("missing schedule scope names Item.Execute.All and requires fresh consent", async () => {
+  const direct = directHarness({ scheduleScopeFails: true });
+  const { orchestrator } = directOrchestrator({ direct });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, false);
+  const step = result.results.find((entry) => entry.id === "fabric-notebook");
+  assert.match(step.message, /Item\.Execute\.All/);
+  assert.match(step.message, /grant admin consent/i);
   assert.match(step.message, /close and reopen/i);
 });
 
@@ -2826,12 +2840,13 @@ test("a failed shortcut installation fails the run instead of reporting a clean 
   assert.match(result.results[result.results.length - 1].message, /not reachable/);
 });
 
-test("installing shortcuts needs no extra delegated permission in the browser", () => {
+test("browser permissions cover Fabric provisioning and the notebook schedule", () => {
   const registration = engine.describeAppRegistration("https://contoso.crm4.dynamics.com/webresources/x.html");
   const fabric = registration.permissions.find((entry) => entry.api === "Power BI Service");
   assert.deepEqual(fabric.scopes, [
     "Workspace.ReadWrite.All",
     "Item.ReadWrite.All",
+    "Item.Execute.All",
     "Capacity.Read.All",
     "Connection.Read.All"
   ]);

@@ -1199,6 +1199,7 @@
   var FABRIC_DELEGATED_SCOPES = [
     "Workspace.ReadWrite.All",
     "Item.ReadWrite.All",
+    "Item.Execute.All",
     "Capacity.Read.All",
     "Connection.Read.All"
   ];
@@ -2708,7 +2709,7 @@
         var mirrorId = target.fabricDataverseLakehouseId;
         if (!isGuid(mirrorId)) {
           addManual(
-            "The bootstrap notebook is published without a Dataverse mirror lakehouse id. Enable 'Link to Microsoft Fabric', enter the mirror lakehouse id on this page and install again."
+            "A Dataverse mirror lakehouse id is still missing. This is separate from notebook publication: enable 'Link to Microsoft Fabric', enter the mirror lakehouse id under Advanced options, and install again so Dataverse tables can be linked into the serving lakehouse."
           );
           mirrorId = EMPTY_GUID;
         }
@@ -2776,10 +2777,20 @@
         if (schedules.length) {
           return "Bootstrap notebook '" + notebook.displayName + "' published; existing schedule kept.";
         }
-        await direct.fabric("POST", schedulePath, {
-          enabled: notebook.schedule.enabled !== false,
-          configuration: notebook.schedule.configuration
-        });
+        try {
+          await direct.fabric("POST", schedulePath, {
+            enabled: notebook.schedule.enabled !== false,
+            configuration: notebook.schedule.configuration
+          });
+        } catch (error) {
+          if (/insufficient scopes|does not have sufficient scopes/i.test(String(error && error.message))) {
+            var schedulePermissionMessage =
+              "Fabric rejected the notebook schedule for insufficient scopes. Add the delegated Power BI Service permission Item.Execute.All to the tenant application, grant admin consent, then close and reopen this setup page before installing again.";
+            addManual(schedulePermissionMessage);
+            throw new Error(schedulePermissionMessage);
+          }
+          throw error;
+        }
         return "Bootstrap notebook '" + notebook.displayName + "' published and scheduled.";
       },
 
