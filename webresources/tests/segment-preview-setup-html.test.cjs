@@ -135,11 +135,29 @@ test("required and optional fields are explicit and tenant resources use selecto
 
 test("new installation exposes only subscription and resource group as required", () => {
   const code = inlineScripts(html).join("\n");
-  assert.match(html, /select only the Azure subscription and Resource Group/i);
+  assert.match(html, /only two selections required for a new installation/i);
   assert.match(html, /id="targetAdvanced"[\s\S]*Advanced options \(optional\)/);
   assert.ok(code.includes("engine.applyAutomaticTarget(readFields())"));
   assert.equal((code.match(/requirement:\s*"required"/g) || []).length, 2);
   assert.equal((code.match(/requirement:\s*"optional"/g) || []).length, 9);
+});
+
+test("provisioning is presented and gated as a three-step workflow", () => {
+  const code = inlineScripts(html).join("\n");
+  [
+    "setupStepConnect",
+    "setupStepTarget",
+    "setupStepInstall",
+    "workflowNavConnect",
+    "workflowNavTarget",
+    "workflowNavInstall"
+  ].forEach(id => assert.ok(html.includes(`id="${id}"`), `${id} is missing`));
+  assert.match(html, /<h3 class="stage-title">Connect this environment<\/h3>/);
+  assert.match(html, /<h3 class="stage-title">Choose Subscription and Resource Group<\/h3>/);
+  assert.match(html, /<h3 class="stage-title">Install everything<\/h3>/);
+  assert.ok(code.includes("function updateWorkflow"));
+  assert.ok(code.includes('stage.setAttribute("aria-disabled", status === "locked"'));
+  assert.ok(code.includes("panelProvisionButton.disabled = state.loading || !targetReady"));
 });
 
 test("Azure and Fabric selectors are stacked and constrained within the setup grid", () => {

@@ -329,8 +329,8 @@
       line-height: 1.2;
       vertical-align: 1px;
     }
-    .requirement.required { background: #fde7e9; color: #a4262c; }
-    .requirement.conditional { background: #fff4ce; color: #8a6200; }
+    .requirement.required { background: var(--cp-accent-soft); color: var(--cp-danger); }
+    .requirement.conditional { background: var(--cp-surface-soft); color: var(--cp-warning); }
     .requirement.optional { background: var(--cp-surface-soft); color: var(--cp-text-soft); }
     .field input, .field select {
       min-height: 38px;
@@ -394,6 +394,62 @@
     .consent-item .role { color: var(--cp-text-soft); font-size: 11px; }
     .consent-item .guide { margin: 3px 0 0; color: var(--cp-text-muted); font-size: 12px; }
     .manual-list { margin: 12px 0 0; padding-left: 20px; color: var(--cp-text-muted); line-height: 1.5; }
+    .workflow-nav {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin: 20px 0;
+    }
+    .workflow-nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      border-bottom: 3px solid var(--cp-border);
+      padding: 10px 8px;
+      color: var(--cp-text-muted);
+    }
+    .workflow-nav-item.current { border-color: var(--cp-accent); color: var(--cp-text); }
+    .workflow-nav-item.complete { border-color: var(--cp-success); color: var(--cp-text); }
+    .workflow-number {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      flex: 0 0 auto;
+      border: 1px solid var(--cp-border-strong);
+      border-radius: 50%;
+      background: var(--cp-surface);
+      font-weight: 700;
+    }
+    .workflow-nav-item.current .workflow-number {
+      border-color: var(--cp-accent);
+      background: var(--cp-accent);
+      color: var(--cp-accent-fg);
+    }
+    .workflow-nav-item.complete .workflow-number {
+      border-color: var(--cp-success);
+      color: var(--cp-success);
+    }
+    .workflow-label { min-width: 0; font-weight: 650; }
+    .workflow-state { display: block; margin-top: 2px; font-size: 11px; font-weight: 400; }
+    .setup-flow { display: grid; gap: 16px; }
+    .setup-stage {
+      border: 1px solid var(--cp-border);
+      border-radius: 16px;
+      padding: 20px;
+      background: var(--cp-surface);
+      box-shadow: 0 0 2px var(--cp-border), 0 1px 2px var(--cp-border);
+    }
+    .setup-stage.current { border-color: var(--cp-accent); }
+    .setup-stage.complete { border-left: 4px solid var(--cp-success); }
+    .setup-stage.locked { opacity: .58; }
+    .setup-stage.locked .stage-content { pointer-events: none; }
+    .stage-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+    .stage-header .workflow-number { width: 32px; height: 32px; }
+    .stage-title { margin: 0; font-size: 18px; font-weight: 650; }
+    .stage-description { margin: 3px 0 0; color: var(--cp-text-muted); line-height: 1.45; }
+    .stage-lock { margin-left: auto; color: var(--cp-text-soft); font-size: 12px; }
     @media (max-width: 720px) {
       .page { width: min(100% - 24px, 1180px); padding-top: 24px; }
       .hero { flex-direction: column; }
@@ -403,6 +459,7 @@
       .cards { grid-template-columns: 1fr; }
       .step { grid-template-columns: 26px 1fr; }
       .step-phase { grid-column: 2; }
+      .workflow-nav { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -419,9 +476,9 @@
       </div>
       <div class="toolbar">
         <button class="button" id="refreshButton" type="button">Refresh status</button>
-        <button class="button" id="previewButton" type="button">Preview run</button>
+        <button class="button" id="previewButton" type="button" hidden>Preview run</button>
         <button class="button" id="startOverButton" type="button">Start over</button>
-        <button class="button primary" id="provisionButton" type="button">Install everything</button>
+        <button class="button primary" id="provisionButton" type="button" hidden>Install everything</button>
       </div>
     </header>
 
@@ -439,16 +496,39 @@
     <section class="panel" id="setupCenter" hidden>
       <h2>One-click installation</h2>
       <p class="lead">
-        Enter the target subscription and Fabric workspace once, then press
-        <strong>Install everything</strong>. The setup center generates the API key, deploys the
-        Azure resources, prepares Fabric, and writes the environment variables of this solution.
-        Everything it creates is owned by your own tenant and subscription; no data and no resource
-        leaves them.
+        Complete these three steps in order. Everything created by setup remains
+        in your own tenant and subscription.
       </p>
 
-      <div class="mode-banner" id="modeBanner" hidden></div>
+      <nav class="workflow-nav" aria-label="Installation steps">
+        <div class="workflow-nav-item current" id="workflowNavConnect">
+          <span class="workflow-number">1</span>
+          <span class="workflow-label">Connect<span class="workflow-state">Required first</span></span>
+        </div>
+        <div class="workflow-nav-item locked" id="workflowNavTarget">
+          <span class="workflow-number">2</span>
+          <span class="workflow-label">Choose Azure target<span class="workflow-state">Waiting for step 1</span></span>
+        </div>
+        <div class="workflow-nav-item locked" id="workflowNavInstall">
+          <span class="workflow-number">3</span>
+          <span class="workflow-label">Install<span class="workflow-state">Waiting for step 2</span></span>
+        </div>
+      </nav>
 
-      <details class="connect" id="connectPanel" hidden>
+      <div class="setup-flow">
+      <section class="setup-stage current" id="setupStepConnect">
+        <div class="stage-header">
+          <span class="workflow-number">1</span>
+          <div>
+            <h3 class="stage-title">Connect this environment</h3>
+            <p class="stage-description">Register the tenant application once so setup can access Azure and Fabric.</p>
+          </div>
+          <span class="stage-lock" id="connectStepState">Required first</span>
+        </div>
+        <div class="stage-content">
+        <div class="mode-banner" id="modeBanner" hidden></div>
+
+        <details class="connect" id="connectPanel" hidden>
         <summary id="connectSummary">Connect this environment</summary>
         <div class="connect-body">
           <p class="lead" id="connectLead">
@@ -532,16 +612,24 @@
             </div>
           </details>
         </div>
-      </details>
+        </details>
 
-      <div class="mode-banner" id="sessionBanner" hidden></div>
+        <div class="mode-banner" id="sessionBanner" hidden></div>
+        </div>
+      </section>
 
-      <p class="lead">
-        For a new installation, select only the Azure subscription and Resource Group.
-        Setup generates and discovers everything else automatically.
-      </p>
-      <div class="field-grid" id="targetFields"></div>
-      <details class="connect" id="targetAdvanced">
+      <section class="setup-stage locked" id="setupStepTarget" aria-disabled="true">
+        <div class="stage-header">
+          <span class="workflow-number">2</span>
+          <div>
+            <h3 class="stage-title">Choose Subscription and Resource Group</h3>
+            <p class="stage-description">These are the only two selections required for a new installation.</p>
+          </div>
+          <span class="stage-lock" id="targetStepState">Complete step 1 first</span>
+        </div>
+        <div class="stage-content">
+        <div class="field-grid" id="targetFields"></div>
+        <details class="connect" id="targetAdvanced">
         <summary>Advanced options (optional)</summary>
         <div class="connect-body">
           <p class="lead">
@@ -550,9 +638,21 @@
           </p>
           <div class="field-grid" id="advancedTargetFields"></div>
         </div>
-      </details>
+        </details>
+        </div>
+      </section>
 
-      <div class="panel-actions">
+      <section class="setup-stage locked" id="setupStepInstall" aria-disabled="true">
+        <div class="stage-header">
+          <span class="workflow-number">3</span>
+          <div>
+            <h3 class="stage-title">Install everything</h3>
+            <p class="stage-description">Review the preview or start the automated Azure and Fabric installation.</p>
+          </div>
+          <span class="stage-lock" id="installStepState">Complete step 2 first</span>
+        </div>
+        <div class="stage-content">
+        <div class="panel-actions">
         <button class="button primary" id="panelProvisionButton" type="button">Install everything</button>
         <button class="button" id="panelPreviewButton" type="button">Preview run</button>
         <button class="button" id="saveButton" type="button">Save settings</button>
@@ -566,6 +666,9 @@
         <summary>Interactive steps that Microsoft requires</summary>
         <ul class="consent-list" id="consentList" style="margin-top:12px"></ul>
       </details>
+        </div>
+      </section>
+      </div>
     </section>
 
     <div class="groups" id="groups">
@@ -652,6 +755,15 @@
       const modeBanner = document.getElementById("modeBanner");
       const targetFields = document.getElementById("targetFields");
       const advancedTargetFields = document.getElementById("advancedTargetFields");
+      const setupStepConnect = document.getElementById("setupStepConnect");
+      const setupStepTarget = document.getElementById("setupStepTarget");
+      const setupStepInstall = document.getElementById("setupStepInstall");
+      const workflowNavConnect = document.getElementById("workflowNavConnect");
+      const workflowNavTarget = document.getElementById("workflowNavTarget");
+      const workflowNavInstall = document.getElementById("workflowNavInstall");
+      const connectStepState = document.getElementById("connectStepState");
+      const targetStepState = document.getElementById("targetStepState");
+      const installStepState = document.getElementById("installStepState");
       const progressList = document.getElementById("progressList");
       const manualList = document.getElementById("manualList");
       const consentList = document.getElementById("consentList");
@@ -778,6 +890,7 @@
         const resourceGroupButton = document.getElementById("loadResourceGroupsButton");
         if (resourceGroupButton) resourceGroupButton.disabled = value || !engine || !embedded;
         document.body.setAttribute("aria-busy", value ? "true" : "false");
+        if (state.setup) updateWorkflow(state.target);
       }
 
       function showNotice(message, kind) {
@@ -813,6 +926,7 @@
             ? new Date(result.checkedAt).toLocaleString()
             : ""
         ].filter(Boolean).join(" · ");
+        updateWorkflow(state.target);
 
         const actionable = components.some(
           item => item.action === "provision-shortcuts"
@@ -984,6 +1098,55 @@
         modeBanner.append(container);
       }
 
+      function setWorkflowItem(stage, nav, status, message) {
+        stage.classList.remove("current", "complete", "locked");
+        nav.classList.remove("current", "complete", "locked");
+        stage.classList.add(status);
+        nav.classList.add(status);
+        stage.setAttribute("aria-disabled", status === "locked" ? "true" : "false");
+        nav.querySelector(".workflow-state").textContent = message;
+      }
+
+      function updateWorkflow(target) {
+        if (!engine) return;
+        const connected = Boolean(state.setup?.mode?.automated);
+        const values = engine.applyAutomaticTarget(target || state.target || {});
+        const targetReady =
+          connected &&
+          engine.isGuid(values.subscriptionId) &&
+          engine.isResourceGroupName(values.resourceGroup);
+        const installed = state.result?.overallState === "ready";
+
+        setWorkflowItem(
+          setupStepConnect,
+          workflowNavConnect,
+          connected ? "complete" : "current",
+          connected ? "Connected" : "Required first"
+        );
+        connectStepState.textContent = connected ? "Complete" : "Required first";
+
+        setWorkflowItem(
+          setupStepTarget,
+          workflowNavTarget,
+          !connected ? "locked" : targetReady ? "complete" : "current",
+          !connected ? "Waiting for step 1" : targetReady ? "Target selected" : "Select both values"
+        );
+        targetStepState.textContent =
+          !connected ? "Complete step 1 first" : targetReady ? "Complete" : "Required";
+
+        setWorkflowItem(
+          setupStepInstall,
+          workflowNavInstall,
+          !targetReady ? "locked" : installed ? "complete" : "current",
+          !targetReady ? "Waiting for step 2" : installed ? "Installed" : "Ready to install"
+        );
+        installStepState.textContent =
+          !targetReady ? "Complete step 2 first" : installed ? "Complete" : "Ready";
+        panelProvisionButton.disabled = state.loading || !targetReady;
+        panelPreviewButton.disabled = state.loading || !targetReady;
+        saveButton.disabled = state.loading || !connected;
+      }
+
       function renderFields(target) {
         targetFields.replaceChildren();
         advancedTargetFields.replaceChildren();
@@ -1080,6 +1243,7 @@
               : advancedTargetFields;
           host.append(wrapper);
         });
+        updateWorkflow(target);
       }
 
       function createSubscriptionControl(currentValue) {
@@ -1184,6 +1348,7 @@
           newName.hidden = select.value !== "__new__";
           if (!newName.hidden) {
             newName.focus();
+            updateWorkflow(readFields());
             return;
           }
           const selected = groups.find(group => group.name === select.value);
@@ -1191,7 +1356,9 @@
             const location = document.getElementById("field-location");
             if (location) location.value = selected.location;
           }
+          updateWorkflow(readFields());
         });
+        newName.addEventListener("input", () => updateWorkflow(readFields()));
         container.append(row, newName);
         return container;
       }
@@ -1751,8 +1918,8 @@
         connectPanel.hidden = false;
         connectPanel.open = !mode.automated;
         connectSummary.textContent = mode.automated
-          ? "Connect this environment (already connected)"
-          : "Connect this environment (required once)";
+          ? "Connection details (already connected)"
+          : "Open connection instructions";
         connectLead.textContent = mode.mode === "broker" && broker.configured
           ? broker.summary
           : "Installing uses a single-page application that you register once in your own tenant. This page shows the exact redirect URI and permissions and opens the Microsoft Entra admin center for you. Every resource the installation creates stays in your tenant and your subscription, and nothing is installed on your computer.";
