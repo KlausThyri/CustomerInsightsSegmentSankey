@@ -1272,6 +1272,7 @@
         "Under Redirect URI choose Single-page application (SPA) and paste the URI shown on this page.",
         "Open API permissions and add the delegated permissions listed on this page.",
         "Press Grant admin consent for the tenant.",
+        "Confirm that the signed-in administrator has at least the Contributor role in the target Fabric workspace.",
         "Copy the Application (client) ID back into this page and press Save."
       ]
     };
@@ -2724,26 +2725,36 @@
         })[0];
 
         var notebookId;
-        if (existing) {
-          var updateMetadata = definition.parts.some(function (part) {
-            return part.path === ".platform";
-          });
-          var updated = await direct.fabric(
-            "POST",
-            workspacePath + "/notebooks/" + existing.id +
-              "/updateDefinition?updateMetadata=" + String(updateMetadata),
-            { definition: definition }
-          );
-          await direct.fabricResult(updated);
-          notebookId = existing.id;
-        } else {
-          var created = await direct.fabric("POST", workspacePath + "/notebooks", {
-            displayName: notebook.displayName,
-            description: notebook.description || "",
-            definition: definition
-          });
-          var item = await direct.fabricResult(created);
-          notebookId = item && item.id;
+        try {
+          if (existing) {
+            var updateMetadata = definition.parts.some(function (part) {
+              return part.path === ".platform";
+            });
+            var updated = await direct.fabric(
+              "POST",
+              workspacePath + "/notebooks/" + existing.id +
+                "/updateDefinition?updateMetadata=" + String(updateMetadata),
+              { definition: definition }
+            );
+            await direct.fabricResult(updated);
+            notebookId = existing.id;
+          } else {
+            var created = await direct.fabric("POST", workspacePath + "/notebooks", {
+              displayName: notebook.displayName,
+              description: notebook.description || "",
+              definition: definition
+            });
+            var item = await direct.fabricResult(created);
+            notebookId = item && item.id;
+          }
+        } catch (error) {
+          if (/insufficient scopes|does not have sufficient scopes/i.test(String(error && error.message))) {
+            var permissionMessage =
+              "The tenant application is missing a Fabric notebook permission. In Microsoft Entra, add the delegated Power BI Service permission Item.ReadWrite.All (or Notebook.ReadWrite.All), grant admin consent, and confirm that your user has at least the Contributor role in this Fabric workspace. Then close and reopen this setup page before installing again.";
+            addManual(permissionMessage);
+            throw new Error(permissionMessage);
+          }
+          throw error;
         }
         if (!notebookId) {
           throw new Error("Fabric did not return an id for the bootstrap notebook.");

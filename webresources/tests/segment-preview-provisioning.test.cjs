@@ -1845,6 +1845,13 @@ function directHarness(options = {}) {
     },
     async fabric(method, path, body) {
       calls.push({ kind: "fabric", method, path, body });
+      if (
+        options.notebookScopeFails &&
+        method === "POST" &&
+        (/\/notebooks$/.test(path) || /\/notebooks\/[^/]+\/updateDefinition/.test(path))
+      ) {
+        throw new Error("The caller does not have sufficient scopes to perform this operation");
+      }
       if (method === "GET" && /\/lakehouses\/[^/]+$/.test(path)) {
         return {
           body: {
@@ -2127,6 +2134,7 @@ test("an existing notebook is updated in place instead of duplicated", async () 
     notebooks: [{ id: "eeee0000-1111-2222-3333-444444444444", displayName: payload.notebook.displayName }],
     schedules: [{ id: "sched-1" }]
   });
+
   const { orchestrator } = directOrchestrator({ direct });
   const result = await orchestrator.run();
   assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
@@ -2150,6 +2158,21 @@ test("an existing notebook is updated in place instead of duplicated", async () 
     false,
     "an existing schedule must be kept"
   );
+});
+
+test("missing notebook scopes produce actionable Entra and Fabric guidance", async () => {
+  const direct = directHarness({
+    notebooks: [{ id: "eeee0000-1111-2222-3333-444444444444", displayName: payload.notebook.displayName }],
+    notebookScopeFails: true
+  });
+  const { orchestrator } = directOrchestrator({ direct });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, false);
+  const step = result.results.find((entry) => entry.id === "fabric-notebook");
+  assert.match(step.message, /Item\.ReadWrite\.All/);
+  assert.match(step.message, /grant admin consent/i);
+  assert.match(step.message, /Contributor role/i);
+  assert.match(step.message, /close and reopen/i);
 });
 
 test("the notebook step never tells the administrator to run a script", async () => {
