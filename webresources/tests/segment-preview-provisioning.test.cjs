@@ -1162,6 +1162,44 @@ test("direct client lists enabled Azure subscriptions alphabetically", async () 
   assert.equal(fetchImpl.calls.length, 2);
 });
 
+test("direct client lists active Fabric capacities alphabetically", async () => {
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.url.endsWith("/capacities"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            { id: "c2", displayName: "Zeta", sku: "F2", state: "Active", region: "West Europe" },
+            { id: "c3", displayName: "Paused", sku: "F4", state: "Inactive", region: "North Europe" }
+          ],
+          continuationUri: "https://api.fabric.microsoft.com/v1/capacities?continuationToken=abc"
+        })
+    },
+    {
+      match: (request) => request.url.endsWith("/capacities?continuationToken=abc"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            { id: "c1", displayName: "Alpha", sku: "F8", state: "Active", region: "North Europe" }
+          ]
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  const capacities = await direct.listCapacities();
+
+  assert.deepEqual(capacities, [
+    { id: "c1", name: "Alpha", sku: "F8", state: "Active", region: "North Europe" },
+    { id: "c2", name: "Zeta", sku: "F2", state: "Active", region: "West Europe" }
+  ]);
+  assert.equal(fetchImpl.calls.length, 2);
+});
+
 test("direct client follows Fabric continuation links", async () => {
   const fetchImpl = createFetchMock([
     {

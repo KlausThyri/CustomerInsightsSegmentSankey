@@ -2000,6 +2000,26 @@
         });
     }
 
+    async function listCapacities() {
+      var capacities = await fabricCollection("capacities");
+      return capacities
+        .map(function (capacity) {
+          return {
+            id: capacity.id || "",
+            name: capacity.displayName || capacity.id || "",
+            sku: capacity.sku || "",
+            state: capacity.state || "",
+            region: capacity.region || ""
+          };
+        })
+        .filter(function (capacity) {
+          return capacity.id && (!capacity.state || capacity.state === "Active");
+        })
+        .sort(function (left, right) {
+          return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+        });
+    }
+
     async function ensureResourceGroup(subscriptionId, name, location) {
       var response = await arm(
         "PUT",
@@ -2181,6 +2201,7 @@
       fabricResult: fabricResult,
       fabricCollection: fabricCollection,
       listSubscriptions: listSubscriptions,
+      listCapacities: listCapacities,
       listResourceGroups: listResourceGroups,
       ensureResourceGroup: ensureResourceGroup,
       deployTemplate: deployTemplate,

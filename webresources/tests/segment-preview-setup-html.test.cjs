@@ -107,12 +107,21 @@ test("the setup center loads tenant subscriptions into a selector", () => {
   assert.ok(code.includes("state.azureTokenProvider?.dispose?.()"));
 });
 
-test("Azure selectors are stacked and constrained within the setup grid", () => {
+test("the setup center loads active Fabric capacities into a selector", () => {
+  const code = inlineScripts(html).join("\n");
+  assert.ok(code.includes('"Select a Fabric capacity"'));
+  assert.ok(code.includes("direct.listCapacities()"));
+  assert.ok(code.includes('"Load capacities"'));
+  assert.ok(code.includes('loadButton.id = "loadFabricCapacitiesButton"'));
+  assert.ok(code.includes('state.setup?.mode?.mode === "direct"'));
+});
+
+test("Azure and Fabric selectors are stacked and constrained within the setup grid", () => {
   const code = inlineScripts(html).join("\n");
   assert.match(html, /\.selector-field\s*\{[^}]*grid-column:\s*1\s*\/\s*-1[^}]*width:\s*min\(100%,\s*560px\)/);
   assert.match(html, /\.selector-actions select\s*\{[^}]*width:\s*100%[^}]*min-width:\s*0/);
   assert.ok(code.includes('? " selector-field"'));
-  assert.equal((code.match(/row\.className = "selector-actions"/g) || []).length, 2);
+  assert.equal((code.match(/row\.className = "selector-actions"/g) || []).length, 3);
 });
 
 test("the setup center never renders a raw API key", () => {

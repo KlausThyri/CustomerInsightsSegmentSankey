@@ -599,6 +599,7 @@
         setup: null,
         target: null,
         subscriptions: [],
+        capacities: [],
         resourceGroups: [],
         resourceGroupSubscriptionId: "",
         azureTokenProvider: null,
@@ -730,6 +731,8 @@
         startOverButton.disabled = value || !engine || !embedded;
         const subscriptionButton = document.getElementById("loadSubscriptionsButton");
         if (subscriptionButton) subscriptionButton.disabled = value || !engine || !embedded;
+        const capacityButton = document.getElementById("loadFabricCapacitiesButton");
+        if (capacityButton) capacityButton.disabled = value || !engine || !embedded;
         const resourceGroupButton = document.getElementById("loadResourceGroupsButton");
         if (resourceGroupButton) resourceGroupButton.disabled = value || !engine || !embedded;
         document.body.setAttribute("aria-busy", value ? "true" : "false");
@@ -945,7 +948,9 @@
           const wrapper = document.createElement("div");
           wrapper.className =
             "field" +
-            (field.key === "subscriptionId" || field.key === "resourceGroup"
+            (field.key === "subscriptionId" ||
+             field.key === "resourceGroup" ||
+             field.key === "fabricCapacityId"
               ? " selector-field"
               : "");
           const label = document.createElement("label");
@@ -970,6 +975,14 @@
             wrapper.append(
               label,
               createResourceGroupControl(target[field.key] || ""),
+              hint,
+              error
+            );
+          } else if (field.key === "fabricCapacityId" &&
+                     state.setup?.mode?.mode === "direct") {
+            wrapper.append(
+              label,
+              createCapacityControl(target[field.key] || ""),
               hint,
               error
             );
@@ -1100,6 +1113,44 @@
         return container;
       }
 
+      function createCapacityControl(currentValue) {
+        const row = document.createElement("div");
+        row.className = "selector-actions";
+        const select = document.createElement("select");
+        select.id = "field-fabricCapacityId";
+        select.dataset.key = "fabricCapacityId";
+
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Select a Fabric capacity";
+        select.append(placeholder);
+
+        const capacities = Array.isArray(state.capacities) ? state.capacities : [];
+        capacities.forEach(capacity => {
+          const option = document.createElement("option");
+          option.value = capacity.id;
+          const details = [capacity.sku, capacity.region].filter(Boolean).join(", ");
+          option.textContent = capacity.name + (details ? " (" + details + ")" : "");
+          select.append(option);
+        });
+        if (currentValue && !capacities.some(capacity => capacity.id === currentValue)) {
+          const configured = document.createElement("option");
+          configured.value = currentValue;
+          configured.textContent = currentValue + " (configured)";
+          select.append(configured);
+        }
+        select.value = currentValue || "";
+
+        const loadButton = document.createElement("button");
+        loadButton.className = "button";
+        loadButton.id = "loadFabricCapacitiesButton";
+        loadButton.type = "button";
+        loadButton.textContent = capacities.length ? "Reload" : "Load capacities";
+        loadButton.addEventListener("click", loadCapacities);
+        row.append(select, loadButton);
+        return row;
+      }
+
       function readFields() {
         const values = {};
         targetFields.querySelectorAll("[data-key]").forEach(input => {
@@ -1195,6 +1246,38 @@
               ? state.subscriptions.length + " Azure subscription(s) loaded."
               : "No enabled Azure subscriptions are available for this account.",
             state.subscriptions.length ? "success" : "error"
+          );
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function loadCapacities() {
+        if (state.loading || !engine) return;
+        const mode = state.setup?.mode;
+        if (mode?.mode !== "direct") {
+          showNotice(
+            "Loading Fabric capacities is available when this environment uses direct browser provisioning.",
+            "error"
+          );
+          return;
+        }
+
+        const current = readFields();
+        setBusy(true);
+        showNotice("Signing in to Fabric and loading capacities…");
+        try {
+          const tokenProvider = await createDirectTokenProvider(mode);
+          const direct = engine.createDirectClient({ getToken: tokenProvider.getToken });
+          state.capacities = await direct.listCapacities();
+          renderFields(current);
+          showNotice(
+            state.capacities.length
+              ? state.capacities.length + " active Fabric capacity/capacities loaded."
+              : "No active Fabric capacities are available for this account.",
+            state.capacities.length ? "success" : "error"
           );
         } catch (error) {
           showNotice(error.message || String(error), "error");
@@ -1609,6 +1692,7 @@
           state.azureTokenProvider = null;
           state.azureTokenClientId = "";
           state.subscriptions = [];
+          state.capacities = [];
         }
         if (state.resourceGroupSubscriptionId &&
             state.resourceGroupSubscriptionId !== context.target.subscriptionId) {

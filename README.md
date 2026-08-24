@@ -38,7 +38,9 @@ installed on your computer.**
 4. Press **Load subscriptions**, select an enabled subscription from your Azure
    tenant, and then select an existing Resource Group or choose
    **Create a new resource group**.
-5. Press **Preview** to see the plan and the consent checklist, then
+5. If a new Fabric workspace is needed, press **Load capacities** and select
+   one of the active capacities available to your account.
+6. Press **Preview** to see the plan and the consent checklist, then
    **Install everything** and sign in once when the pop-up appears.
 
 The Setup Center deploys the Azure infrastructure and API, discovers or creates
