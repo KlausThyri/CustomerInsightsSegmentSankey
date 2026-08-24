@@ -43,6 +43,10 @@ installed on your computer.**
 6. Press **Preview** to see the plan and the consent checklist, then
    **Install everything** and sign in once when the pop-up appears.
 
+Every setup field is marked **Required**, **Required when creating new**, or
+**Optional**. Tenant resources are selected from dropdowns; free text is used
+only for new resource names and technical configuration values.
+
 The Setup Center deploys the Azure infrastructure and API, discovers or creates
 the Fabric workspace, serving lakehouse, bootstrap notebook and workspace
 permissions, generates the server-side API key, writes the Dataverse environment

@@ -922,7 +922,19 @@
           message: "A Fabric capacity id is required to create a new workspace."
         });
       }
-      ["fabricCapacityId", "fabricServingLakehouseId", "fabricDataverseLakehouseId", "fabricDataverseConnectionId"].forEach(
+      if (!isGuid(input.fabricDataverseConnectionId)) {
+        errors.push({
+          field: "fabricDataverseConnectionId",
+          message: "Select the Fabric Dataverse connection for this environment."
+        });
+      }
+      if (isBlank(input.fabricDataverseDeltaFolder)) {
+        errors.push({
+          field: "fabricDataverseDeltaFolder",
+          message: "Enter the Dataverse delta folder."
+        });
+      }
+      ["fabricCapacityId", "fabricServingLakehouseId", "fabricDataverseLakehouseId"].forEach(
         function (key) {
           if (!isBlank(input[key]) && !isGuid(input[key])) {
             errors.push({ field: key, message: "This value must be a GUID." });
@@ -2020,6 +2032,86 @@
         });
     }
 
+    async function listLocations(subscriptionId) {
+      var response = await arm(
+        "GET",
+        "/subscriptions/" + subscriptionId + "/locations",
+        undefined,
+        "2022-12-01"
+      );
+      return ((response.body && response.body.value) || [])
+        .filter(function (location) {
+          return location.name && (!location.metadata || location.metadata.regionType === "Physical");
+        })
+        .map(function (location) {
+          return {
+            name: location.name,
+            displayName: location.displayName || location.name,
+            regionalDisplayName: location.regionalDisplayName || "",
+            recommended:
+              Boolean(location.metadata) && location.metadata.regionCategory === "Recommended"
+          };
+        })
+        .sort(function (left, right) {
+          if (left.recommended !== right.recommended) return left.recommended ? -1 : 1;
+          return left.displayName.localeCompare(right.displayName, undefined, { sensitivity: "base" });
+        });
+    }
+
+    async function listWorkspaces() {
+      return (await fabricCollection("workspaces"))
+        .filter(function (workspace) {
+          return workspace.id && workspace.type !== "Personal";
+        })
+        .map(function (workspace) {
+          return {
+            id: workspace.id,
+            name: workspace.displayName || workspace.id,
+            capacityId: workspace.capacityId || "",
+            region: workspace.capacityRegion || ""
+          };
+        })
+        .sort(function (left, right) {
+          return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+        });
+    }
+
+    async function listLakehouses(workspaceId) {
+      return (await fabricCollection("workspaces/" + workspaceId + "/lakehouses"))
+        .filter(function (lakehouse) {
+          return lakehouse.id;
+        })
+        .map(function (lakehouse) {
+          return { id: lakehouse.id, name: lakehouse.displayName || lakehouse.id };
+        })
+        .sort(function (left, right) {
+          return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+        });
+    }
+
+    async function listDataverseConnections(environmentUrl) {
+      var expected = environmentDomain(environmentUrl);
+      return (await fabricCollection("connections"))
+        .filter(function (connection) {
+          var details = connection.connectionDetails || {};
+          if (!connection.id || details.type !== "CommonDataService") return false;
+          if (!expected) return true;
+          var path = String(details.path || "").replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+          return path.toLowerCase() === expected.toLowerCase();
+        })
+        .map(function (connection) {
+          return {
+            id: connection.id,
+            name: connection.displayName || connection.id,
+            credentialType:
+              (connection.credentialDetails && connection.credentialDetails.credentialType) || ""
+          };
+        })
+        .sort(function (left, right) {
+          return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+        });
+    }
+
     async function ensureResourceGroup(subscriptionId, name, location) {
       var response = await arm(
         "PUT",
@@ -2202,6 +2294,10 @@
       fabricCollection: fabricCollection,
       listSubscriptions: listSubscriptions,
       listCapacities: listCapacities,
+      listLocations: listLocations,
+      listWorkspaces: listWorkspaces,
+      listLakehouses: listLakehouses,
+      listDataverseConnections: listDataverseConnections,
       listResourceGroups: listResourceGroups,
       ensureResourceGroup: ensureResourceGroup,
       deployTemplate: deployTemplate,

@@ -319,6 +319,19 @@
     .selector-actions { align-items: flex-start; }
     .selector-actions select { width: 100%; min-width: 0; }
     .field label { color: var(--cp-text-muted); font-size: 12px; font-weight: 600; }
+    .requirement {
+      display: inline-block;
+      margin-left: 6px;
+      border-radius: 999px;
+      padding: 2px 7px;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1.2;
+      vertical-align: 1px;
+    }
+    .requirement.required { background: #fde7e9; color: #a4262c; }
+    .requirement.conditional { background: #fff4ce; color: #8a6200; }
+    .requirement.optional { background: var(--cp-surface-soft); color: var(--cp-text-soft); }
     .field input, .field select {
       min-height: 38px;
       border: 1px solid var(--cp-border-strong);
@@ -600,6 +613,11 @@
         target: null,
         subscriptions: [],
         capacities: [],
+        locations: [],
+        workspaces: [],
+        lakehouses: [],
+        connections: [],
+        fabricWorkspaceId: "",
         resourceGroups: [],
         resourceGroupSubscriptionId: "",
         azureTokenProvider: null,
@@ -658,17 +676,17 @@
       const setupPayload = window.SegmentPreviewPayload || null;
 
       const FIELDS = [
-        { key: "subscriptionId", label: "Azure subscription id", hint: "GUID of the subscription that will host the API." },
-        { key: "resourceGroup", label: "Resource group", hint: "Created if it does not exist." },
-        { key: "location", label: "Azure region", hint: "For example westeurope." },
-        { key: "webAppName", label: "Web App name", hint: "Becomes <name>.azurewebsites.net and must be globally unique." },
-        { key: "fabricWorkspaceId", label: "Fabric workspace id", hint: "Leave blank to create a workspace from the name and capacity below." },
-        { key: "fabricWorkspaceName", label: "Fabric workspace name", hint: "Used when no workspace id is supplied." },
-        { key: "fabricCapacityId", label: "Fabric capacity id", hint: "Required only when the workspace must be created." },
-        { key: "fabricServingLakehouseId", label: "Serving lakehouse id", hint: "Leave blank to create the serving lakehouse." },
-        { key: "fabricDataverseConnectionId", label: "Fabric Dataverse connection id", hint: "Created interactively in the Fabric portal." },
-        { key: "fabricDataverseDeltaFolder", label: "Dataverse delta folder", hint: "Folder of the Dataverse mirror inside the lakehouse." },
-        { key: "requiredDataverseTables", label: "Required Dataverse tables", hint: "Comma separated list validated during setup." }
+        { key: "subscriptionId", label: "Azure subscription", requirement: "required", hint: "Hosts the Azure API." },
+        { key: "resourceGroup", label: "Resource group", requirement: "required", hint: "Select an existing group or create a new one." },
+        { key: "location", label: "Azure region", requirement: "required", hint: "Region for newly created Azure resources." },
+        { key: "webAppName", label: "Web App name", requirement: "required", hint: "Must be globally unique; becomes <name>.azurewebsites.net." },
+        { key: "fabricWorkspaceId", label: "Fabric workspace", requirement: "required", hint: "Select an existing workspace or create a new one." },
+        { key: "fabricWorkspaceName", label: "New Fabric workspace name", requirement: "conditional", hint: "Required only when creating a new workspace." },
+        { key: "fabricCapacityId", label: "Fabric capacity", requirement: "conditional", hint: "Required only when creating a new workspace." },
+        { key: "fabricServingLakehouseId", label: "Serving lakehouse", requirement: "optional", hint: "Select an existing lakehouse or let setup create one." },
+        { key: "fabricDataverseConnectionId", label: "Fabric Dataverse connection", requirement: "required", hint: "Connection to this Dataverse environment." },
+        { key: "fabricDataverseDeltaFolder", label: "Dataverse delta folder", requirement: "required", hint: "Folder of the Dataverse mirror inside the lakehouse." },
+        { key: "requiredDataverseTables", label: "Required Dataverse tables", requirement: "required", hint: "Comma-separated list validated during setup." }
       ];
 
       function getXrm() {
@@ -733,6 +751,15 @@
         if (subscriptionButton) subscriptionButton.disabled = value || !engine || !embedded;
         const capacityButton = document.getElementById("loadFabricCapacitiesButton");
         if (capacityButton) capacityButton.disabled = value || !engine || !embedded;
+        [
+          "loadAzureLocationsButton",
+          "loadFabricWorkspacesButton",
+          "loadFabricLakehousesButton",
+          "loadFabricConnectionsButton"
+        ].forEach(id => {
+          const button = document.getElementById(id);
+          if (button) button.disabled = value || !engine || !embedded;
+        });
         const resourceGroupButton = document.getElementById("loadResourceGroupsButton");
         if (resourceGroupButton) resourceGroupButton.disabled = value || !engine || !embedded;
         document.body.setAttribute("aria-busy", value ? "true" : "false");
@@ -950,12 +977,25 @@
             "field" +
             (field.key === "subscriptionId" ||
              field.key === "resourceGroup" ||
-             field.key === "fabricCapacityId"
+             field.key === "location" ||
+             field.key === "fabricWorkspaceId" ||
+             field.key === "fabricCapacityId" ||
+             field.key === "fabricServingLakehouseId" ||
+             field.key === "fabricDataverseConnectionId"
               ? " selector-field"
               : "");
           const label = document.createElement("label");
           label.setAttribute("for", "field-" + field.key);
-          label.textContent = field.label;
+          label.append(document.createTextNode(field.label));
+          const requirement = document.createElement("span");
+          requirement.className = "requirement " + field.requirement;
+          requirement.textContent =
+            field.requirement === "required"
+              ? "Required"
+              : field.requirement === "conditional"
+                ? "Required when creating new"
+                : "Optional";
+          label.append(requirement);
           const hint = document.createElement("p");
           hint.className = "hint";
           hint.textContent = field.hint;
@@ -983,6 +1023,28 @@
             wrapper.append(
               label,
               createCapacityControl(target[field.key] || ""),
+              hint,
+              error
+            );
+          } else if (field.key === "location" &&
+                     state.setup?.mode?.mode === "direct") {
+            wrapper.append(label, createLocationControl(target[field.key] || ""), hint, error);
+          } else if (field.key === "fabricWorkspaceId" &&
+                     state.setup?.mode?.mode === "direct") {
+            wrapper.append(label, createWorkspaceControl(target), hint, error);
+          } else if (field.key === "fabricServingLakehouseId" &&
+                     state.setup?.mode?.mode === "direct") {
+            wrapper.append(
+              label,
+              createLakehouseControl(target[field.key] || ""),
+              hint,
+              error
+            );
+          } else if (field.key === "fabricDataverseConnectionId" &&
+                     state.setup?.mode?.mode === "direct") {
+            wrapper.append(
+              label,
+              createConnectionControl(target[field.key] || ""),
               hint,
               error
             );
@@ -1032,6 +1094,7 @@
           current.resourceGroup = "";
           state.resourceGroups = [];
           state.resourceGroupSubscriptionId = "";
+          state.locations = [];
           renderFields(current);
         });
 
@@ -1151,17 +1214,175 @@
         return row;
       }
 
+      function createLocationControl(currentValue) {
+        const row = document.createElement("div");
+        row.className = "selector-actions";
+        const select = document.createElement("select");
+        select.id = "field-location";
+        select.dataset.key = "location";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Select an Azure region";
+        select.append(placeholder);
+        state.locations.forEach(location => {
+          const option = document.createElement("option");
+          option.value = location.name;
+          option.textContent =
+            (location.recommended ? "Recommended · " : "") +
+            (location.regionalDisplayName || location.displayName);
+          select.append(option);
+        });
+        if (currentValue && !state.locations.some(location => location.name === currentValue)) {
+          const configured = document.createElement("option");
+          configured.value = currentValue;
+          configured.textContent = currentValue + " (configured)";
+          select.append(configured);
+        }
+        select.value = currentValue || "";
+        const button = document.createElement("button");
+        button.className = "button";
+        button.id = "loadAzureLocationsButton";
+        button.type = "button";
+        button.textContent = state.locations.length ? "Reload" : "Load regions";
+        button.addEventListener("click", loadLocations);
+        row.append(select, button);
+        return row;
+      }
+
+      function createWorkspaceControl(target) {
+        const row = document.createElement("div");
+        row.className = "selector-actions";
+        const select = document.createElement("select");
+        select.id = "field-fabricWorkspaceId";
+        select.dataset.key = "fabricWorkspaceId";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Select a Fabric workspace";
+        select.append(placeholder);
+        state.workspaces.forEach(workspace => {
+          const option = document.createElement("option");
+          option.value = workspace.id;
+          option.textContent = workspace.name + (workspace.region ? " (" + workspace.region + ")" : "");
+          select.append(option);
+        });
+        const createNew = document.createElement("option");
+        createNew.value = "__new__";
+        createNew.textContent = "Create a new Fabric workspace…";
+        select.append(createNew);
+        const currentValue = target.fabricWorkspaceId || "";
+        if (currentValue && !state.workspaces.some(workspace => workspace.id === currentValue)) {
+          const configured = document.createElement("option");
+          configured.value = currentValue;
+          configured.textContent = currentValue + " (configured)";
+          select.insertBefore(configured, createNew);
+        }
+        select.value = currentValue || (target.fabricWorkspaceName ? "__new__" : "");
+        select.addEventListener("change", () => {
+          const selected = state.workspaces.find(workspace => workspace.id === select.value);
+          const current = readFields();
+          current.fabricWorkspaceId = select.value === "__new__" ? "" : select.value;
+          if (select.value === "__new__") current.fabricWorkspaceName = "";
+          if (selected?.capacityId) current.fabricCapacityId = selected.capacityId;
+          state.lakehouses = [];
+          state.fabricWorkspaceId = current.fabricWorkspaceId;
+          renderFields(current);
+        });
+        const button = document.createElement("button");
+        button.className = "button";
+        button.id = "loadFabricWorkspacesButton";
+        button.type = "button";
+        button.textContent = state.workspaces.length ? "Reload" : "Load workspaces";
+        button.addEventListener("click", loadWorkspaces);
+        row.append(select, button);
+        return row;
+      }
+
+      function createLakehouseControl(currentValue) {
+        const row = document.createElement("div");
+        row.className = "selector-actions";
+        const select = document.createElement("select");
+        select.id = "field-fabricServingLakehouseId";
+        select.dataset.key = "fabricServingLakehouseId";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Let setup create the serving lakehouse";
+        select.append(placeholder);
+        state.lakehouses.forEach(lakehouse => {
+          const option = document.createElement("option");
+          option.value = lakehouse.id;
+          option.textContent = lakehouse.name;
+          select.append(option);
+        });
+        if (currentValue && !state.lakehouses.some(lakehouse => lakehouse.id === currentValue)) {
+          const configured = document.createElement("option");
+          configured.value = currentValue;
+          configured.textContent = currentValue + " (configured)";
+          select.append(configured);
+        }
+        select.value = currentValue || "";
+        const button = document.createElement("button");
+        button.className = "button";
+        button.id = "loadFabricLakehousesButton";
+        button.type = "button";
+        button.textContent = state.lakehouses.length ? "Reload" : "Load lakehouses";
+        button.addEventListener("click", loadLakehouses);
+        row.append(select, button);
+        return row;
+      }
+
+      function createConnectionControl(currentValue) {
+        const row = document.createElement("div");
+        row.className = "selector-actions";
+        const select = document.createElement("select");
+        select.id = "field-fabricDataverseConnectionId";
+        select.dataset.key = "fabricDataverseConnectionId";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Select a Dataverse connection";
+        select.append(placeholder);
+        state.connections.forEach(connection => {
+          const option = document.createElement("option");
+          option.value = connection.id;
+          option.textContent =
+            connection.name +
+            (connection.credentialType ? " (" + connection.credentialType + ")" : "");
+          select.append(option);
+        });
+        if (currentValue && !state.connections.some(connection => connection.id === currentValue)) {
+          const configured = document.createElement("option");
+          configured.value = currentValue;
+          configured.textContent = currentValue + " (configured)";
+          select.append(configured);
+        }
+        select.value = currentValue || "";
+        const button = document.createElement("button");
+        button.className = "button";
+        button.id = "loadFabricConnectionsButton";
+        button.type = "button";
+        button.textContent = state.connections.length ? "Reload" : "Load connections";
+        button.addEventListener("click", loadConnections);
+        row.append(select, button);
+        return row;
+      }
+
       function readFields() {
         const values = {};
         targetFields.querySelectorAll("[data-key]").forEach(input => {
-          values[input.dataset.key] = input.dataset.key === "resourceGroup" &&
-            input.value === "__new__"
-            ? (document.getElementById("field-resourceGroup-new")?.value || "").trim()
-            : input.value.trim();
+          if (input.dataset.key === "resourceGroup" && input.value === "__new__") {
+            values[input.dataset.key] =
+              (document.getElementById("field-resourceGroup-new")?.value || "").trim();
+          } else if (input.dataset.key === "fabricWorkspaceId" && input.value === "__new__") {
+            values[input.dataset.key] = "";
+          } else {
+            values[input.dataset.key] = input.value.trim();
+          }
         });
         const merged = engine.mergeConfiguration(state.target || {}, values);
         merged.subscriptionId = values.subscriptionId || "";
         merged.resourceGroup = values.resourceGroup || "";
+        merged.fabricWorkspaceId = values.fabricWorkspaceId || "";
+        merged.fabricServingLakehouseId = values.fabricServingLakehouseId || "";
+        merged.fabricDataverseConnectionId = values.fabricDataverseConnectionId || "";
         return merged;
       }
 
@@ -1278,6 +1499,103 @@
               ? state.capacities.length + " active Fabric capacity/capacities loaded."
               : "No active Fabric capacities are available for this account.",
             state.capacities.length ? "success" : "error"
+          );
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function directFabricClient() {
+        const mode = state.setup?.mode;
+        if (mode?.mode !== "direct") {
+          throw new Error("Fabric discovery is available in direct browser provisioning mode.");
+        }
+        const tokenProvider = await createDirectTokenProvider(mode);
+        return engine.createDirectClient({ getToken: tokenProvider.getToken });
+      }
+
+      async function loadLocations() {
+        if (state.loading || !engine) return;
+        const current = readFields();
+        if (!engine.isGuid(current.subscriptionId)) {
+          showFieldErrors([{ field: "subscriptionId", message: "Select an Azure subscription first." }]);
+          return;
+        }
+        setBusy(true);
+        showNotice("Loading Azure regions…");
+        try {
+          const tokenProvider = await createDirectTokenProvider(state.setup?.mode);
+          const direct = engine.createDirectClient({ getToken: tokenProvider.getToken });
+          state.locations = await direct.listLocations(current.subscriptionId);
+          renderFields(current);
+          showNotice(state.locations.length + " Azure region(s) loaded.", "success");
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function loadWorkspaces() {
+        if (state.loading || !engine) return;
+        const current = readFields();
+        setBusy(true);
+        showNotice("Loading Fabric workspaces…");
+        try {
+          const direct = await directFabricClient();
+          state.workspaces = await direct.listWorkspaces();
+          renderFields(current);
+          showNotice(state.workspaces.length + " Fabric workspace(s) loaded.", "success");
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function loadLakehouses() {
+        if (state.loading || !engine) return;
+        const current = readFields();
+        if (!engine.isGuid(current.fabricWorkspaceId)) {
+          showFieldErrors([
+            {
+              field: "fabricWorkspaceId",
+              message: "Select an existing Fabric workspace before loading lakehouses."
+            }
+          ]);
+          return;
+        }
+        setBusy(true);
+        showNotice("Loading Fabric lakehouses…");
+        try {
+          const direct = await directFabricClient();
+          state.lakehouses = await direct.listLakehouses(current.fabricWorkspaceId);
+          state.fabricWorkspaceId = current.fabricWorkspaceId;
+          renderFields(current);
+          showNotice(state.lakehouses.length + " Fabric lakehouse(s) loaded.", "success");
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function loadConnections() {
+        if (state.loading || !engine) return;
+        const current = readFields();
+        setBusy(true);
+        showNotice("Loading Fabric Dataverse connections…");
+        try {
+          const direct = await directFabricClient();
+          state.connections = await direct.listDataverseConnections(getClientUrl());
+          renderFields(current);
+          showNotice(
+            state.connections.length
+              ? state.connections.length + " Dataverse connection(s) loaded."
+              : "No Dataverse connection for this environment was found.",
+            state.connections.length ? "success" : "error"
           );
         } catch (error) {
           showNotice(error.message || String(error), "error");

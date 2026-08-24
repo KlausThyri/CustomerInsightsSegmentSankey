@@ -139,7 +139,9 @@ test("validateTarget accepts a complete configuration", () => {
     location: "westeurope",
     webAppName: "segment-preview-api",
     fabricWorkspaceId: "11111111-2222-3333-4444-555555555555",
-    fabricServingLakehouseId: "66666666-7777-8888-9999-aaaaaaaaaaaa"
+    fabricServingLakehouseId: "66666666-7777-8888-9999-aaaaaaaaaaaa",
+    fabricDataverseConnectionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    fabricDataverseDeltaFolder: "deltalake"
   });
   assert.deepEqual(result, { valid: true, errors: [] });
 });
@@ -1198,6 +1200,88 @@ test("direct client lists active Fabric capacities alphabetically", async () => 
     { id: "c2", name: "Zeta", sku: "F2", state: "Active", region: "West Europe" }
   ]);
   assert.equal(fetchImpl.calls.length, 2);
+});
+
+test("direct client discovers selectable Azure and Fabric resources", async () => {
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.url.includes("/locations?api-version=2022-12-01"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              name: "westeurope",
+              displayName: "West Europe",
+              regionalDisplayName: "(Europe) West Europe",
+              metadata: { regionType: "Physical", regionCategory: "Recommended" }
+            },
+            {
+              name: "stage",
+              displayName: "Stage",
+              metadata: { regionType: "Logical" }
+            }
+          ]
+        })
+    },
+    {
+      match: (request) => request.url.endsWith("/workspaces"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            { id: "personal", displayName: "My workspace", type: "Personal" },
+            { id: "w1", displayName: "Production", type: "Workspace", capacityId: "c1" }
+          ]
+        })
+    },
+    {
+      match: (request) => request.url.endsWith("/workspaces/w1/lakehouses"),
+      respond: () => jsonResponse(200, { value: [{ id: "l1", displayName: "Serving" }] })
+    },
+    {
+      match: (request) => request.url.endsWith("/connections"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              id: "d1",
+              displayName: "Dataverse",
+              connectionDetails: {
+                type: "CommonDataService",
+                path: "https://contoso.crm4.dynamics.com/"
+              },
+              credentialDetails: { credentialType: "OAuth2" }
+            },
+            {
+              id: "other",
+              displayName: "Other",
+              connectionDetails: { type: "Sql", path: "server" }
+            }
+          ]
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  assert.deepEqual(await direct.listLocations("sub"), [
+    {
+      name: "westeurope",
+      displayName: "West Europe",
+      regionalDisplayName: "(Europe) West Europe",
+      recommended: true
+    }
+  ]);
+  assert.deepEqual(await direct.listWorkspaces(), [
+    { id: "w1", name: "Production", capacityId: "c1", region: "" }
+  ]);
+  assert.deepEqual(await direct.listLakehouses("w1"), [{ id: "l1", name: "Serving" }]);
+  assert.deepEqual(
+    await direct.listDataverseConnections("https://contoso.crm4.dynamics.com"),
+    [{ id: "d1", name: "Dataverse", credentialType: "OAuth2" }]
+  );
 });
 
 test("direct client follows Fabric continuation links", async () => {

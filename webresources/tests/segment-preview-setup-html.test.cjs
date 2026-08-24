@@ -116,12 +116,29 @@ test("the setup center loads active Fabric capacities into a selector", () => {
   assert.ok(code.includes('state.setup?.mode?.mode === "direct"'));
 });
 
+test("required and optional fields are explicit and tenant resources use selectors", () => {
+  const code = inlineScripts(html).join("\n");
+  assert.match(html, /requirement\.required/);
+  assert.match(html, /requirement\.conditional/);
+  assert.match(html, /requirement\.optional/);
+  [
+    "loadAzureLocationsButton",
+    "loadFabricWorkspacesButton",
+    "loadFabricLakehousesButton",
+    "loadFabricConnectionsButton"
+  ].forEach(id => assert.ok(code.includes(id), `${id} is missing`));
+  assert.ok(code.includes("direct.listLocations"));
+  assert.ok(code.includes("direct.listWorkspaces"));
+  assert.ok(code.includes("direct.listLakehouses"));
+  assert.ok(code.includes("direct.listDataverseConnections"));
+});
+
 test("Azure and Fabric selectors are stacked and constrained within the setup grid", () => {
   const code = inlineScripts(html).join("\n");
   assert.match(html, /\.selector-field\s*\{[^}]*grid-column:\s*1\s*\/\s*-1[^}]*width:\s*min\(100%,\s*560px\)/);
   assert.match(html, /\.selector-actions select\s*\{[^}]*width:\s*100%[^}]*min-width:\s*0/);
   assert.ok(code.includes('? " selector-field"'));
-  assert.equal((code.match(/row\.className = "selector-actions"/g) || []).length, 3);
+  assert.equal((code.match(/row\.className = "selector-actions"/g) || []).length, 7);
 });
 
 test("the setup center never renders a raw API key", () => {
