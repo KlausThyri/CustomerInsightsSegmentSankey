@@ -2058,10 +2058,16 @@ test("buildNotebookDefinition emits an InlineBase64 part with every constant app
     DATAVERSE_LAKEHOUSE_ID: "12341234-5678-5678-9abc-9abcdef01234"
   });
   assert.equal(definition.format, "ipynb");
-  assert.equal(definition.parts.length, 1);
-  assert.equal(definition.parts[0].payloadType, "InlineBase64");
-  assert.equal(definition.parts[0].path, "notebook-content.ipynb");
-  const decoded = JSON.parse(Buffer.from(definition.parts[0].payload, "base64").toString("utf8"));
+  assert.equal(definition.parts.length, 2);
+  const notebookPart = definition.parts.find((part) => part.path === "notebook-content.ipynb");
+  const platformPart = definition.parts.find((part) => part.path === ".platform");
+  assert.equal(notebookPart.payloadType, "InlineBase64");
+  assert.equal(platformPart.payloadType, "InlineBase64");
+  assert.deepEqual(
+    JSON.parse(Buffer.from(platformPart.payload, "base64").toString("utf8")),
+    payload.notebook.platform
+  );
+  const decoded = JSON.parse(Buffer.from(notebookPart.payload, "base64").toString("utf8"));
   const source = decoded.cells
     .filter((cell) => cell.cell_type === "code")
     .flatMap((cell) => cell.source)
@@ -2087,9 +2093,16 @@ test("the direct run publishes the notebook through the Fabric definition API", 
   assert.equal(create.method, "POST");
   assert.equal(create.path, `workspaces/${VALID_TARGET.fabricWorkspaceId}/notebooks`);
   assert.equal(create.body.displayName, payload.notebook.displayName);
-  assert.equal(create.body.definition.parts[0].payloadType, "InlineBase64");
+  const notebookPart = create.body.definition.parts.find(
+    (part) => part.path === "notebook-content.ipynb"
+  );
+  assert.equal(notebookPart.payloadType, "InlineBase64");
+  assert.ok(
+    create.body.definition.parts.some((part) => part.path === ".platform"),
+    "the Fabric .platform metadata must be included"
+  );
   const decoded = JSON.parse(
-    Buffer.from(create.body.definition.parts[0].payload, "base64").toString("utf8")
+    Buffer.from(notebookPart.payload, "base64").toString("utf8")
   );
   const source = decoded.cells
     .filter((cell) => cell.cell_type === "code")
@@ -2123,7 +2136,10 @@ test("an existing notebook is updated in place instead of duplicated", async () 
     update.path,
     `workspaces/${VALID_TARGET.fabricWorkspaceId}/notebooks/eeee0000-1111-2222-3333-444444444444/updateDefinition?updateMetadata=true`
   );
-  assert.equal(update.body.definition.parts[0].payloadType, "InlineBase64");
+  assert.ok(
+    update.body.definition.parts.some((part) => part.path === ".platform"),
+    "updateMetadata=true requires a .platform definition part"
+  );
   assert.equal(
     direct.calls.some((call) => call.kind === "fabric" && call.method === "POST" && /\/notebooks$/.test(call.path)),
     false,

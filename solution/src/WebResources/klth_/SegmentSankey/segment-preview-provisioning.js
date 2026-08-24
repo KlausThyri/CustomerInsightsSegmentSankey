@@ -473,15 +473,23 @@
     if (result.missing.length) {
       throw new Error("The bootstrap notebook does not declare: " + result.missing.join(", ") + ".");
     }
+    var parts = [
+      {
+        path: notebook.path || "notebook-content.ipynb",
+        payload: toBase64(JSON.stringify(result.content)),
+        payloadType: "InlineBase64"
+      }
+    ];
+    if (notebook.platform) {
+      parts.push({
+        path: ".platform",
+        payload: toBase64(JSON.stringify(notebook.platform)),
+        payloadType: "InlineBase64"
+      });
+    }
     return {
       format: notebook.format || "ipynb",
-      parts: [
-        {
-          path: notebook.path || "notebook-content.ipynb",
-          payload: toBase64(JSON.stringify(result.content)),
-          payloadType: "InlineBase64"
-        }
-      ]
+      parts: parts
     };
   }
 
@@ -2717,9 +2725,13 @@
 
         var notebookId;
         if (existing) {
+          var updateMetadata = definition.parts.some(function (part) {
+            return part.path === ".platform";
+          });
           var updated = await direct.fabric(
             "POST",
-            workspacePath + "/notebooks/" + existing.id + "/updateDefinition?updateMetadata=true",
+            workspacePath + "/notebooks/" + existing.id +
+              "/updateDefinition?updateMetadata=" + String(updateMetadata),
             { definition: definition }
           );
           await direct.fabricResult(updated);

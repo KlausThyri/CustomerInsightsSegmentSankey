@@ -136,6 +136,7 @@ $payload = [ordered]@{
         description = [string] $platform.metadata.description
         format      = 'ipynb'
         path        = 'notebook-content.ipynb'
+        platform    = $platform
         parameters  = @($parameters)
         schedule    = $scheduleObject
         content     = $notebookContent
