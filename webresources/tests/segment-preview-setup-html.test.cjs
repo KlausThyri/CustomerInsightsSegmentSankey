@@ -73,7 +73,11 @@ test("every statically referenced element id exists in the markup", () => {
   });
 
   assert.ok(ids.size >= 15, "expected the setup center element lookups to be found");
-  const missing = [...ids].filter((id) => !new RegExp(`id="${id}"`).test(html));
+  const missing = [...ids].filter((id) => {
+    if (new RegExp(`id="${id}"`).test(html)) return false;
+    if (new RegExp(`\\.id\\s*=\\s*"${id}"`).test(html)) return false;
+    return !(id.startsWith("field-") && html.includes('input.id = "field-" + field.key'));
+  });
   assert.deepStrictEqual(missing, [], `missing element ids: ${missing.join(", ")}`);
 });
 
@@ -81,6 +85,16 @@ test("the one-button provisioning controls are present", () => {
   ["provisionButton", "panelProvisionButton", "previewButton", "panelPreviewButton"].forEach((id) => {
     assert.ok(new RegExp(`id="${id}"`).test(html), `${id} is missing`);
   });
+});
+
+test("the setup center loads Azure resource groups into a selector", () => {
+  const code = inlineScripts(html).join("\n");
+  assert.ok(code.includes('document.createElement("select")'));
+  assert.ok(code.includes('"Create a new resource group…"'));
+  assert.ok(code.includes("direct.listResourceGroups(subscriptionId)"));
+  assert.ok(code.includes('loadButton.textContent = groups.length ? "Reload" : "Load groups"'));
+  assert.ok(code.includes('merged.resourceGroup = values.resourceGroup || ""'));
+  assert.ok(code.includes('loadButton.hidden = state.setup?.mode?.mode !== "direct"'));
 });
 
 test("the setup center never renders a raw API key", () => {

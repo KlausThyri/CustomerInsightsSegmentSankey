@@ -1912,9 +1912,12 @@
 
     async function arm(method, path, body, apiVersion) {
       var token = await getToken(settings.armScope || ARM_SCOPE);
+      var absolute = /^https?:\/\//i.test(path);
       var separator = path.indexOf("?") > -1 ? "&" : "?";
       return http.send({
-        url: armRoot + path + separator + "api-version=" + (apiVersion || ARM_API_VERSION),
+        url: absolute
+          ? path
+          : armRoot + path + separator + "api-version=" + (apiVersion || ARM_API_VERSION),
         method: method,
         headers: {
           Accept: "application/json",
@@ -1959,6 +1962,30 @@
         { location: location }
       );
       return response.body;
+    }
+
+    async function listResourceGroups(subscriptionId) {
+      var groups = [];
+      var next = "/subscriptions/" + subscriptionId + "/resourcegroups";
+      var guard = 0;
+      while (next && guard++ < 100) {
+        var response = await arm("GET", next, undefined, "2021-04-01");
+        var payload = response.body || {};
+        if (Array.isArray(payload.value)) groups = groups.concat(payload.value);
+        next = payload.nextLink || null;
+      }
+      return groups
+        .map(function (group) {
+          return {
+            id: group.id || "",
+            name: group.name || "",
+            location: group.location || ""
+          };
+        })
+        .filter(function (group) { return group.name; })
+        .sort(function (left, right) {
+          return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+        });
     }
 
     /** Starts a resource-group deployment and waits for a terminal state. */
@@ -2108,6 +2135,7 @@
       fabric: fabric,
       fabricResult: fabricResult,
       fabricCollection: fabricCollection,
+      listResourceGroups: listResourceGroups,
       ensureResourceGroup: ensureResourceGroup,
       deployTemplate: deployTemplate,
       webAppSettings: webAppSettings,

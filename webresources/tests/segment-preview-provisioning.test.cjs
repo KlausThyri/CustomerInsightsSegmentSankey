@@ -1053,6 +1053,53 @@ test("direct client appends the ARM api-version and bearer token", async () => {
   assert.deepEqual(JSON.parse(call.init.body), { location: "westeurope" });
 });
 
+test("direct client lists Azure resource groups alphabetically", async () => {
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.url.includes("/resourcegroups?api-version=2021-04-01"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            { id: "/subscriptions/x/resourceGroups/zeta", name: "zeta", location: "northeurope" }
+          ],
+          nextLink: "https://management.azure.com/subscriptions/x/resourcegroups?skiptoken=next"
+        })
+    },
+    {
+      match: (request) => request.url.endsWith("/resourcegroups?skiptoken=next"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            { id: "/subscriptions/x/resourceGroups/Alpha", name: "Alpha", location: "westeurope" }
+          ]
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  const groups = await direct.listResourceGroups(
+    "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6"
+  );
+
+  assert.deepEqual(groups, [
+    {
+      id: "/subscriptions/x/resourceGroups/Alpha",
+      name: "Alpha",
+      location: "westeurope"
+    },
+    {
+      id: "/subscriptions/x/resourceGroups/zeta",
+      name: "zeta",
+      location: "northeurope"
+    }
+  ]);
+  assert.equal(fetchImpl.calls.length, 2);
+});
+
 test("direct client follows Fabric continuation links", async () => {
   const fetchImpl = createFetchMock([
     {

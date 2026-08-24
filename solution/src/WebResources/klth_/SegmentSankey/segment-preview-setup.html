@@ -310,7 +310,7 @@
     }
     .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
     .field label { color: var(--cp-text-muted); font-size: 12px; font-weight: 600; }
-    .field input {
+    .field input, .field select {
       min-height: 38px;
       border: 1px solid var(--cp-border-strong);
       border-radius: .5rem;
@@ -319,8 +319,8 @@
       color: var(--cp-text);
       font: inherit;
     }
-    .field input:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 1px; }
-    .field input[aria-invalid="true"] { border-color: var(--cp-danger); }
+    .field input:focus-visible, .field select:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 1px; }
+    .field input[aria-invalid="true"], .field select[aria-invalid="true"] { border-color: var(--cp-danger); }
     .field .hint { color: var(--cp-text-soft); font-size: 11px; line-height: 1.4; }
     .field .error { color: var(--cp-danger); font-size: 11px; }
     .panel-actions {
@@ -583,7 +583,14 @@
         warning: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 2.5 20h19L12 3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 9v4m0 3h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
         error: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="m9 9 6 6m0-6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
       };
-      const state = { loading: false, result: null, setup: null, target: null };
+      const state = {
+        loading: false,
+        result: null,
+        setup: null,
+        target: null,
+        resourceGroups: [],
+        resourceGroupSubscriptionId: ""
+      };
 
       const groupsHost = document.getElementById("groups");
       const summary = document.getElementById("summary");
@@ -708,6 +715,8 @@
         connectBrokerSaveButton.disabled = value || !engine || !embedded;
         connectPackageSaveButton.disabled = value || !engine || !embedded;
         startOverButton.disabled = value || !engine || !embedded;
+        const resourceGroupButton = document.getElementById("loadResourceGroupsButton");
+        if (resourceGroupButton) resourceGroupButton.disabled = value || !engine || !embedded;
         document.body.setAttribute("aria-busy", value ? "true" : "false");
       }
 
@@ -923,13 +932,6 @@
           const label = document.createElement("label");
           label.setAttribute("for", "field-" + field.key);
           label.textContent = field.label;
-          const input = document.createElement("input");
-          input.id = "field-" + field.key;
-          input.type = "text";
-          input.autocomplete = "off";
-          input.spellcheck = false;
-          input.value = target[field.key] || "";
-          input.dataset.key = field.key;
           const hint = document.createElement("p");
           hint.className = "hint";
           hint.textContent = field.hint;
@@ -937,21 +939,122 @@
           error.className = "error";
           error.id = "error-" + field.key;
           error.hidden = true;
-          wrapper.append(label, input, hint, error);
+          if (field.key === "resourceGroup") {
+            wrapper.append(
+              label,
+              createResourceGroupControl(target[field.key] || ""),
+              hint,
+              error
+            );
+          } else {
+            const input = document.createElement("input");
+            input.id = "field-" + field.key;
+            input.type = "text";
+            input.autocomplete = "off";
+            input.spellcheck = false;
+            input.value = target[field.key] || "";
+            input.dataset.key = field.key;
+            if (field.key === "subscriptionId") {
+              input.addEventListener("change", () => {
+                if (!state.resourceGroups.length ||
+                    input.value.trim() === state.resourceGroupSubscriptionId) {
+                  return;
+                }
+                const current = readFields();
+                current.subscriptionId = input.value.trim();
+                current.resourceGroup = "";
+                state.resourceGroups = [];
+                state.resourceGroupSubscriptionId = "";
+                renderFields(current);
+              });
+            }
+            wrapper.append(label, input, hint, error);
+          }
           targetFields.append(wrapper);
         });
       }
 
+      function createResourceGroupControl(currentValue) {
+        const container = document.createElement("div");
+        const row = document.createElement("div");
+        row.className = "copy-row";
+        const select = document.createElement("select");
+        select.id = "field-resourceGroup";
+        select.dataset.key = "resourceGroup";
+
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Select a resource group";
+        select.append(placeholder);
+
+        const groups = Array.isArray(state.resourceGroups) ? state.resourceGroups : [];
+        groups.forEach(group => {
+          const option = document.createElement("option");
+          option.value = group.name;
+          option.textContent = group.name + (group.location ? " (" + group.location + ")" : "");
+          select.append(option);
+        });
+        if (currentValue && !groups.some(group => group.name === currentValue)) {
+          const configured = document.createElement("option");
+          configured.value = currentValue;
+          configured.textContent = currentValue + " (configured)";
+          select.append(configured);
+        }
+
+        const createNew = document.createElement("option");
+        createNew.value = "__new__";
+        createNew.textContent = "Create a new resource group…";
+        select.append(createNew);
+        select.value = currentValue || "";
+
+        const loadButton = document.createElement("button");
+        loadButton.className = "button";
+        loadButton.id = "loadResourceGroupsButton";
+        loadButton.type = "button";
+        loadButton.textContent = groups.length ? "Reload" : "Load groups";
+        loadButton.hidden = state.setup?.mode?.mode !== "direct";
+        loadButton.addEventListener("click", loadResourceGroups);
+        row.append(select, loadButton);
+
+        const newName = document.createElement("input");
+        newName.id = "field-resourceGroup-new";
+        newName.type = "text";
+        newName.autocomplete = "off";
+        newName.spellcheck = false;
+        newName.placeholder = "Name of the new resource group";
+        newName.hidden = true;
+
+        select.addEventListener("change", () => {
+          newName.hidden = select.value !== "__new__";
+          if (!newName.hidden) {
+            newName.focus();
+            return;
+          }
+          const selected = groups.find(group => group.name === select.value);
+          if (selected?.location) {
+            const location = document.getElementById("field-location");
+            if (location) location.value = selected.location;
+          }
+        });
+        container.append(row, newName);
+        return container;
+      }
+
       function readFields() {
         const values = {};
-        targetFields.querySelectorAll("input[data-key]").forEach(input => {
-          values[input.dataset.key] = input.value.trim();
+        targetFields.querySelectorAll("[data-key]").forEach(input => {
+          values[input.dataset.key] = input.dataset.key === "resourceGroup" &&
+            input.value === "__new__"
+            ? (document.getElementById("field-resourceGroup-new")?.value || "").trim()
+            : input.value.trim();
         });
-        return engine.mergeConfiguration(state.target || {}, values);
+        const merged = engine.mergeConfiguration(state.target || {}, values);
+        merged.resourceGroup = values.resourceGroup || "";
+        return merged;
       }
 
       function showFieldErrors(errors) {
-        targetFields.querySelectorAll("input[data-key]").forEach(input => {
+        targetFields.querySelectorAll("[data-key]").forEach(input => {
           input.removeAttribute("aria-invalid");
           const error = document.getElementById("error-" + input.dataset.key);
           if (error) {
@@ -959,15 +1062,88 @@
             error.textContent = "";
           }
         });
+        document.getElementById("field-resourceGroup-new")?.removeAttribute("aria-invalid");
         errors.forEach(item => {
           const input = document.getElementById("field-" + item.field);
           const error = document.getElementById("error-" + item.field);
           if (input) input.setAttribute("aria-invalid", "true");
+          if (item.field === "resourceGroup" && input?.value === "__new__") {
+            document.getElementById("field-resourceGroup-new")
+              ?.setAttribute("aria-invalid", "true");
+          }
           if (error) {
             error.textContent = item.message;
             error.hidden = false;
           }
         });
+      }
+
+      async function createDirectTokenProvider(mode) {
+        if (!engine.isGuid(mode?.clientId)) {
+          throw new Error(
+            "Azure sign-in needs an application (client) ID. Open 'Connect this environment' and register one first."
+          );
+        }
+        const msal = window.msal;
+        if (msal && msal.PublicClientApplication) {
+          const instance = new msal.PublicClientApplication({
+            auth: {
+              clientId: mode.clientId,
+              authority: "https://login.microsoftonline.com/organizations"
+            },
+            cache: { cacheLocation: "sessionStorage" }
+          });
+          if (instance.initialize) await instance.initialize();
+          return engine.createMsalTokenProvider({ instance });
+        }
+        return engine.createAuthClient({
+          clientId: mode.clientId,
+          redirectUri: engine.redirectUriFor(window.location.href)
+        });
+      }
+
+      async function loadResourceGroups() {
+        if (state.loading || !engine) return;
+        const subscriptionId =
+          (document.getElementById("field-subscriptionId")?.value || "").trim();
+        if (!engine.isGuid(subscriptionId)) {
+          showFieldErrors([
+            {
+              field: "subscriptionId",
+              message: "Enter the Azure subscription id before loading resource groups."
+            }
+          ]);
+          return;
+        }
+        const mode = state.setup?.mode;
+        if (mode?.mode !== "direct") {
+          showNotice(
+            "Loading Azure resource groups is available when this environment uses direct browser provisioning.",
+            "error"
+          );
+          return;
+        }
+
+        const current = readFields();
+        setBusy(true);
+        showNotice("Signing in to Azure and loading resource groups…");
+        try {
+          const tokenProvider = await createDirectTokenProvider(mode);
+          const direct = engine.createDirectClient({ getToken: tokenProvider.getToken });
+          state.resourceGroups = await direct.listResourceGroups(subscriptionId);
+          state.resourceGroupSubscriptionId = subscriptionId;
+          renderFields(current);
+          showNotice(
+            state.resourceGroups.length
+              ? state.resourceGroups.length + " Azure resource group(s) loaded."
+              : "No resource groups were found. Choose 'Create a new resource group'.",
+            "success"
+          );
+        } catch (error) {
+          showNotice(error.message || String(error), "error");
+        } finally {
+          setBusy(false);
+        }
       }
 
       function renderConsent(items) {
@@ -1326,6 +1502,11 @@
         const context = await engine.loadSetupContext(dataverseClient(), getClientUrl(), window.location.href);
         state.setup = context;
         state.target = context.target;
+        if (state.resourceGroupSubscriptionId &&
+            state.resourceGroupSubscriptionId !== context.target.subscriptionId) {
+          state.resourceGroups = [];
+          state.resourceGroupSubscriptionId = "";
+        }
         renderModeBanner(context.mode);
         renderConnect(context);
         renderSessionBanner();
@@ -1395,20 +1576,7 @@
             setBusy(false);
             return;
           }
-          const msal = window.msal;
-          if (msal && msal.PublicClientApplication) {
-            const instance = new msal.PublicClientApplication({
-              auth: { clientId: mode.clientId, authority: "https://login.microsoftonline.com/organizations" },
-              cache: { cacheLocation: "sessionStorage" }
-            });
-            if (instance.initialize) await instance.initialize();
-            tokenProvider = engine.createMsalTokenProvider({ instance });
-          } else {
-            tokenProvider = engine.createAuthClient({
-              clientId: mode.clientId,
-              redirectUri: engine.redirectUriFor(window.location.href)
-            });
-          }
+          tokenProvider = await createDirectTokenProvider(mode);
         }
 
         const getToken = tokenProvider ? tokenProvider.getToken : async () => "";
