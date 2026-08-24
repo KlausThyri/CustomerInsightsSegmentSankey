@@ -65,7 +65,16 @@ test("the provisioning engine and Azure template are loaded before the inline lo
 test("all external setup scripts use the current cache-busting revision", () => {
   const external = externalScripts(html);
   assert.equal(external.length, 3);
-  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.4$/));
+  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.5$/));
+});
+
+test("selecting an existing Resource Group does not force its metadata location", () => {
+  inlineScripts(html).forEach((code) => {
+    assert.doesNotMatch(
+      code,
+      /selectedResourceGroup\?\.location|merged\.location\s*=\s*selectedResourceGroup\.location/
+    );
+  });
 });
 
 test("every statically referenced element id exists in the markup", () => {

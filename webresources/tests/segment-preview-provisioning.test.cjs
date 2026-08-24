@@ -411,6 +411,35 @@ test("createHttp surfaces a non-retryable error message", async () => {
   await assert.rejects(() => http.send({ url: "https://example.invalid/x" }), /Forbidden by policy/);
 });
 
+test("createHttp surfaces nested ARM validation details", async () => {
+  const http = engine.createHttp({
+    fetch: async () =>
+      jsonResponse(400, {
+        error: {
+          code: "InvalidTemplateDeployment",
+          message: "The template deployment is not valid.",
+          details: [
+            {
+              code: "ValidationForResourceFailed",
+              message: "Validation failed for a resource.",
+              details: [
+                {
+                  code: "InternalSubscriptionIsOverQuotaForSku",
+                  message: "Current Limit (Total VMs): 0"
+                }
+              ]
+            }
+          ]
+        }
+      }),
+    timer: immediateTimer
+  });
+  await assert.rejects(
+    () => http.send({ url: "https://management.azure.com/x" }),
+    /The template deployment is not valid\.[\s\S]*Validation failed for a resource\.[\s\S]*Current Limit \(Total VMs\): 0/
+  );
+});
+
 
 // ---------------------------------------------------------- dataverse client
 
@@ -1935,6 +1964,23 @@ function directHarness(options = {}) {
     },
     async deployTemplate(subscriptionId, resourceGroup, name, template, parameters) {
       calls.push({ kind: "deployTemplate", subscriptionId, resourceGroup, name, parameters });
+      if (
+        options.quotaFailureLocation &&
+        parameters.location === options.quotaFailureLocation
+      ) {
+        const failure = new Error("The subscription is over quota for this SKU.");
+        failure.body = {
+          error: {
+            details: [
+              {
+                code: "InternalSubscriptionIsOverQuotaForSku",
+                message: "Current Limit (Total VMs): 0"
+              }
+            ]
+          }
+        };
+        throw failure;
+      }
       const outputs = {
         webAppUrl: { value: "https://segment-preview-api.azurewebsites.net/api/" },
         managedIdentityPrincipalId: { value: "99999999-8888-7777-6666-555555555555" }
@@ -2335,7 +2381,7 @@ test("the direct run has Azure copy the verified package into the customer's own
   assert.equal(result.facts.packageBlobUrl, settings.WEBSITE_RUN_FROM_PACKAGE);
 });
 
-test("an existing Resource Group location overrides the default deployment region", async () => {
+test("an existing Resource Group location does not override the resource deployment region", async () => {
   const direct = directHarness({ resourceGroupLocation: "eastus" });
   const digest = await sha256Of(direct.packageBytes);
   const { orchestrator } = directOrchestrator({
@@ -2345,7 +2391,31 @@ test("an existing Resource Group location overrides the default deployment regio
   const result = await orchestrator.run();
   assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
   const deploy = direct.calls.find((call) => call.kind === "deployTemplate");
-  assert.equal(deploy.parameters.location, "eastus");
+  assert.equal(deploy.parameters.location, "westeurope");
+});
+
+test("App Service quota failure retries the Azure deployment in West Europe", async () => {
+  const direct = directHarness({ quotaFailureLocation: "eastus" });
+  const digest = await sha256Of(direct.packageBytes);
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: {
+      target: Object.assign({}, VALID_TARGET, {
+        fabricDataverseLakehouseId: "12341234-5678-5678-9abc-9abcdef01234",
+        location: "eastus"
+      }),
+      apiPackageUrl: "https://contoso.example.com/a.zip " + digest
+    }
+  });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  const deployments = direct.calls.filter((call) => call.kind === "deployTemplate");
+  assert.deepEqual(
+    deployments.map((call) => call.parameters.location),
+    ["eastus", "westeurope"]
+  );
+  const step = result.results.find((entry) => entry.id === "azure-infra");
+  assert.match(step.message, /West Europe.*no B1 App Service quota/i);
 });
 
 test("the browser never downloads the package itself", async () => {

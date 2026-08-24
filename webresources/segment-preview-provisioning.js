@@ -1025,6 +1025,47 @@
 
   // ------------------------------------------------------------- HTTP helper
 
+  function collectErrorMessages(payload) {
+    var messages = [];
+    var seen = [];
+
+    function visit(value) {
+      if (!value || typeof value !== "object" || seen.indexOf(value) !== -1) return;
+      seen.push(value);
+      if (typeof value.message === "string" && value.message.trim() && messages.indexOf(value.message.trim()) === -1) {
+        messages.push(value.message.trim());
+      }
+      if (value.error) visit(value.error);
+      if (Array.isArray(value.details)) value.details.forEach(visit);
+      if (value.innererror) visit(value.innererror);
+      if (value.innerError) visit(value.innerError);
+    }
+
+    visit(payload);
+    return messages;
+  }
+
+  function errorHasCode(error, expectedCode) {
+    var found = false;
+    var seen = [];
+
+    function visit(value) {
+      if (found || !value || typeof value !== "object" || seen.indexOf(value) !== -1) return;
+      seen.push(value);
+      if (String(value.code || "").toLowerCase() === String(expectedCode).toLowerCase()) {
+        found = true;
+        return;
+      }
+      if (value.error) visit(value.error);
+      if (Array.isArray(value.details)) value.details.forEach(visit);
+      if (value.innererror) visit(value.innererror);
+      if (value.innerError) visit(value.innerError);
+    }
+
+    visit(error && error.body);
+    return found;
+  }
+
   function createHttp(options) {
     var settings = options || {};
     var fetchImpl = settings.fetch || (typeof fetch === "function" ? fetch.bind(globalThis) : null);
@@ -1058,9 +1099,9 @@
         }
         var retryable = response.status === 429 || response.status >= 500;
         if (!retryable || attempt >= maxAttempts) {
+          var nestedMessages = collectErrorMessages(payload);
           var message =
-            (payload && payload.error && payload.error.message) ||
-            (payload && payload.message) ||
+            nestedMessages.join("\n") ||
             (typeof payload === "string" && payload) ||
             "HTTP " + response.status;
           var failure = new Error(message);
@@ -2858,46 +2899,99 @@
               pkg.hint
           );
         }
-        var resourceGroup = await direct.ensureResourceGroup(
+        await direct.ensureResourceGroup(
           target.subscriptionId,
           target.resourceGroup,
           target.location
         );
-        var deploymentLocation =
-          trimOrNull(resourceGroup && resourceGroup.location) || target.location;
-        target.location = deploymentLocation;
-        var outputs = await direct.deployTemplate(
-          target.subscriptionId,
-          target.resourceGroup,
-          "segment-preview",
-          template,
-          {
-            location: deploymentLocation,
-            webAppName: target.webAppName,
-            fabricSqlServer: context.fabricSqlServer || "",
-            fabricSqlDatabase: context.fabricSqlDatabase || "",
-            fabricWorkspaceId: (context.workspace && context.workspace.id) || target.fabricWorkspaceId || "",
-            fabricServingLakehouseId:
-              (context.serving && context.serving.id) || target.fabricServingLakehouseId || "",
-            fabricDataverseConnectionId: context.dataverseConnectionId || "",
-            fabricDataverseDeltaFolder: target.fabricDataverseDeltaFolder,
-            dataverseEnvironmentUrl: "https://" + context.environmentDomain,
-            behavioralApiKey: context.apiKey,
-            requiredDataverseTables: (context.requiredTables || []).join(","),
-            apiPackageUrl: pkg.configured ? pkg.url : "",
-            apiPackageSha256: pkg.configured ? pkg.sha256 : "",
-            apiPackageBlobName: pkg.configured ? packageBlobName(pkg) : "",
-            apiPackageVersion: pkg.configured ? pkg.version || "" : ""
-          },
-          hooks
-        );
+        var deploymentLocation = target.location;
+        var deploymentParameters = {
+          location: deploymentLocation,
+          webAppName: target.webAppName,
+          fabricSqlServer: context.fabricSqlServer || "",
+          fabricSqlDatabase: context.fabricSqlDatabase || "",
+          fabricWorkspaceId: (context.workspace && context.workspace.id) || target.fabricWorkspaceId || "",
+          fabricServingLakehouseId:
+            (context.serving && context.serving.id) || target.fabricServingLakehouseId || "",
+          fabricDataverseConnectionId: context.dataverseConnectionId || "",
+          fabricDataverseDeltaFolder: target.fabricDataverseDeltaFolder,
+          dataverseEnvironmentUrl: "https://" + context.environmentDomain,
+          behavioralApiKey: context.apiKey,
+          requiredDataverseTables: (context.requiredTables || []).join(","),
+          apiPackageUrl: pkg.configured ? pkg.url : "",
+          apiPackageSha256: pkg.configured ? pkg.sha256 : "",
+          apiPackageBlobName: pkg.configured ? packageBlobName(pkg) : "",
+          apiPackageVersion: pkg.configured ? pkg.version || "" : ""
+        };
+        var usedQuotaFallback = false;
+        var outputs;
+        try {
+          outputs = await direct.deployTemplate(
+            target.subscriptionId,
+            target.resourceGroup,
+            "segment-preview",
+            template,
+            deploymentParameters,
+            hooks
+          );
+        } catch (error) {
+          if (
+            errorHasCode(error, "InternalSubscriptionIsOverQuotaForSku") &&
+            deploymentLocation.toLowerCase() !== "westeurope"
+          ) {
+            deploymentLocation = "westeurope";
+            deploymentParameters = Object.assign({}, deploymentParameters, {
+              location: deploymentLocation
+            });
+            target.location = deploymentLocation;
+            usedQuotaFallback = true;
+            if (hooks.onProgress) {
+              hooks.onProgress({
+                id: "azure-infra",
+                status: "Retrying in West Europe because the selected region has no B1 App Service quota."
+              });
+            }
+            try {
+              outputs = await direct.deployTemplate(
+                target.subscriptionId,
+                target.resourceGroup,
+                "segment-preview",
+                template,
+                deploymentParameters,
+                hooks
+              );
+            } catch (fallbackError) {
+              if (errorHasCode(fallbackError, "InternalSubscriptionIsOverQuotaForSku")) {
+                var quotaMessage =
+                  "Azure has no B1 App Service Plan quota in either the selected region or West Europe. " +
+                  "Request an App Service quota of at least 1 at https://aka.ms/antquotahelp, or choose another Azure subscription.";
+                addManual(quotaMessage);
+                throw new Error(quotaMessage + "\n" + fallbackError.message);
+              }
+              throw fallbackError;
+            }
+          } else {
+            if (errorHasCode(error, "InternalSubscriptionIsOverQuotaForSku")) {
+              var quotaGuidance =
+                "Azure has no B1 App Service Plan quota in West Europe. " +
+                "Request an App Service quota of at least 1 at https://aka.ms/antquotahelp, or choose another Azure subscription.";
+              addManual(quotaGuidance);
+              throw new Error(quotaGuidance + "\n" + error.message);
+            }
+            throw error;
+          }
+        }
         context.outputs = outputs || {};
         var webAppUrl = outputs && outputs.webAppUrl && outputs.webAppUrl.value;
         context.apiBaseUrl = apiBaseUrl(webAppUrl || target.webAppName + ".azurewebsites.net");
         context.principalId =
           (outputs && outputs.managedIdentityPrincipalId && outputs.managedIdentityPrincipalId.value) || null;
         context.packageBlobUrl = (outputs && outputs.packageBlobUrl && outputs.packageBlobUrl.value) || null;
-        return "Azure infrastructure deployed and the verified API package was copied into your own storage account.";
+        return (
+          "Azure infrastructure deployed" +
+          (usedQuotaFallback ? " in West Europe after the selected region reported no B1 App Service quota" : "") +
+          " and the verified API package was copied into your own storage account."
+        );
       },
 
       "fabric-permissions": async function () {
