@@ -759,6 +759,32 @@
     return result;
   }
 
+  function shortHash(text) {
+    var value = 2166136261;
+    String(text || "").toLowerCase().split("").forEach(function (character) {
+      value ^= character.charCodeAt(0);
+      value = Math.imul(value, 16777619);
+    });
+    return (value >>> 0).toString(36).slice(0, 6);
+  }
+
+  function applyAutomaticTarget(target) {
+    var result = mergeConfiguration(target);
+    if (isGuid(result.subscriptionId) && isResourceGroupName(result.resourceGroup)) {
+      if (isBlank(result.webAppName)) {
+        result.webAppName =
+          "segment-preview-" +
+          result.subscriptionId.substring(0, 8).toLowerCase() +
+          "-" +
+          shortHash(result.resourceGroup);
+      }
+      if (isBlank(result.fabricWorkspaceName)) {
+        result.fabricWorkspaceName = result.resourceGroup + " Segment Preview";
+      }
+    }
+    return result;
+  }
+
   /**
    * Non-secret facts a completed step discovered. They are persisted so a
    * resumed run has the same knowledge as a fresh one; without them a skipped
@@ -771,6 +797,7 @@
     "servingLakehouseName",
     "fabricSqlServer",
     "fabricSqlDatabase",
+    "dataverseConnectionId",
     "notebookId",
     "apiBaseUrl",
     "principalId",
@@ -809,6 +836,7 @@
       servingLakehouseName: source.serving && source.serving.displayName,
       fabricSqlServer: source.fabricSqlServer,
       fabricSqlDatabase: source.fabricSqlDatabase,
+      dataverseConnectionId: source.dataverseConnectionId,
       notebookId: source.notebookId,
       apiBaseUrl: source.apiBaseUrl,
       principalId: source.principalId,
@@ -882,7 +910,7 @@
   }
 
   function validateTarget(target, options) {
-    var input = target || {};
+    var input = applyAutomaticTarget(target || {});
     var settings = options || {};
     var errors = [];
 
@@ -896,7 +924,11 @@
       if (isBlank(input.location)) {
         errors.push({ field: "location", message: "Choose an Azure region." });
       }
-      if (!isWebAppName(input.webAppName)) {
+      if (
+        isGuid(input.subscriptionId) &&
+        isResourceGroupName(input.resourceGroup) &&
+        !isWebAppName(input.webAppName)
+      ) {
         errors.push({
           field: "webAppName",
           message:
@@ -906,26 +938,10 @@
     }
 
     if (!settings.skipFabric) {
-      if (!isGuid(input.fabricWorkspaceId) && isBlank(input.fabricWorkspaceName)) {
-        errors.push({
-          field: "fabricWorkspaceId",
-          message: "Enter the Fabric workspace id, or a workspace name plus a capacity id."
-        });
-      }
-      if (
-        !isGuid(input.fabricWorkspaceId) &&
-        !isBlank(input.fabricWorkspaceName) &&
-        !isGuid(input.fabricCapacityId)
-      ) {
-        errors.push({
-          field: "fabricCapacityId",
-          message: "A Fabric capacity id is required to create a new workspace."
-        });
-      }
-      if (!isGuid(input.fabricDataverseConnectionId)) {
+      if (!isBlank(input.fabricDataverseConnectionId) && !isGuid(input.fabricDataverseConnectionId)) {
         errors.push({
           field: "fabricDataverseConnectionId",
-          message: "Select the Fabric Dataverse connection for this environment."
+          message: "The Fabric Dataverse connection must be a GUID."
         });
       }
       if (isBlank(input.fabricDataverseDeltaFolder)) {
@@ -2320,7 +2336,7 @@
     var settings = options || {};
     var dataverse = settings.dataverse;
     var mode = settings.mode || "manual";
-    var target = settings.target || {};
+    var target = applyAutomaticTarget(settings.target || {});
     var environmentUrl = settings.environmentUrl;
     var dryRun = Boolean(settings.dryRun);
     var hooks = settings.hooks || {};
@@ -2357,6 +2373,9 @@
       }
       if (!isBlank(facts.fabricSqlServer)) context.fabricSqlServer = facts.fabricSqlServer;
       if (!isBlank(facts.fabricSqlDatabase)) context.fabricSqlDatabase = facts.fabricSqlDatabase;
+      if (!isBlank(facts.dataverseConnectionId)) {
+        context.dataverseConnectionId = facts.dataverseConnectionId;
+      }
       if (!isBlank(facts.notebookId)) context.notebookId = facts.notebookId;
       if (!isBlank(facts.apiBaseUrl)) context.apiBaseUrl = facts.apiBaseUrl;
       if (!isBlank(facts.principalId)) context.principalId = facts.principalId;
@@ -2589,15 +2608,29 @@
           );
         })[0];
         if (!workspace) {
-          if (!isGuid(target.fabricCapacityId)) {
-            addManual(
-              "The Fabric workspace was not found and no capacity id was supplied. Create the workspace in the Fabric portal or enter a capacity id."
-            );
-            throw new Error("The Fabric workspace could not be resolved.");
+          var capacityId = target.fabricCapacityId;
+          if (!isGuid(capacityId)) {
+            var capacities = await direct.listCapacities();
+            var eligible = capacities.filter(function (capacity) {
+              return !/^PP/i.test(capacity.sku || "");
+            });
+            if (!eligible.length) {
+              throw new Error(
+                "No active Fabric capacity that can host a workspace is available. Select or create a Fabric capacity and run setup again."
+              );
+            }
+            var wantedRegion = String(target.location || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+            var regional = eligible.filter(function (capacity) {
+              return (
+                String(capacity.region || "").replace(/[^a-z0-9]/gi, "").toLowerCase() ===
+                wantedRegion
+              );
+            });
+            capacityId = (regional[0] || eligible[0]).id;
           }
           var created = await direct.fabric("POST", "workspaces", {
             displayName: target.fabricWorkspaceName,
-            capacityId: target.fabricCapacityId
+            capacityId: capacityId
           });
           workspace = created.body;
         }
@@ -2634,10 +2667,20 @@
         context.fabricSqlServer = fabricSqlServer(endpoint.connectionString);
         context.fabricSqlDatabase = endpoint.id;
 
-        if (!isGuid(target.fabricDataverseConnectionId)) {
-          addManual(
-            "No Fabric cloud connection to this Dataverse environment is configured. Create it in Fabric > Settings > Manage connections and gateways, then enter its id."
+        context.dataverseConnectionId = target.fabricDataverseConnectionId;
+        if (!isGuid(context.dataverseConnectionId)) {
+          var connections = await direct.listDataverseConnections(
+            "https://" + context.environmentDomain
           );
+          if (!connections.length) {
+            throw new Error(
+              "No Fabric Dataverse connection for this environment was found. Create one in Fabric > Settings > Manage connections and gateways, then run setup again."
+            );
+          }
+          var workspaceIdentity = connections.filter(function (connection) {
+            return connection.credentialType === "WorkspaceIdentity";
+          });
+          context.dataverseConnectionId = (workspaceIdentity[0] || connections[0]).id;
         }
         return "Workspace '" + workspace.displayName + "' and lakehouse '" + serving.displayName + "' resolved.";
       },
@@ -2788,7 +2831,7 @@
             fabricWorkspaceId: (context.workspace && context.workspace.id) || target.fabricWorkspaceId || "",
             fabricServingLakehouseId:
               (context.serving && context.serving.id) || target.fabricServingLakehouseId || "",
-            fabricDataverseConnectionId: target.fabricDataverseConnectionId || "",
+            fabricDataverseConnectionId: context.dataverseConnectionId || "",
             fabricDataverseDeltaFolder: target.fabricDataverseDeltaFolder,
             dataverseEnvironmentUrl: "https://" + context.environmentDomain,
             behavioralApiKey: context.apiKey,
@@ -3096,7 +3139,7 @@
         return !variables[name];
       }),
       mode: resolution,
-      target: mergeConfiguration(stored.target),
+      target: applyAutomaticTarget(stored.target),
       state: (stored && stored.state) || {},
       facts: (stored && stored.facts) || {},
       environmentDomain: environmentDomain(environmentUrl),
@@ -3159,6 +3202,7 @@
     FABRIC_SCOPE: FABRIC_SCOPE,
     TARGET_KEYS: TARGET_KEYS,
     TARGET_DEFAULTS: TARGET_DEFAULTS,
+    applyAutomaticTarget: applyAutomaticTarget,
     FABRIC_DELEGATED_SCOPES: FABRIC_DELEGATED_SCOPES,
     isGuid: isGuid,
     isHttpsUrl: isHttpsUrl,

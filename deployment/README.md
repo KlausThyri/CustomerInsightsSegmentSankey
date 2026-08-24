@@ -39,9 +39,10 @@ Both drive the same steps, use the same step ids, and produce the same result.
    When a new Fabric workspace must be created, **Load capacities** lists the
    active Fabric capacities available to the signed-in account. An existing
    workspace does not require a capacity selection.
-   Each field is visibly marked as required, conditionally required, or
-   optional. Azure and Fabric resources are loaded into dropdowns; only new
-   resource names and technical values remain free-text fields.
+   Only subscription and Resource Group are required for a new installation.
+   Setup generates and discovers the remaining values. **Advanced options**
+   allows overriding them or selecting an existing Fabric Capacity; otherwise
+   setup chooses a suitable active capacity automatically.
 5. Press **Preview** to see the plan, the consent checklist and the exact set of
    changes - nothing is written.
 6. Press **Install everything**. You are asked to sign in to Microsoft once, in a

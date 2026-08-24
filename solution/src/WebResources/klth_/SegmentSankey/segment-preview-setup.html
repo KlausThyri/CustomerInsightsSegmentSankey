@@ -536,7 +536,21 @@
 
       <div class="mode-banner" id="sessionBanner" hidden></div>
 
+      <p class="lead">
+        For a new installation, select only the Azure subscription and Resource Group.
+        Setup generates and discovers everything else automatically.
+      </p>
       <div class="field-grid" id="targetFields"></div>
+      <details class="connect" id="targetAdvanced">
+        <summary>Advanced options (optional)</summary>
+        <div class="connect-body">
+          <p class="lead">
+            Override automatically generated values or choose an existing Fabric Capacity,
+            workspace, lakehouse, or connection.
+          </p>
+          <div class="field-grid" id="advancedTargetFields"></div>
+        </div>
+      </details>
 
       <div class="panel-actions">
         <button class="button primary" id="panelProvisionButton" type="button">Install everything</button>
@@ -637,6 +651,7 @@
       const setupCenter = document.getElementById("setupCenter");
       const modeBanner = document.getElementById("modeBanner");
       const targetFields = document.getElementById("targetFields");
+      const advancedTargetFields = document.getElementById("advancedTargetFields");
       const progressList = document.getElementById("progressList");
       const manualList = document.getElementById("manualList");
       const consentList = document.getElementById("consentList");
@@ -678,15 +693,15 @@
       const FIELDS = [
         { key: "subscriptionId", label: "Azure subscription", requirement: "required", hint: "Hosts the Azure API." },
         { key: "resourceGroup", label: "Resource group", requirement: "required", hint: "Select an existing group or create a new one." },
-        { key: "location", label: "Azure region", requirement: "required", hint: "Region for newly created Azure resources." },
-        { key: "webAppName", label: "Web App name", requirement: "required", hint: "Must be globally unique; becomes <name>.azurewebsites.net." },
-        { key: "fabricWorkspaceId", label: "Fabric workspace", requirement: "required", hint: "Select an existing workspace or create a new one." },
-        { key: "fabricWorkspaceName", label: "New Fabric workspace name", requirement: "conditional", hint: "Required only when creating a new workspace." },
-        { key: "fabricCapacityId", label: "Fabric capacity", requirement: "conditional", hint: "Required only when creating a new workspace." },
-        { key: "fabricServingLakehouseId", label: "Serving lakehouse", requirement: "optional", hint: "Select an existing lakehouse or let setup create one." },
-        { key: "fabricDataverseConnectionId", label: "Fabric Dataverse connection", requirement: "required", hint: "Connection to this Dataverse environment." },
-        { key: "fabricDataverseDeltaFolder", label: "Dataverse delta folder", requirement: "required", hint: "Folder of the Dataverse mirror inside the lakehouse." },
-        { key: "requiredDataverseTables", label: "Required Dataverse tables", requirement: "required", hint: "Comma-separated list validated during setup." }
+        { key: "location", label: "Azure region", requirement: "optional", hint: "Automatically defaults to West Europe or the selected Resource Group region." },
+        { key: "webAppName", label: "Web App name", requirement: "optional", hint: "Automatically generated as a globally unique name." },
+        { key: "fabricWorkspaceId", label: "Fabric workspace", requirement: "optional", hint: "Setup reuses the generated name or creates a workspace automatically." },
+        { key: "fabricWorkspaceName", label: "New Fabric workspace name", requirement: "optional", hint: "Automatically generated from the Resource Group name." },
+        { key: "fabricCapacityId", label: "Fabric capacity", requirement: "optional", hint: "Optionally select an existing capacity; otherwise setup chooses a suitable active capacity." },
+        { key: "fabricServingLakehouseId", label: "Serving lakehouse", requirement: "optional", hint: "Setup reuses or creates the serving lakehouse automatically." },
+        { key: "fabricDataverseConnectionId", label: "Fabric Dataverse connection", requirement: "optional", hint: "Automatically selects a matching connection for this environment." },
+        { key: "fabricDataverseDeltaFolder", label: "Dataverse delta folder", requirement: "optional", hint: "Defaults to deltalake." },
+        { key: "requiredDataverseTables", label: "Required Dataverse tables", requirement: "optional", hint: "Uses the product defaults unless overridden." }
       ];
 
       function getXrm() {
@@ -971,6 +986,7 @@
 
       function renderFields(target) {
         targetFields.replaceChildren();
+        advancedTargetFields.replaceChildren();
         FIELDS.forEach(field => {
           const wrapper = document.createElement("div");
           wrapper.className =
@@ -1058,7 +1074,11 @@
             input.dataset.key = field.key;
             wrapper.append(label, input, hint, error);
           }
-          targetFields.append(wrapper);
+          const host =
+            field.key === "subscriptionId" || field.key === "resourceGroup"
+              ? targetFields
+              : advancedTargetFields;
+          host.append(wrapper);
         });
       }
 
@@ -1367,7 +1387,8 @@
 
       function readFields() {
         const values = {};
-        targetFields.querySelectorAll("[data-key]").forEach(input => {
+        document.querySelectorAll("#targetFields [data-key], #advancedTargetFields [data-key]")
+          .forEach(input => {
           if (input.dataset.key === "resourceGroup" && input.value === "__new__") {
             values[input.dataset.key] =
               (document.getElementById("field-resourceGroup-new")?.value || "").trim();
@@ -1387,7 +1408,8 @@
       }
 
       function showFieldErrors(errors) {
-        targetFields.querySelectorAll("[data-key]").forEach(input => {
+        document.querySelectorAll("#targetFields [data-key], #advancedTargetFields [data-key]")
+          .forEach(input => {
           input.removeAttribute("aria-invalid");
           const error = document.getElementById("error-" + input.dataset.key);
           if (error) {
@@ -2039,7 +2061,7 @@
           );
           return;
         }
-        const target = readFields();
+        const target = engine.applyAutomaticTarget(readFields());
         const validation = engine.validateTarget(target);
         showFieldErrors(validation.errors);
         if (!validation.valid) {
@@ -2211,7 +2233,7 @@
         if (!engine || state.loading) return;
         setBusy(true);
         try {
-          state.target = readFields();
+          state.target = engine.applyAutomaticTarget(readFields());
           await engine.saveSetupContext(
             dataverseClient(),
             state.target,

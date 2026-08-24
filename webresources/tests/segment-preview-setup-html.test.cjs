@@ -133,6 +133,15 @@ test("required and optional fields are explicit and tenant resources use selecto
   assert.ok(code.includes("direct.listDataverseConnections"));
 });
 
+test("new installation exposes only subscription and resource group as required", () => {
+  const code = inlineScripts(html).join("\n");
+  assert.match(html, /select only the Azure subscription and Resource Group/i);
+  assert.match(html, /id="targetAdvanced"[\s\S]*Advanced options \(optional\)/);
+  assert.ok(code.includes("engine.applyAutomaticTarget(readFields())"));
+  assert.equal((code.match(/requirement:\s*"required"/g) || []).length, 2);
+  assert.equal((code.match(/requirement:\s*"optional"/g) || []).length, 9);
+});
+
 test("Azure and Fabric selectors are stacked and constrained within the setup grid", () => {
   const code = inlineScripts(html).join("\n");
   assert.match(html, /\.selector-field\s*\{[^}]*grid-column:\s*1\s*\/\s*-1[^}]*width:\s*min\(100%,\s*560px\)/);

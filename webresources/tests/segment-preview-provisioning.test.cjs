@@ -110,26 +110,26 @@ test("requiredTables de-duplicates, lower-cases, sorts, and validates", () => {
   assert.throws(() => engine.requiredTables("bad table"), /not a valid Dataverse table name/);
 });
 
-test("validateTarget reports every missing field", () => {
+test("validateTarget requires only subscription and resource group for a new installation", () => {
   const result = engine.validateTarget({});
   assert.equal(result.valid, false);
   const fields = result.errors.map((error) => error.field);
-  assert.ok(fields.includes("subscriptionId"));
-  assert.ok(fields.includes("resourceGroup"));
-  assert.ok(fields.includes("webAppName"));
-  assert.ok(fields.includes("fabricWorkspaceId"));
+  assert.deepEqual(fields, ["subscriptionId", "resourceGroup"]);
 });
 
-test("validateTarget requires a capacity id when the workspace must be created", () => {
-  const result = engine.validateTarget({
+test("automatic target derives all new-installation defaults without requiring a capacity", () => {
+  const input = {
     subscriptionId: "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6",
-    resourceGroup: "rg-segment-preview",
-    location: "westeurope",
-    webAppName: "segment-preview-api",
-    fabricWorkspaceName: "Segment Preview"
-  });
-  assert.equal(result.valid, false);
-  assert.ok(result.errors.some((error) => error.field === "fabricCapacityId"));
+    resourceGroup: "rg-segment-preview"
+  };
+  const target = engine.applyAutomaticTarget(input);
+  assert.equal(target.location, "westeurope");
+  assert.match(target.webAppName, /^segment-preview-6f6c1f2e-[a-z0-9]+$/);
+  assert.equal(target.fabricWorkspaceName, "rg-segment-preview Segment Preview");
+  assert.equal(target.fabricServingLakehouseName, "SegmentPreviewServing");
+  assert.equal(target.fabricDataverseDeltaFolder, "deltalake");
+  assert.equal(target.fabricCapacityId, undefined);
+  assert.deepEqual(engine.validateTarget(input), { valid: true, errors: [] });
 });
 
 test("validateTarget accepts a complete configuration", () => {

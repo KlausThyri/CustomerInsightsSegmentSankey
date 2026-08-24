@@ -43,9 +43,11 @@ installed on your computer.**
 6. Press **Preview** to see the plan and the consent checklist, then
    **Install everything** and sign in once when the pop-up appears.
 
-Every setup field is marked **Required**, **Required when creating new**, or
-**Optional**. Tenant resources are selected from dropdowns; free text is used
-only for new resource names and technical configuration values.
+For a new installation, only **Azure subscription** and **Resource Group** are
+required selections. Setup generates the remaining names and defaults,
+discovers the matching Fabric connection, and creates or reuses the workspace
+and lakehouse. An existing Fabric Capacity can optionally be selected under
+**Advanced options**; otherwise setup chooses a suitable active capacity.
 
 The Setup Center deploys the Azure infrastructure and API, discovers or creates
 the Fabric workspace, serving lakehouse, bootstrap notebook and workspace
