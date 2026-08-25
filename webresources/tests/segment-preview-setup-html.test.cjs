@@ -65,7 +65,7 @@ test("the provisioning engine and Azure template are loaded before the inline lo
 test("all external setup scripts use the current cache-busting revision", () => {
   const external = externalScripts(html);
   assert.equal(external.length, 3);
-  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.11$/));
+  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.12$/));
 });
 
 test("the Azure infrastructure step renders an accessible nested progress indicator", () => {

@@ -1514,6 +1514,44 @@ test("direct client confirms a hidden Fabric connection role after a generic cre
   assert.equal(fetchImpl.calls.length, 3);
 });
 
+test("direct client explains that workspace admin cannot reshare a Dataverse connection", async () => {
+  const connectionId = "a45e4c00-1625-43aa-8a2a-c64eade09e0e";
+  const principalId = "99999999-8888-7777-6666-555555555555";
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.endsWith(`/connections/${connectionId}/roleAssignments`),
+      respond: () => jsonResponse(200, { value: [] })
+    },
+    {
+      match: (request) => request.init.method === "POST",
+      respond: () =>
+        jsonResponse(400, {
+          error: { message: "An error occurred while processing the operation" }
+        })
+    },
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.endsWith(
+          `/connections/${connectionId}/roleAssignments/${principalId}`
+        ),
+      respond: () => jsonResponse(404, { error: { message: "Not found" } })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  await assert.rejects(
+    () => direct.ensureConnectionRoleAssignment(connectionId, principalId),
+    /Workspace Admin.*Owner or UserWithReshare/
+  );
+});
+
 test("direct client reuses an existing Fabric workspace role", async () => {
   const workspaceId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
   const principalId = "99999999-8888-7777-6666-555555555555";
@@ -2253,8 +2291,10 @@ function directHarness(options = {}) {
     async ensureConnectionRoleAssignment(connectionId, principalId) {
       calls.push({ kind: "ensureConnectionRoleAssignment", connectionId, principalId });
       if (options.connectionRoleFails) {
-        const failure = new Error("Forbidden");
-        failure.status = 403;
+        const failure = new Error(
+          options.connectionRoleFailureMessage || "Forbidden"
+        );
+        failure.status = options.connectionRoleFailureStatus || 403;
         throw failure;
       }
       return { created: !options.connectionRoleExists };
@@ -2857,6 +2897,30 @@ test("missing connection scope names Connection.ReadWrite.All and reshare access
   assert.match(step.message, /Connection\.ReadWrite\.All/);
   assert.match(step.message, /Owner or UserWithReshare/);
   assert.match(step.message, /admin consent/i);
+});
+
+test("a generic Fabric connection failure explains that workspace admin is insufficient", async () => {
+  const direct = directHarness({
+    connectionRoleFails: true,
+    connectionRoleFailureStatus: 400,
+    connectionRoleFailureMessage: "An error occurred while processing the operation"
+  });
+  const digest = await sha256Of(direct.packageBytes);
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: { apiPackageUrl: "https://contoso.example.com/a.zip " + digest }
+  });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "fabric-connection-permissions");
+  const step = result.results.find(
+    (entry) => entry.id === "fabric-connection-permissions"
+  );
+  assert.match(step.message, /Workspace Admin.*not sufficient/);
+  assert.match(step.message, /Manage connections and gateways/);
+  assert.match(step.message, /Owner or UserWithReshare/);
 });
 
 test("the browser never downloads the package itself", async () => {

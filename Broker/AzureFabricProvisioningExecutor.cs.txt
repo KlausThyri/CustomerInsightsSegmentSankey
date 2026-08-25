@@ -284,7 +284,7 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
         {
             return StepOutcome.ActionRequired(
                 "The Dataverse connection role assignment was refused: " + exception.Message,
-                "Grant Connection.ReadWrite.All admin consent. The signed-in administrator must be Owner or UserWithReshare on the selected connection.");
+                "Workspace Admin, Fabric Admin, and Power Platform Admin are not sufficient. In Fabric, open Settings > Manage connections and gateways, select the Dataverse connection, and have its connection owner grant the signed-in user Owner or UserWithReshare access.");
         }
     }
 

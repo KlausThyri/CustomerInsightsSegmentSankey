@@ -2070,6 +2070,20 @@
       return items;
     }
 
+    async function fabricPrincipalId() {
+      try {
+        var token = await getToken(settings.fabricScope || FABRIC_SCOPE);
+        var part = String(token).split(".")[1];
+        if (!part) return "";
+        var base64 = part.replace(/-/g, "+").replace(/_/g, "/");
+        while (base64.length % 4) base64 += "=";
+        var claims = JSON.parse(atob(base64));
+        return String(claims.oid || claims.sub || "").toLowerCase();
+      } catch (error) {
+        return "";
+      }
+    }
+
     async function listSubscriptions() {
       var subscriptions = [];
       var next = "/subscriptions";
@@ -2203,6 +2217,11 @@
         encodeURIComponent(connectionId) +
         "/roleAssignments";
       var assignments = await fabricCollection(path);
+      var callerId = await fabricPrincipalId();
+      var callerAssignment = assignments.find(function (assignment) {
+        var principal = assignment && assignment.principal;
+        return String((principal && principal.id) || assignment.id || "").toLowerCase() === callerId;
+      });
       var existing = assignments.find(function (assignment) {
         var principal = assignment && assignment.principal;
         return String((principal && principal.id) || assignment.id || "").toLowerCase() ===
@@ -2224,7 +2243,20 @@
           );
           return { created: false, assignment: confirmed.body || null };
         } catch (confirmationError) {
-          throw error;
+          var callerRole = callerAssignment && callerAssignment.role;
+          var roleDetail = callerRole
+            ? "Your role on this connection is '" + callerRole + "'. "
+            : "Your Owner or UserWithReshare role on this connection could not be confirmed. ";
+          var permissionError = new Error(
+            "Fabric refused to share the selected Dataverse connection with the managed identity. " +
+            roleDetail +
+            "Workspace Admin, Fabric Admin, and Power Platform Admin do not grant permission to reshare a connection. " +
+            "In Fabric, open Settings > Manage connections and gateways, select this Dataverse connection, " +
+            "and have its connection owner grant you Owner or UserWithReshare access."
+          );
+          permissionError.status = error.status;
+          permissionError.body = error.body;
+          throw permissionError;
         }
       }
       return { created: true, assignment: response.body || null };
@@ -3150,6 +3182,20 @@
             ? "User access to the Dataverse connection assigned to the managed identity."
             : "The managed identity already has access to the Dataverse connection.";
         } catch (error) {
+          if (
+            error.status === 400 ||
+            /refused to share|owner or userwithreshare|processing the operation/i.test(
+              String(error && error.message)
+            )
+          ) {
+            var connectionOwnerMessage =
+              "The selected Fabric Dataverse connection cannot be shared by the signed-in user. " +
+              "Workspace Admin, Fabric Admin, and Power Platform Admin are not sufficient. In Fabric, open " +
+              "Settings > Manage connections and gateways, select the Dataverse connection, and have its connection " +
+              "owner grant you Owner or UserWithReshare access. Then close and reopen Setup and install again.";
+            addManual(connectionOwnerMessage);
+            throw new Error(connectionOwnerMessage + "\n" + error.message);
+          }
           if (
             error.status === 401 ||
             error.status === 403 ||
