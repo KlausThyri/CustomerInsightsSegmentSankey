@@ -98,6 +98,12 @@
       border-bottom: 1px solid var(--cp-border);
     }
     .header-copy { min-width: 0; }
+    .title-row {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 8px;
+    }
     h1 {
       overflow: hidden;
       margin: 0;
@@ -105,6 +111,17 @@
       font-weight: 600;
       line-height: 1.4;
       text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .app-version {
+      flex: 0 0 auto;
+      border: 1px solid var(--cp-border);
+      border-radius: 999px;
+      padding: 2px 7px;
+      background: var(--cp-surface-soft);
+      color: var(--cp-text-muted);
+      font-size: 11px;
+      font-weight: 600;
       white-space: nowrap;
     }
     .metadata {
@@ -470,7 +487,10 @@
   <main class="app">
     <header class="header">
       <div class="header-copy">
-        <h1 id="segment-name">Segment</h1>
+        <div class="title-row">
+          <h1 id="segment-name">Segment</h1>
+          <span class="app-version" aria-label="Version 1.1.0.16">v1.1.0.16</span>
+        </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
           <span id="load-duration">Load time pending</span>

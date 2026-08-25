@@ -93,6 +93,22 @@
       font-size: 24px;
       font-weight: 600;
     }
+    .title-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .app-version {
+      border: 1px solid var(--cp-border);
+      border-radius: 999px;
+      padding: 2px 7px;
+      background: var(--cp-surface-soft);
+      color: var(--cp-text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
     .subtitle {
       color: var(--cp-text-muted);
     }
@@ -271,7 +287,10 @@
   <main class="shell">
     <header class="header">
       <div>
-        <h1 id="title">Segment members</h1>
+        <div class="title-row">
+          <h1 id="title">Segment members</h1>
+          <span class="app-version" aria-label="Version 1.1.0.16">v1.1.0.16</span>
+        </div>
         <div class="subtitle" id="subtitle">Members in the selected flow element</div>
       </div>
       <div class="count" id="member-count">0 members</div>

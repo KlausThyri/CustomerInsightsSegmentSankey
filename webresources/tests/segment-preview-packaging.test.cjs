@@ -20,6 +20,11 @@ const buildScript = fs.readFileSync(
   path.join(repoRoot, "solution", "build-solution.ps1"),
   "utf8"
 );
+const userInterfaces = [
+  "segment-preview-setup.html",
+  "segment-sankey.html",
+  "segment-members.html"
+];
 
 const NEW_WEB_RESOURCES = [
   "segment-preview-provisioning.js",
@@ -41,6 +46,16 @@ test("the solution version is ahead of the shipped 1.0.0.0 build", () => {
   const shipped = [1, 0, 0, 0];
   const ahead = parts.some((value, index) => value > shipped[index]);
   assert.ok(ahead, `solution version ${match[1]} must be greater than 1.0.0.0`);
+});
+
+test("every user interface displays the current solution version", () => {
+  const match = /<Version>([\d.]+)<\/Version>/.exec(solutionXml);
+  assert.ok(match, "no solution version element found");
+  userInterfaces.forEach((file) => {
+    const html = fs.readFileSync(path.join(repoRoot, "webresources", file), "utf8");
+    assert.match(html, new RegExp(`aria-label="Version ${match[1].replace(/\./g, "\\.")}"`));
+    assert.match(html, new RegExp(`>v${match[1].replace(/\./g, "\\.")}<`));
+  });
 });
 
 test("the provisioning web resources are declared as root components", () => {

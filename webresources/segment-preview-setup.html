@@ -105,6 +105,23 @@
       font-weight: 650;
       letter-spacing: -.03em;
     }
+    .title-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .app-version {
+      border: 1px solid var(--cp-border);
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: var(--cp-surface-soft);
+      color: var(--cp-text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: normal;
+      white-space: nowrap;
+    }
     .intro {
       max-width: 720px;
       margin: 12px 0 0;
@@ -558,7 +575,10 @@
     <header class="hero">
       <div>
         <p class="eyebrow">Customer Insights – Journeys</p>
-        <h1>Segment Preview</h1>
+        <div class="title-row">
+          <h1>Segment Preview</h1>
+          <span class="app-version" aria-label="Version 1.1.0.16">v1.1.0.16</span>
+        </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
           provision missing Fabric components.
@@ -778,9 +798,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.15"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.15"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.15"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.16"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.16"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.16"></script>
 
   <script>
     (() => {
