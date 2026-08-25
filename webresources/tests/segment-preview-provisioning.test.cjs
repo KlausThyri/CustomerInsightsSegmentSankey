@@ -1465,6 +1465,55 @@ test("direct client grants a missing Fabric connection role idempotently", async
   assert.equal(existingFetch.calls.length, 1);
 });
 
+test("direct client confirms a hidden Fabric connection role after a generic create error", async () => {
+  const connectionId = "a45e4c00-1625-43aa-8a2a-c64eade09e0e";
+  const principalId = "99999999-8888-7777-6666-555555555555";
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.endsWith(`/connections/${connectionId}/roleAssignments`),
+      respond: () => jsonResponse(200, { value: [] })
+    },
+    {
+      match: (request) =>
+        request.init.method === "POST" &&
+        request.url.endsWith(`/connections/${connectionId}/roleAssignments`),
+      respond: () =>
+        jsonResponse(400, {
+          error: { message: "An error occurred while processing the operation" }
+        })
+    },
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.endsWith(
+          `/connections/${connectionId}/roleAssignments/${principalId}`
+        ),
+      respond: () =>
+        jsonResponse(200, {
+          id: principalId,
+          principal: { id: principalId, type: "ServicePrincipal" },
+          role: "User"
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  const result = await direct.ensureConnectionRoleAssignment(
+    connectionId,
+    principalId
+  );
+
+  assert.equal(result.created, false);
+  assert.equal(result.assignment.id, principalId);
+  assert.equal(fetchImpl.calls.length, 3);
+});
+
 test("direct client reuses an existing Fabric workspace role", async () => {
   const workspaceId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
   const principalId = "99999999-8888-7777-6666-555555555555";

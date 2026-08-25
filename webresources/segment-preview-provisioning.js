@@ -2210,10 +2210,23 @@
       });
       if (existing) return { created: false, assignment: existing };
 
-      var response = await fabric("POST", path, {
-        principal: { id: principalId, type: "ServicePrincipal" },
-        role: "User"
-      });
+      var response;
+      try {
+        response = await fabric("POST", path, {
+          principal: { id: principalId, type: "ServicePrincipal" },
+          role: "User"
+        });
+      } catch (error) {
+        try {
+          var confirmed = await fabric(
+            "GET",
+            path + "/" + encodeURIComponent(principalId)
+          );
+          return { created: false, assignment: confirmed.body || null };
+        } catch (confirmationError) {
+          throw error;
+        }
+      }
       return { created: true, assignment: response.body || null };
     }
 

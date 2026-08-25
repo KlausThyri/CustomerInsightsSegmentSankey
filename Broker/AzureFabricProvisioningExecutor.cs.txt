@@ -242,16 +242,37 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
                 string.Equals(Text(assignedPrincipal, "id"), principalId, StringComparison.OrdinalIgnoreCase));
             if (!exists)
             {
-                await FabricAsync(
-                    context,
-                    HttpMethod.Post,
-                    "connections/" + Uri.EscapeDataString(connectionId) + "/roleAssignments",
-                    new
+                var path = "connections/" + Uri.EscapeDataString(connectionId) + "/roleAssignments";
+                try
+                {
+                    await FabricAsync(
+                        context,
+                        HttpMethod.Post,
+                        path,
+                        new
+                        {
+                            principal = new { id = principalId, type = "ServicePrincipal" },
+                            role = "User"
+                        },
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (ProvisioningRequestException postException)
+                {
+                    try
                     {
-                        principal = new { id = principalId, type = "ServicePrincipal" },
-                        role = "User"
-                    },
-                    cancellationToken).ConfigureAwait(false);
+                        await FabricAsync(
+                            context,
+                            HttpMethod.Get,
+                            path + "/" + Uri.EscapeDataString(principalId),
+                            null,
+                            cancellationToken).ConfigureAwait(false);
+                        exists = true;
+                    }
+                    catch (ProvisioningRequestException)
+                    {
+                        throw postException;
+                    }
+                }
             }
 
             return StepOutcome.Succeeded(
