@@ -152,10 +152,32 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
 
         try
         {
-            await FabricAsync(context, HttpMethod.Post, "workspaces/" + workspaceId + "/roleAssignments",
-                new { principal = new { id = principalId, type = "ServicePrincipal" }, role = "Contributor" },
+            var path = "workspaces/" + Uri.EscapeDataString(workspaceId) + "/roleAssignments";
+            var assignments = await FabricCollectionAsync(
+                context,
+                path,
                 cancellationToken).ConfigureAwait(false);
-            return StepOutcome.Succeeded("The managed identity is a Contributor of the Fabric workspace.");
+            var exists = assignments.Any(assignment =>
+                string.Equals(Text(assignment, "id"), principalId, StringComparison.OrdinalIgnoreCase) ||
+                assignment.TryGetProperty("principal", out var assignedPrincipal) &&
+                string.Equals(Text(assignedPrincipal, "id"), principalId, StringComparison.OrdinalIgnoreCase));
+            if (!exists)
+            {
+                await FabricAsync(
+                    context,
+                    HttpMethod.Post,
+                    path,
+                    new
+                    {
+                        principal = new { id = principalId, type = "ServicePrincipal" },
+                        role = "Contributor"
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+            return StepOutcome.Succeeded(
+                exists
+                    ? "The managed identity already has a workspace role."
+                    : "The managed identity is a Contributor of the Fabric workspace.");
         }
         catch (InvalidOperationException exception)
         {

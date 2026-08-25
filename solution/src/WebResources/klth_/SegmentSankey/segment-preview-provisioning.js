@@ -2200,6 +2200,26 @@
       return { created: true, assignment: response.body || null };
     }
 
+    async function ensureWorkspaceRoleAssignment(workspaceId, principalId) {
+      var path =
+        "workspaces/" +
+        encodeURIComponent(workspaceId) +
+        "/roleAssignments";
+      var assignments = await fabricCollection(path);
+      var existing = assignments.find(function (assignment) {
+        var principal = assignment && assignment.principal;
+        return String((principal && principal.id) || assignment.id || "").toLowerCase() ===
+          String(principalId).toLowerCase();
+      });
+      if (existing) return { created: false, assignment: existing };
+
+      var response = await fabric("POST", path, {
+        principal: { id: principalId, type: "ServicePrincipal" },
+        role: "Contributor"
+      });
+      return { created: true, assignment: response.body || null };
+    }
+
     async function ensureResourceGroup(subscriptionId, name, location) {
       var path = "/subscriptions/" + subscriptionId + "/resourcegroups/" + encodeURIComponent(name);
       try {
@@ -2394,6 +2414,7 @@
       listLakehouses: listLakehouses,
       listDataverseConnections: listDataverseConnections,
       ensureConnectionRoleAssignment: ensureConnectionRoleAssignment,
+      ensureWorkspaceRoleAssignment: ensureWorkspaceRoleAssignment,
       listResourceGroups: listResourceGroups,
       ensureResourceGroup: ensureResourceGroup,
       deployTemplate: deployTemplate,
@@ -3021,11 +3042,13 @@
         if (mode === "broker") return brokerDelegate("fabric-permissions");
         requireFact(context.principalId, "azure-infra", "The Web App managed identity object id");
         requireFact(context.workspace && context.workspace.id, "fabric-discovery", "The Fabric workspace id");
-        await direct.fabric("POST", "workspaces/" + context.workspace.id + "/roleAssignments", {
-          principal: { id: context.principalId, type: "ServicePrincipal" },
-          role: "Contributor"
-        });
-        return "Contributor role assigned to the managed identity.";
+        var assignment = await direct.ensureWorkspaceRoleAssignment(
+          context.workspace.id,
+          context.principalId
+        );
+        return assignment.created
+          ? "Contributor role assigned to the managed identity."
+          : "The managed identity already has a workspace role.";
       },
 
       "fabric-connection-permissions": async function () {

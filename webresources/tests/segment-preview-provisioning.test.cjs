@@ -1411,6 +1411,40 @@ test("direct client grants a missing Fabric connection role idempotently", async
   assert.equal(existingFetch.calls.length, 1);
 });
 
+test("direct client reuses an existing Fabric workspace role", async () => {
+  const workspaceId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const principalId = "99999999-8888-7777-6666-555555555555";
+  const fetchImpl = createFetchMock([
+    {
+      repeat: true,
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.endsWith(`/workspaces/${workspaceId}/roleAssignments`),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              id: "assignment-id",
+              principal: { id: principalId, type: "ServicePrincipal" },
+              role: "Contributor"
+            }
+          ]
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+  const result = await direct.ensureWorkspaceRoleAssignment(
+    workspaceId,
+    principalId
+  );
+  assert.equal(result.created, false);
+  assert.equal(fetchImpl.calls.length, 1);
+});
+
 test("direct client follows Fabric continuation links", async () => {
   const fetchImpl = createFetchMock([
     {
@@ -2037,6 +2071,10 @@ function directHarness(options = {}) {
       }
       return { created: !options.connectionRoleExists };
     },
+    async ensureWorkspaceRoleAssignment(workspaceId, principalId) {
+      calls.push({ kind: "ensureWorkspaceRoleAssignment", workspaceId, principalId });
+      return { created: !options.workspaceRoleExists };
+    },
     async deployTemplate(subscriptionId, resourceGroup, name, template, parameters) {
       calls.push({ kind: "deployTemplate", subscriptionId, resourceGroup, name, parameters });
       if (
@@ -2516,6 +2554,19 @@ test("the managed identity receives automatic access to the Dataverse connection
   assert.match(step.message, /User access.*assigned/i);
 });
 
+test("a repeated run accepts the managed identity's existing workspace role", async () => {
+  const direct = directHarness({ workspaceRoleExists: true });
+  const digest = await sha256Of(direct.packageBytes);
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: { apiPackageUrl: "https://contoso.example.com/a.zip " + digest }
+  });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  const step = result.results.find((entry) => entry.id === "fabric-permissions");
+  assert.match(step.message, /already has a workspace role/i);
+});
+
 test("missing connection scope names Connection.ReadWrite.All and reshare access", async () => {
   const direct = directHarness({ connectionRoleFails: true });
   const digest = await sha256Of(direct.packageBytes);
@@ -2815,9 +2866,9 @@ test("a resumed run recovers the earlier key from the Web App and writes it agai
   const permissions = result.results.find((entry) => entry.id === "fabric-permissions");
   assert.equal(permissions.status, "succeeded");
   assert.match(permissions.message, /Contributor role assigned/);
-  const role = direct.calls.find((call) => call.kind === "fabric" && /roleAssignments$/.test(call.path));
-  assert.equal(role.body.principal.id, "99999999-8888-7777-6666-555555555555");
-  assert.equal(role.path, `workspaces/${VALID_TARGET.fabricWorkspaceId}/roleAssignments`);
+  const role = direct.calls.find((call) => call.kind === "ensureWorkspaceRoleAssignment");
+  assert.equal(role.principalId, "99999999-8888-7777-6666-555555555555");
+  assert.equal(role.workspaceId, VALID_TARGET.fabricWorkspaceId);
 });
 
 test("a resumed pre-package run redeploys Azure so the current API package is installed", async () => {
