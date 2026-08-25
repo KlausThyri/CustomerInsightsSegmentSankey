@@ -23,6 +23,7 @@ public static class BrokerContract
         "fabric-notebook",
         "azure-infra",
         "fabric-permissions",
+        "fabric-connection-permissions",
         "azure-app",
         "dataverse-config",
         "verify"

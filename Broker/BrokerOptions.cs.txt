@@ -56,8 +56,9 @@ public sealed class BrokerOptions
         "https://management.azure.com/user_impersonation",
         "https://api.fabric.microsoft.com/Workspace.ReadWrite.All",
         "https://api.fabric.microsoft.com/Item.ReadWrite.All",
+        "https://api.fabric.microsoft.com/Item.Execute.All",
         "https://api.fabric.microsoft.com/Capacity.Read.All",
-        "https://api.fabric.microsoft.com/Connection.Read.All"
+        "https://api.fabric.microsoft.com/Connection.ReadWrite.All"
     };
 
     /// <summary>True when an identity has been supplied, so the sign-in flow can run.</summary>

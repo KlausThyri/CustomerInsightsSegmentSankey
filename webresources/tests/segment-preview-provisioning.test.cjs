@@ -1345,6 +1345,72 @@ test("direct client discovers selectable Azure and Fabric resources", async () =
   );
 });
 
+test("direct client grants a missing Fabric connection role idempotently", async () => {
+  const connectionId = "a45e4c00-1625-43aa-8a2a-c64eade09e0e";
+  const principalId = "99999999-8888-7777-6666-555555555555";
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.endsWith(`/connections/${connectionId}/roleAssignments`),
+      respond: () => jsonResponse(200, { value: [] })
+    },
+    {
+      match: (request) =>
+        request.init.method === "POST" &&
+        request.url.endsWith(`/connections/${connectionId}/roleAssignments`),
+      respond: () =>
+        jsonResponse(201, {
+          id: principalId,
+          principal: { id: principalId, type: "ServicePrincipal" },
+          role: "User"
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+  const result = await direct.ensureConnectionRoleAssignment(
+    connectionId,
+    principalId
+  );
+  assert.equal(result.created, true);
+  assert.deepEqual(JSON.parse(fetchImpl.calls[1].init.body), {
+    principal: { id: principalId, type: "ServicePrincipal" },
+    role: "User"
+  });
+
+  const existingFetch = createFetchMock([
+    {
+      repeat: true,
+      match: () => true,
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              id: principalId,
+              principal: { id: principalId, type: "ServicePrincipal" },
+              role: "User"
+            }
+          ]
+        })
+    }
+  ]);
+  const existingDirect = engine.createDirectClient({
+    fetch: existingFetch,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+  const existing = await existingDirect.ensureConnectionRoleAssignment(
+    connectionId,
+    principalId
+  );
+  assert.equal(existing.created, false);
+  assert.equal(existingFetch.calls.length, 1);
+});
+
 test("direct client follows Fabric continuation links", async () => {
   const fetchImpl = createFetchMock([
     {
@@ -1962,6 +2028,15 @@ function directHarness(options = {}) {
       calls.push({ kind: "ensureResourceGroup", subscriptionId, resourceGroup });
       return { location: options.resourceGroupLocation || "westeurope" };
     },
+    async ensureConnectionRoleAssignment(connectionId, principalId) {
+      calls.push({ kind: "ensureConnectionRoleAssignment", connectionId, principalId });
+      if (options.connectionRoleFails) {
+        const failure = new Error("Forbidden");
+        failure.status = 403;
+        throw failure;
+      }
+      return { created: !options.connectionRoleExists };
+    },
     async deployTemplate(subscriptionId, resourceGroup, name, template, parameters) {
       calls.push({ kind: "deployTemplate", subscriptionId, resourceGroup, name, parameters });
       if (
@@ -2416,6 +2491,47 @@ test("App Service quota failure retries the Azure deployment in West Europe", as
   );
   const step = result.results.find((entry) => entry.id === "azure-infra");
   assert.match(step.message, /West Europe.*no B1 App Service quota/i);
+});
+
+test("the managed identity receives automatic access to the Dataverse connection", async () => {
+  const direct = directHarness();
+  const digest = await sha256Of(direct.packageBytes);
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: { apiPackageUrl: "https://contoso.example.com/a.zip " + digest }
+  });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  const assignment = direct.calls.find(
+    (call) => call.kind === "ensureConnectionRoleAssignment"
+  );
+  assert.equal(assignment.connectionId, VALID_TARGET.fabricDataverseConnectionId);
+  assert.equal(
+    assignment.principalId,
+    "99999999-8888-7777-6666-555555555555"
+  );
+  const step = result.results.find(
+    (entry) => entry.id === "fabric-connection-permissions"
+  );
+  assert.match(step.message, /User access.*assigned/i);
+});
+
+test("missing connection scope names Connection.ReadWrite.All and reshare access", async () => {
+  const direct = directHarness({ connectionRoleFails: true });
+  const digest = await sha256Of(direct.packageBytes);
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: { apiPackageUrl: "https://contoso.example.com/a.zip " + digest }
+  });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "fabric-connection-permissions");
+  const step = result.results.find(
+    (entry) => entry.id === "fabric-connection-permissions"
+  );
+  assert.match(step.message, /Connection\.ReadWrite\.All/);
+  assert.match(step.message, /Owner or UserWithReshare/);
+  assert.match(step.message, /admin consent/i);
 });
 
 test("the browser never downloads the package itself", async () => {
@@ -2963,7 +3079,7 @@ test("browser permissions cover Fabric provisioning and the notebook schedule", 
     "Item.ReadWrite.All",
     "Item.Execute.All",
     "Capacity.Read.All",
-    "Connection.Read.All"
+    "Connection.ReadWrite.All"
   ]);
   const arm = registration.permissions.find((entry) => entry.api === "Azure Service Management");
   assert.deepEqual(arm.scopes, ["user_impersonation"]);

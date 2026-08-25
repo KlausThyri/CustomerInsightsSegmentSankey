@@ -37,6 +37,7 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
         "fabric-notebook" => Task.FromResult(NotebookOutcome(context)),
         "azure-infra" => DeployAzureAsync(context, cancellationToken),
         "fabric-permissions" => GrantFabricAccessAsync(context, cancellationToken),
+        "fabric-connection-permissions" => GrantConnectionAccessAsync(context, cancellationToken),
         "azure-app" => ConfigureWebAppAsync(context, cancellationToken),
         _ => Task.FromResult(StepOutcome.Skipped("No service-side work is defined for " + stepId + "."))
     };
@@ -161,6 +162,56 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
             return StepOutcome.ActionRequired(
                 "The workspace role assignment was refused: " + exception.Message,
                 "Enable the Fabric tenant setting 'Service principals can use Fabric APIs' for a security group that contains the Web App managed identity, then install again.");
+        }
+    }
+
+    private async Task<StepOutcome> GrantConnectionAccessAsync(
+        ProvisioningContext context,
+        CancellationToken cancellationToken)
+    {
+        var connectionId = Trim(context.Request.Fabric?.DataverseConnectionId);
+        var principalId = context.Outputs.TryGetValue("principalId", out var principal) ? principal : null;
+        if (connectionId is null || principalId is null)
+        {
+            return StepOutcome.ActionRequired(
+                "The managed identity could not be granted connection access because the connection or identity is unknown.",
+                "Select a Fabric Dataverse connection and run the installation again.");
+        }
+
+        try
+        {
+            var assignments = await FabricCollectionAsync(
+                context,
+                "connections/" + Uri.EscapeDataString(connectionId) + "/roleAssignments",
+                cancellationToken).ConfigureAwait(false);
+            var exists = assignments.Any(assignment =>
+                string.Equals(Text(assignment, "id"), principalId, StringComparison.OrdinalIgnoreCase) ||
+                assignment.TryGetProperty("principal", out var assignedPrincipal) &&
+                string.Equals(Text(assignedPrincipal, "id"), principalId, StringComparison.OrdinalIgnoreCase));
+            if (!exists)
+            {
+                await FabricAsync(
+                    context,
+                    HttpMethod.Post,
+                    "connections/" + Uri.EscapeDataString(connectionId) + "/roleAssignments",
+                    new
+                    {
+                        principal = new { id = principalId, type = "ServicePrincipal" },
+                        role = "User"
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            return StepOutcome.Succeeded(
+                exists
+                    ? "The managed identity already has access to the Dataverse connection."
+                    : "The managed identity received User access to the Dataverse connection.");
+        }
+        catch (InvalidOperationException exception)
+        {
+            return StepOutcome.ActionRequired(
+                "The Dataverse connection role assignment was refused: " + exception.Message,
+                "Grant Connection.ReadWrite.All admin consent. The signed-in administrator must be Owner or UserWithReshare on the selected connection.");
         }
     }
 

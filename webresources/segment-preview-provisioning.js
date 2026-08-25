@@ -125,6 +125,7 @@
     { id: "fabric-notebook", name: "Publish the serving bootstrap notebook", phase: "Fabric" },
     { id: "azure-infra", name: "Deploy the Azure infrastructure", phase: "Azure" },
     { id: "fabric-permissions", name: "Grant Fabric access to the managed identity", phase: "Fabric" },
+    { id: "fabric-connection-permissions", name: "Grant Dataverse connection access to the managed identity", phase: "Fabric" },
     { id: "azure-app", name: "Deploy the Segment Preview API", phase: "Azure" },
     { id: "dataverse-config", name: "Write the Dataverse environment variables", phase: "Dataverse" },
     { id: "verify", name: "Verify the end-to-end setup", phase: "Verify" }
@@ -1242,7 +1243,7 @@
     "Item.ReadWrite.All",
     "Item.Execute.All",
     "Capacity.Read.All",
-    "Connection.Read.All"
+    "Connection.ReadWrite.All"
   ];
 
   var PORTAL_NEW_APP_URL =
@@ -2179,6 +2180,26 @@
         });
     }
 
+    async function ensureConnectionRoleAssignment(connectionId, principalId) {
+      var path =
+        "connections/" +
+        encodeURIComponent(connectionId) +
+        "/roleAssignments";
+      var assignments = await fabricCollection(path);
+      var existing = assignments.find(function (assignment) {
+        var principal = assignment && assignment.principal;
+        return String((principal && principal.id) || assignment.id || "").toLowerCase() ===
+          String(principalId).toLowerCase();
+      });
+      if (existing) return { created: false, assignment: existing };
+
+      var response = await fabric("POST", path, {
+        principal: { id: principalId, type: "ServicePrincipal" },
+        role: "User"
+      });
+      return { created: true, assignment: response.body || null };
+    }
+
     async function ensureResourceGroup(subscriptionId, name, location) {
       var path = "/subscriptions/" + subscriptionId + "/resourcegroups/" + encodeURIComponent(name);
       try {
@@ -2372,6 +2393,7 @@
       listWorkspaces: listWorkspaces,
       listLakehouses: listLakehouses,
       listDataverseConnections: listDataverseConnections,
+      ensureConnectionRoleAssignment: ensureConnectionRoleAssignment,
       listResourceGroups: listResourceGroups,
       ensureResourceGroup: ensureResourceGroup,
       deployTemplate: deployTemplate,
@@ -3004,6 +3026,38 @@
           role: "Contributor"
         });
         return "Contributor role assigned to the managed identity.";
+      },
+
+      "fabric-connection-permissions": async function () {
+        if (dryRun) return "The managed identity would receive User access to the Dataverse connection.";
+        if (mode === "broker") return brokerDelegate("fabric-connection-permissions");
+        requireFact(context.principalId, "azure-infra", "The Web App managed identity object id");
+        var connectionId = context.dataverseConnectionId || target.fabricDataverseConnectionId;
+        requireFact(connectionId, "fabric-discovery", "The Fabric Dataverse connection id");
+        try {
+          var assignment = await direct.ensureConnectionRoleAssignment(
+            connectionId,
+            context.principalId
+          );
+          return assignment.created
+            ? "User access to the Dataverse connection assigned to the managed identity."
+            : "The managed identity already has access to the Dataverse connection.";
+        } catch (error) {
+          if (
+            error.status === 401 ||
+            error.status === 403 ||
+            /insufficient scopes|does not have sufficient scopes|forbidden/i.test(String(error && error.message))
+          ) {
+            var connectionPermissionMessage =
+              "Fabric could not grant the managed identity access to the Dataverse connection. " +
+              "Add the delegated Power BI Service permission Connection.ReadWrite.All to the tenant application, " +
+              "grant admin consent, then close and reopen this setup page. The signed-in administrator must also " +
+              "be Owner or UserWithReshare on the selected connection.";
+            addManual(connectionPermissionMessage);
+            throw new Error(connectionPermissionMessage);
+          }
+          throw error;
+        }
       },
 
       "azure-app": async function () {

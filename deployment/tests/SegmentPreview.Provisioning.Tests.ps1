@@ -682,7 +682,8 @@ Describe 'Browser-only notebook and API deployment' {
     }
 
     It 'publishes the notebook from the browser through the Fabric definition API' {
-        $script:Engine | Should -Match 'updateDefinition\?updateMetadata=true'
+        $script:Engine | Should -Match '/updateDefinition\?updateMetadata='
+        $script:Engine | Should -Match 'definition\.parts\.some'
         $script:Engine | Should -Match 'InlineBase64'
         $script:Engine | Should -Match 'jobs/'
         $script:Engine | Should -Match 'buildNotebookDefinition'
@@ -771,7 +772,7 @@ Describe 'Browser-only notebook and API deployment' {
                 'FABRIC_DELEGATED_SCOPES\s*=\s*\[(?<body>[^\]]*)\]')).Groups['body'].Value
         $scopes | Should -Not -BeNullOrEmpty
         $names = [regex]::Matches($scopes, '"(?<n>[^"]+)"') | ForEach-Object { $_.Groups['n'].Value }
-        $names | Should -Be @('Workspace.ReadWrite.All', 'Item.ReadWrite.All', 'Capacity.Read.All', 'Connection.Read.All')
+        $names | Should -Be @('Workspace.ReadWrite.All', 'Item.ReadWrite.All', 'Item.Execute.All', 'Capacity.Read.All', 'Connection.ReadWrite.All')
     }
 }
 

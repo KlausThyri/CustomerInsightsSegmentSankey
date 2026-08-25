@@ -48,7 +48,8 @@ Sequence:
 | `DELETE` | `/v1/sessions/{id}` | Ends the session and drops the refresh token. |
 
 The service performs only the steps the browser cannot: `fabric-discovery`,
-`fabric-notebook`, `azure-infra`, `fabric-permissions`, `azure-app`. The
+`fabric-notebook`, `azure-infra`, `fabric-permissions`,
+`fabric-connection-permissions`, `azure-app`. The
 browser-owned steps (`preflight`, `consent`, `secret`, `dataverse-config`,
 `verify`) are always reported as `skipped`, so the same resource is never written
 twice.
