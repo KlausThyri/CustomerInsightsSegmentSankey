@@ -163,16 +163,26 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
                 string.Equals(Text(assignedPrincipal, "id"), principalId, StringComparison.OrdinalIgnoreCase));
             if (!exists)
             {
-                await FabricAsync(
-                    context,
-                    HttpMethod.Post,
-                    path,
-                    new
-                    {
-                        principal = new { id = principalId, type = "ServicePrincipal" },
-                        role = "Contributor"
-                    },
-                    cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await FabricAsync(
+                        context,
+                        HttpMethod.Post,
+                        path,
+                        new
+                        {
+                            principal = new { id = principalId, type = "ServicePrincipal" },
+                            role = "Contributor"
+                        },
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (ProvisioningRequestException exception)
+                    when (exception.ResponseBody.Contains(
+                        "principal already has a role assigned in the workspace",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    exists = true;
+                }
             }
             else
             {
@@ -583,6 +593,7 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
         {
             throw new ProvisioningRequestException(
                 response.StatusCode,
+                text,
                 method.Method + " " + Redact(url) + " failed with " + (int)response.StatusCode + ".");
         }
 
@@ -608,9 +619,11 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
 
     private sealed class ProvisioningRequestException(
         System.Net.HttpStatusCode statusCode,
+        string responseBody,
         string message) : InvalidOperationException(message)
     {
         public System.Net.HttpStatusCode StatusCode { get; } = statusCode;
+        public string ResponseBody { get; } = responseBody;
     }
 }
 

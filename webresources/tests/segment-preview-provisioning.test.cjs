@@ -529,6 +529,43 @@ test("dataverse client patches an existing value and posts a missing one", async
   assert.equal(written.length, 2, "an unchanged value must not be patched again");
 });
 
+test("dataverse client reset deletes only current environment variable values", async () => {
+  const fetchImpl = createFetchMock([
+    ENV_QUERY_ROUTE([
+      {
+        schemaname: "klth_SetupConfiguration",
+        environmentvariabledefinitionid: "d1",
+        defaultvalue: null,
+        environmentvariabledefinition_environmentvariablevalue: [
+          { environmentvariablevalueid: "v1", value: "{\"target\":{}}" }
+        ]
+      },
+      {
+        schemaname: "klth_SetupBrokerUrl",
+        environmentvariabledefinitionid: "d2",
+        defaultvalue: null,
+        environmentvariabledefinition_environmentvariablevalue: []
+      }
+    ]),
+    {
+      match: (request) =>
+        request.method === "DELETE" &&
+        request.url.endsWith("environmentvariablevalues(v1)"),
+      respond: () => jsonResponse(204)
+    }
+  ]);
+  const client = engine.createDataverseClient({
+    fetch: fetchImpl,
+    clientUrl: "https://contoso.crm4.dynamics.com"
+  });
+  const cleared = await client.resetEnvironmentVariables([
+    "klth_SetupConfiguration",
+    "klth_SetupBrokerUrl"
+  ]);
+  assert.deepEqual(cleared, ["klth_SetupConfiguration"]);
+  assert.equal(fetchImpl.calls.filter((call) => call.method === "DELETE").length, 1);
+});
+
 test("dataverse client unwraps the setup Custom API result", async () => {
   const fetchImpl = createFetchMock([
     {
@@ -1507,6 +1544,38 @@ test("direct client upgrades an insufficient Fabric workspace role", async () =>
   assert.deepEqual(JSON.parse(fetchImpl.calls[1].init.body), {
     role: "Contributor"
   });
+});
+
+test("direct client treats Fabric's duplicate workspace role response as success", async () => {
+  const workspaceId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const principalId = "99999999-8888-7777-6666-555555555555";
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.method === "GET",
+      respond: () => jsonResponse(200, { value: [] })
+    },
+    {
+      match: (request) => request.method === "POST",
+      respond: () =>
+        jsonResponse(400, {
+          error: {
+            message: "The provided principal already has a role assigned in the workspace"
+          }
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+  const result = await direct.ensureWorkspaceRoleAssignment(
+    workspaceId,
+    principalId
+  );
+  assert.equal(result.created, false);
+  assert.equal(result.updated, false);
+  assert.equal(fetchImpl.calls.length, 2);
 });
 
 test("direct client follows Fabric continuation links", async () => {

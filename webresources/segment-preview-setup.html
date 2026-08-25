@@ -450,6 +450,35 @@
     .stage-title { margin: 0; font-size: 18px; font-weight: 650; }
     .stage-description { margin: 3px 0 0; color: var(--cp-text-muted); line-height: 1.45; }
     .stage-lock { margin-left: auto; color: var(--cp-text-soft); font-size: 12px; }
+    .install-progress {
+      margin-top: 18px;
+      border: 1px solid var(--cp-border);
+      border-radius: .625rem;
+      padding: 12px 14px;
+      background: var(--cp-surface-soft);
+    }
+    .install-progress-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+      color: var(--cp-text-muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .install-progress-track {
+      height: 10px;
+      overflow: hidden;
+      border-radius: .625rem;
+      background: var(--cp-border);
+    }
+    .install-progress-fill {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--cp-accent);
+      transition: width 220ms ease;
+    }
     @media (max-width: 720px) {
       .page { width: min(100% - 24px, 1180px); padding-top: 24px; }
       .hero { flex-direction: column; }
@@ -659,6 +688,17 @@
         <span class="note" id="panelNote"></span>
       </div>
 
+      <div class="install-progress" id="installProgress" role="progressbar"
+           aria-label="Installation progress" aria-valuemin="0" aria-valuemax="100"
+           aria-valuenow="0" hidden>
+        <div class="install-progress-header">
+          <span id="installProgressStatus">Preparing installation…</span>
+          <span id="installProgressPercent">0%</span>
+        </div>
+        <div class="install-progress-track" aria-hidden="true">
+          <div class="install-progress-fill" id="installProgressFill"></div>
+        </div>
+      </div>
       <ol class="steps" id="progressList" style="margin-top:18px" hidden></ol>
       <ul class="manual-list" id="manualList" hidden></ul>
 
@@ -677,9 +717,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.8"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.8"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.8"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.9"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.9"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.9"></script>
 
   <script>
     (() => {
@@ -765,6 +805,10 @@
       const targetStepState = document.getElementById("targetStepState");
       const installStepState = document.getElementById("installStepState");
       const progressList = document.getElementById("progressList");
+      const installProgress = document.getElementById("installProgress");
+      const installProgressStatus = document.getElementById("installProgressStatus");
+      const installProgressPercent = document.getElementById("installProgressPercent");
+      const installProgressFill = document.getElementById("installProgressFill");
       const manualList = document.getElementById("manualList");
       const consentList = document.getElementById("consentList");
       const panelNote = document.getElementById("panelNote");
@@ -1865,8 +1909,35 @@
         skipped: "–",
         failed: "!"
       };
+      let activePlan = [];
+
+      function updateInstallProgress(currentEntry) {
+        if (!activePlan.length) {
+          installProgress.hidden = true;
+          return;
+        }
+        installProgress.hidden = false;
+        const completedStatuses = new Set(["succeeded", "resumed", "skipped"]);
+        const completed = activePlan.filter(step => completedStatuses.has(step.status)).length;
+        const percent = Math.round((completed / activePlan.length) * 100);
+        installProgress.setAttribute("aria-valuenow", String(percent));
+        installProgressFill.style.width = percent + "%";
+        installProgressPercent.textContent = percent + "%";
+        if (currentEntry?.status === "running") {
+          installProgressStatus.textContent = currentEntry.name || "Installing…";
+        } else if (currentEntry?.status === "failed") {
+          installProgressStatus.textContent = "Stopped: " + (currentEntry.name || currentEntry.id);
+        } else if (percent === 100) {
+          installProgressStatus.textContent = "Installation steps completed";
+        } else {
+          installProgressStatus.textContent = "Preparing installation…";
+        }
+      }
 
       function renderPlan(plan) {
+        activePlan = plan.map(step =>
+          Object.assign({}, step, { status: step.skipped ? "skipped" : step.status })
+        );
         progressList.hidden = false;
         progressList.replaceChildren();
         plan.forEach(step => {
@@ -1891,15 +1962,24 @@
           item.append(mark, main, phase);
           progressList.append(item);
         });
+        updateInstallProgress();
       }
 
       function updateStep(entry) {
         const item = document.getElementById("step-" + entry.id);
         if (!item) return;
-        item.className = "step " + entry.status;
-        item.querySelector(".step-mark").textContent = stepMarks[entry.status] || "•";
+        const reportedStatus = String(entry.status || "").toLowerCase();
+        const status = stepMarks[reportedStatus] ? reportedStatus : "running";
+        item.className = "step " + status;
+        item.querySelector(".step-mark").textContent = stepMarks[status] || "•";
         const message = document.getElementById("step-message-" + entry.id);
-        if (message) message.textContent = entry.message || "";
+        if (message) {
+          message.textContent =
+            entry.message || (status === "running" ? String(entry.status || "Working…") : "");
+        }
+        const planEntry = activePlan.find(step => step.id === entry.id);
+        if (planEntry) planEntry.status = status;
+        updateInstallProgress(Object.assign({}, entry, { status }));
       }
 
       function renderManual(messages) {
@@ -2120,16 +2200,17 @@
       }
 
       /**
-       * Forgets what earlier runs recorded so the next installation runs every
-       * step again. The target configuration is kept; only the resume state and
-       * the discovered facts are cleared.
+       * Returns the setup to its shipped defaults. Current environment-variable
+       * values are deleted so their solution defaults become effective again.
        */
       async function startOver() {
         if (!engine || state.loading) return;
         setBusy(true);
-        showNotice("Clearing the resume state…");
+        showNotice("Resetting setup settings and environment variables…");
         try {
-          await engine.saveSetupContext(dataverseClient(), state.target, {}, {});
+          const dataverse = dataverseClient();
+          await dataverse.resetEnvironmentVariables(Object.values(engine.ENV));
+          state.target = engine.applyAutomaticTarget(engine.TARGET_DEFAULTS);
           if (state.setup) {
             state.setup.state = {};
             state.setup.facts = {};
@@ -2137,7 +2218,10 @@
           engine.clearBrokerSession(sessionStore());
           await loadSetupCenter();
           await refresh();
-          showNotice("The resume state is cleared. The next installation runs every step again.", "success");
+          showNotice(
+            "Setup was reset. Advanced options use their defaults and all setup environment-variable values were cleared.",
+            "success"
+          );
         } catch (error) {
           showNotice(error.message || String(error), "error");
         } finally {

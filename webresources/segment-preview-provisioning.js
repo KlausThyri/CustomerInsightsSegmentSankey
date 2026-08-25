@@ -1215,6 +1215,19 @@
       return { name: name, created: true, updated: true };
     }
 
+    async function resetEnvironmentVariables(names) {
+      var records = await getEnvironmentVariables(names);
+      var cleared = [];
+      for (var index = 0; index < names.length; index++) {
+        var name = names[index];
+        var record = records[name];
+        if (!record || !record.valueId) continue;
+        await request("DELETE", "environmentvariablevalues(" + record.valueId + ")");
+        cleared.push(name);
+      }
+      return cleared;
+    }
+
     /** Calls the setup Custom API that ships with the managed solution. */
     async function executeSetupAction(action) {
       var response = await request("POST", "klth_ManageSegmentPreviewSetup", { klth_action: action });
@@ -1233,6 +1246,7 @@
       request: request,
       getEnvironmentVariables: getEnvironmentVariables,
       setEnvironmentVariable: setEnvironmentVariable,
+      resetEnvironmentVariables: resetEnvironmentVariables,
       executeSetupAction: executeSetupAction,
       effectiveValue: effectiveValue,
       whoAmI: whoAmI
@@ -2226,10 +2240,18 @@
         return { created: false, updated: true, assignment: updated.body || existing };
       }
 
-      var response = await fabric("POST", path, {
-        principal: { id: principalId, type: "ServicePrincipal" },
-        role: "Contributor"
-      });
+      var response;
+      try {
+        response = await fabric("POST", path, {
+          principal: { id: principalId, type: "ServicePrincipal" },
+          role: "Contributor"
+        });
+      } catch (error) {
+        if (/principal already has a role assigned in the workspace/i.test(String(error && error.message))) {
+          return { created: false, updated: false, assignment: null };
+        }
+        throw error;
+      }
       return { created: true, updated: false, assignment: response.body || null };
     }
 

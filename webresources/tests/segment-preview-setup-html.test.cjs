@@ -65,7 +65,7 @@ test("the provisioning engine and Azure template are loaded before the inline lo
 test("all external setup scripts use the current cache-busting revision", () => {
   const external = externalScripts(html);
   assert.equal(external.length, 3);
-  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.8$/));
+  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.9$/));
 });
 
 test("selecting an existing Resource Group does not force its metadata location", () => {
@@ -99,6 +99,24 @@ test("every statically referenced element id exists in the markup", () => {
 test("the one-button provisioning controls are present", () => {
   ["provisionButton", "panelProvisionButton", "previewButton", "panelPreviewButton"].forEach((id) => {
     assert.ok(new RegExp(`id="${id}"`).test(html), `${id} is missing`);
+  });
+
+  test("installation exposes an accessible visual progress bar", () => {
+    [
+      "installProgress",
+      "installProgressStatus",
+      "installProgressPercent",
+      "installProgressFill"
+    ].forEach(id => assert.ok(html.includes(`id="${id}"`), `${id} is missing`));
+    assert.match(html, /role="progressbar"/);
+    assert.ok(inlineScripts(html).some(code => code.includes("function updateInstallProgress")));
+  });
+
+  test("Start over clears environment values and restores target defaults", () => {
+    const code = inlineScripts(html).join("\n");
+    assert.match(code, /resetEnvironmentVariables\(Object\.values\(engine\.ENV\)\)/);
+    assert.match(code, /engine\.applyAutomaticTarget\(engine\.TARGET_DEFAULTS\)/);
+    assert.match(code, /engine\.clearBrokerSession/);
   });
 });
 
