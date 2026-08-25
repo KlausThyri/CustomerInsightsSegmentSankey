@@ -3557,17 +3557,26 @@
           return "The setup status would be re-checked and any missing Fabric shortcuts installed.";
         }
         var status = null;
+        var startupTimeouts = 0;
         for (var statusAttempt = 0; statusAttempt < 30; statusAttempt++) {
           try {
             status = await dataverse.executeSetupAction("status");
             break;
           } catch (error) {
-            var restartingWithNewKey =
-              /API key is missing or invalid|returned HTTP 401/i.test(
-                String(error && error.message)
-              );
-            if (!restartingWithNewKey || statusAttempt === 29) throw error;
-            await delay(10000, settings.timer);
+            var message = String(error && error.message);
+            var restartingWithNewKey = /API key is missing or invalid|returned HTTP 401/i.test(
+              message
+            );
+            var apiStarting = /Azure API did not respond within 60 seconds/i.test(message);
+            if (apiStarting) startupTimeouts++;
+            if (
+              (!restartingWithNewKey && !apiStarting) ||
+              statusAttempt === 29 ||
+              startupTimeouts >= 5
+            ) {
+              throw error;
+            }
+            await delay(apiStarting ? 5000 : 10000, settings.timer);
           }
         }
         var provisioned = false;

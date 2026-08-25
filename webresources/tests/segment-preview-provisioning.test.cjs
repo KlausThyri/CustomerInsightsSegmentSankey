@@ -2609,6 +2609,7 @@ function dataverseHarness(options = {}) {
   const written = {};
   const actions = [];
   let transientStatusFailures = options.transientStatusFailures || 0;
+  const transientStatusErrors = [...(options.transientStatusErrors || [])];
   // Each entry is the status the next executeSetupAction call returns; the last
   // one is reused once the list is exhausted.
   const responses = options.responses || [{ overallState: "ready", components: [] }];
@@ -2633,6 +2634,9 @@ function dataverseHarness(options = {}) {
     },
     async executeSetupAction(action) {
       actions.push(action);
+      if (action === "status" && transientStatusErrors.length) {
+        throw new Error(transientStatusErrors.shift());
+      }
       if (action === "status" && transientStatusFailures > 0) {
         transientStatusFailures--;
         throw new Error("The API key is missing or invalid.");
@@ -3792,6 +3796,21 @@ test("verification waits for the Web App to accept a newly deployed API key", as
 
   assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
   assert.deepEqual(dataverse.actions, ["status", "status", "status"]);
+  assert.equal(result.results.find((entry) => entry.id === "verify").status, "succeeded");
+});
+
+test("verification retries the App Service cold-start timeout", async () => {
+  const dataverse = dataverseHarness({
+    transientStatusErrors: [
+      "The Segment Preview Azure API did not respond within 60 seconds."
+    ],
+    responses: [SHORTCUTS_READY]
+  });
+  const { orchestrator } = directOrchestrator({ dataverse });
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  assert.deepEqual(dataverse.actions, ["status", "status"]);
   assert.equal(result.results.find((entry) => entry.id === "verify").status, "succeeded");
 });
 
