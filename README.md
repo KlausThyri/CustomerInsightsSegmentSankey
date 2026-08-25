@@ -310,7 +310,15 @@ architecture and are kept unchanged for compatibility reasons; today they
 apply to all Fabric API calls (`/api/segment-counts` and
 `/api/fabric-dependencies`), not only to behavioral-specific queries.
 
-The Setup Center adds five optional variables that ship without default values:
+`klth_BusinessUnitScopingEnabled` records whether the irreversible Customer
+Insights - Journeys **Business unit scoping** feature switch is enabled in the
+environment. Microsoft exposes no supported API for reading that switch, so the
+administrator sets it explicitly in the Setup Center. When enabled, every
+returned count and member page is restricted to records whose
+`owningbusinessunit` exactly matches the segment definition's owning business
+unit; child business units are deliberately excluded.
+
+The Setup Center adds five optional bootstrap variables that ship without default values:
 `klth_SetupProvisioningMode`, `klth_SetupBrokerUrl`, `klth_SetupBrokerScope`,
 `klth_SetupEntraClientId` and `klth_SetupConfiguration`. They configure the
 bootstrap path and hold the resume record; secrets are stripped before the

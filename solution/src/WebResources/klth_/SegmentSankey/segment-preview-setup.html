@@ -360,6 +360,13 @@
     }
     .field input:focus-visible, .field select:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 1px; }
     .field input[aria-invalid="true"], .field select[aria-invalid="true"] { border-color: var(--cp-danger); }
+    .field .toggle-input {
+      width: 20px;
+      min-height: 20px;
+      margin: 6px 0;
+      padding: 0;
+      accent-color: var(--cp-accent);
+    }
     .field .hint { color: var(--cp-text-soft); font-size: 11px; line-height: 1.4; }
     .field .error { color: var(--cp-danger); font-size: 11px; }
     .panel-actions {
@@ -577,7 +584,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.17">v1.1.0.17</span>
+          <span class="app-version" aria-label="Version 1.1.0.18">v1.1.0.18</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -798,9 +805,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.17"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.17"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.17"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.18"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.18"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.18"></script>
 
   <script>
     (() => {
@@ -939,6 +946,7 @@
         { key: "fabricDataverseLakehouseId", label: "Dataverse source Lakehouse ID", requirement: "optional", hint: "Automatically discovered from this environment's Link to Microsoft Fabric Lakehouse." },
         { key: "fabricDataverseConnectionId", label: "Fabric Dataverse connection", requirement: "optional", hint: "Automatically discovered from the Dataverse source shortcut." },
         { key: "fabricDataverseDeltaFolder", label: "Dataverse Managed Lake folder", requirement: "optional", hint: "Automatically discovered from the Dataverse source shortcut." },
+        { key: "businessUnitScopingEnabled", label: "Business-unit scoping", requirement: "optional", type: "boolean", hint: "Turn this on when Business unit scoping is enabled under Customer Insights - Journeys > Settings > Feature switches. Segment counts will include only records owned by the segment's exact business unit; child business units are excluded." },
         { key: "requiredDataverseTables", label: "Required Dataverse tables", requirement: "optional", hint: "Uses the product defaults unless overridden." }
       ];
 
@@ -1202,6 +1210,15 @@
                 (mode.brokerOrigin || "the provisioning service") +
                 " once. Everything listed below then runs there with your delegated permissions, and every resource it creates belongs to your tenant."
               : "You will be asked to sign in to Microsoft once. Everything listed below then runs automatically, and every resource it creates belongs to your own tenant and subscription.";
+        } else if (field.type === "boolean") {
+          const input = document.createElement("input");
+          input.id = "field-" + field.key;
+          input.type = "checkbox";
+          input.className = "toggle-input";
+          input.setAttribute("role", "switch");
+          input.checked = target[field.key] === true;
+          input.dataset.key = field.key;
+          wrapper.append(label, input, hint, error);
         } else {
           strong.textContent = "This environment is not connected yet";
           const intro = document.createElement("p");
@@ -1364,7 +1381,9 @@
             wrapper.append(label, input, hint, error);
           }
           const host =
-            field.key === "subscriptionId" || field.key === "resourceGroup"
+            field.key === "subscriptionId" ||
+            field.key === "resourceGroup" ||
+            field.key === "businessUnitScopingEnabled"
               ? targetFields
               : advancedTargetFields;
           host.append(wrapper);
@@ -1687,6 +1706,8 @@
               (document.getElementById("field-resourceGroup-new")?.value || "").trim();
           } else if (input.dataset.key === "fabricWorkspaceId" && input.value === "__new__") {
             values[input.dataset.key] = "";
+          } else if (input.type === "checkbox") {
+            values[input.dataset.key] = input.checked;
           } else {
             values[input.dataset.key] = input.value.trim();
           }

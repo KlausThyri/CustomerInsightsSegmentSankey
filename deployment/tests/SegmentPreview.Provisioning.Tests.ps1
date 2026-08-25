@@ -528,7 +528,8 @@ Describe 'Managed solution packaging' {
             'klth_SetupBrokerScope',
             'klth_SetupEntraClientId',
             'klth_SetupConfiguration',
-            'klth_SetupApiPackageUrl'
+            'klth_SetupApiPackageUrl',
+            'klth_BusinessUnitScopingEnabled'
         )
     }
 

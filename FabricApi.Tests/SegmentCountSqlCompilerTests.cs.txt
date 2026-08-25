@@ -91,6 +91,53 @@ public sealed class SegmentCountSqlCompilerTests
     }
 
     [Fact]
+    public void Compile_BusinessUnitScoping_FiltersEveryStageByExactOwningBusinessUnit()
+    {
+        var businessUnitId = Guid.Parse("7b1ef3ca-e9d2-f011-8544-7c1e521fa610");
+        var request = Request(new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Active contacts",
+            BaseDetail = "PROFILE(contact)",
+            Steps =
+            [
+                new SegmentFilterStep
+                {
+                    Kind = "profile",
+                    Label = "Country filter",
+                    Detail = "contact.address1_country == 'DE'",
+                    Condition = Predicate("contact.address1_country", "==", Json("\"DE\""))
+                }
+            ]
+        });
+        request.Query.BusinessUnitId = businessUnitId;
+
+        var result = Compile(
+            request,
+            Table(
+                "dataverse",
+                "contact",
+                "contactid",
+                "statecode",
+                "address1_country",
+                "owningbusinessunit"));
+
+        Assert.Equal(2, result.Stages.Count);
+        Assert.Equal(
+            2,
+            result.Parameters.Count(parameter =>
+                Equals(parameter.Value, businessUnitId)));
+        Assert.Contains(
+            "TRY_CONVERT(uniqueidentifier, profile.[owningbusinessunit])",
+            result.Sql);
+        Assert.DoesNotContain("parentbusinessunitid", result.Sql);
+        Assert.All(
+            result.Stages,
+            stage => Assert.StartsWith("business_unit_", stage.Cte));
+    }
+
+    [Fact]
     public void Compile_StringPatternOperators_AreCaseInsensitive()
     {
         var request = Request(new SegmentOperand

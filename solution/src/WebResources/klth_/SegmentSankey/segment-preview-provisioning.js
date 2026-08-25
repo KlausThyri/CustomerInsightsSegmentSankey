@@ -67,7 +67,8 @@
     apiPackageUrl: "klth_SetupApiPackageUrl",
     configuration: "klth_SetupConfiguration",
     apiUrl: "klth_FabricBehavioralApiUrl",
-    apiKey: "klth_FabricBehavioralApiKey"
+    apiKey: "klth_FabricBehavioralApiKey",
+    businessUnitScoping: "klth_BusinessUnitScopingEnabled"
   };
 
   var ALL_ENV_NAMES = Object.keys(ENV).map(function (key) {
@@ -738,12 +739,14 @@
     "fabricDataverseLakehouseId",
     "fabricDataverseConnectionId",
     "fabricDataverseDeltaFolder",
+    "businessUnitScopingEnabled",
     "requiredDataverseTables"
   ];
 
   var TARGET_DEFAULTS = {
     location: "westeurope",
     fabricServingLakehouseName: "SegmentPreviewServing",
+    businessUnitScopingEnabled: false,
     requiredDataverseTables: DEFAULT_REQUIRED_TABLES
   };
 
@@ -759,6 +762,11 @@
       TARGET_KEYS.forEach(function (key) {
         var value = source[key];
         if (isBlank(value)) return;
+        if (key === "businessUnitScopingEnabled") {
+          result[key] =
+            value === true || String(value).trim().toLowerCase() === "true";
+          return;
+        }
         var text = String(value).trim();
         if (/^<.*>$/.test(text)) return;
         result[key] = text;
@@ -3505,16 +3513,31 @@
         }
         requireFact(context.apiKey, "secret", "The behavioural API key");
         requireFact(url, "azure-infra", "The API base URL");
-        var known = await dataverse.getEnvironmentVariables([ENV.apiUrl, ENV.apiKey]);
+        var known = await dataverse.getEnvironmentVariables([
+          ENV.apiUrl,
+          ENV.apiKey,
+          ENV.businessUnitScoping
+        ]);
         await dataverse.setEnvironmentVariable(ENV.apiUrl, url, known);
         await dataverse.setEnvironmentVariable(ENV.apiKey, context.apiKey, known);
-        var written = await dataverse.getEnvironmentVariables([ENV.apiUrl, ENV.apiKey]);
+        await dataverse.setEnvironmentVariable(
+          ENV.businessUnitScoping,
+          target.businessUnitScopingEnabled ? "true" : "false",
+          known
+        );
+        var written = await dataverse.getEnvironmentVariables([
+          ENV.apiUrl,
+          ENV.apiKey,
+          ENV.businessUnitScoping
+        ]);
         if (
           environmentValue(written[ENV.apiUrl]) !== url ||
-          environmentValue(written[ENV.apiKey]) !== context.apiKey
+          environmentValue(written[ENV.apiKey]) !== context.apiKey ||
+          environmentValue(written[ENV.businessUnitScoping]) !==
+            (target.businessUnitScopingEnabled ? "true" : "false")
         ) {
           throw new Error(
-            "Dataverse did not return the API URL and key that Setup just wrote. " +
+            "Dataverse did not return the API URL, key, and business-unit setting that Setup just wrote. " +
               "The values were not accepted consistently, so verification was not started."
           );
         }
@@ -3679,6 +3702,12 @@
     var stored = parseConfiguration(settings[ENV.configuration]);
     var resolution = resolveMode(settings);
     var registration = describeAppRegistration(pageUrl);
+    var businessUnitTarget = {};
+    if (!isBlank(settings[ENV.businessUnitScoping])) {
+      businessUnitTarget.businessUnitScopingEnabled =
+        String(settings[ENV.businessUnitScoping]).toLowerCase() === "true";
+    }
+    var target = mergeConfiguration(stored.target, businessUnitTarget);
     return {
       contractVersion: CONTRACT_VERSION,
       variables: variables,
@@ -3687,7 +3716,7 @@
         return !variables[name];
       }),
       mode: resolution,
-      target: applyAutomaticTarget(stored.target),
+      target: applyAutomaticTarget(target),
       state: (stored && stored.state) || {},
       facts: (stored && stored.facts) || {},
       environmentDomain: environmentDomain(environmentUrl),

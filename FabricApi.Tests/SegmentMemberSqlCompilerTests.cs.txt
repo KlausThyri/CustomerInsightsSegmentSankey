@@ -36,6 +36,36 @@ public sealed class SegmentMemberSqlCompilerTests
     }
 
     [Fact]
+    public void CompileMemberQuery_BusinessUnitScoping_UsesTheScopedStageCte()
+    {
+        var businessUnitId = Guid.Parse("7b1ef3ca-e9d2-f011-8544-7c1e521fa610");
+        var query = TwoStageQuery();
+        query.BusinessUnitId = businessUnitId;
+
+        var result = Compile(
+            query,
+            Options(stageOrder: 1, viewMode: "stage"),
+            Table(
+                "dataverse",
+                "contact",
+                "contactid",
+                "statecode",
+                "address1_country",
+                "fullname",
+                "owningbusinessunit"));
+
+        Assert.Contains(
+            "TRY_CONVERT(uniqueidentifier, profile.[owningbusinessunit])",
+            result.Sql);
+        Assert.Contains("SELECT ProfileId FROM [business_unit_", result.Sql);
+        Assert.DoesNotContain("parentbusinessunitid", result.Sql);
+        Assert.Equal(
+            2,
+            result.Parameters.Count(parameter =>
+                Equals(parameter.Value, businessUnitId)));
+    }
+
+    [Fact]
     public void CompileMemberQuery_Removed_UsesPreviousExceptSelected()
     {
         var result = Compile(

@@ -17,11 +17,15 @@ public sealed class QueryTokenServiceTests
     public void IssueAndValidateQueryToken_RoundTripsTheQuery()
     {
         var service = new QueryTokenService();
-        var token = service.IssueQueryToken(SimpleQuery());
+        var query = SimpleQuery();
+        query.BusinessUnitId = Guid.Parse(
+            "7b1ef3ca-e9d2-f011-8544-7c1e521fa610");
+        var token = service.IssueQueryToken(query);
 
         var payload = service.ValidateQueryToken(token);
 
         Assert.Equal("contact", payload.Query.FirstOperand!.ProfileEntity);
+        Assert.Equal(query.BusinessUnitId, payload.Query.BusinessUnitId);
         Assert.True(payload.ExpiresAt > DateTimeOffset.UtcNow);
         Assert.True(payload.ExpiresAt <= DateTimeOffset.UtcNow.AddMinutes(30).AddSeconds(5));
     }

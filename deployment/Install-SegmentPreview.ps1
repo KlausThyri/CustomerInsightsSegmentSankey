@@ -83,6 +83,8 @@ param(
 
     [string] $RequiredDataverseTables,
 
+    [switch] $BusinessUnitScopingEnabled,
+
     [string] $SolutionPackagePath,
 
     [securestring] $BehavioralApiKey,
@@ -1359,6 +1361,11 @@ function Step-DataverseConfiguration {
     $values = @(
         [pscustomobject]@{ SchemaName = 'klth_FabricBehavioralApiUrl'; Value = $apiBaseUrl; Secret = $false }
         [pscustomobject]@{ SchemaName = 'klth_FabricBehavioralApiKey'; Value = $script:ApiKey; Secret = $true }
+        [pscustomobject]@{
+            SchemaName = 'klth_BusinessUnitScopingEnabled'
+            Value = ([bool](Get-ConfigValue -Name 'BusinessUnitScopingEnabled')).ToString().ToLowerInvariant()
+            Secret = $false
+        }
     )
 
     foreach ($item in $values) {

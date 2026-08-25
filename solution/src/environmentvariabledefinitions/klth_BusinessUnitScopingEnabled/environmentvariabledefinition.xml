@@ -1,0 +1,13 @@
+<environmentvariabledefinition schemaname="klth_BusinessUnitScopingEnabled">
+  <description default="Controls whether Segment Preview applies Customer Insights - Journeys business-unit scoping. Set to true only when the irreversible Business unit scoping feature switch is enabled; records must belong to the segment's exact business unit and child business units are excluded.">
+    <label description="Controls whether Segment Preview applies Customer Insights - Journeys business-unit scoping. Set to true only when the irreversible Business unit scoping feature switch is enabled; records must belong to the segment's exact business unit and child business units are excluded." languagecode="1033" />
+  </description>
+  <displayname default="Segment Preview Business Unit Scoping Enabled">
+    <label description="Segment Preview Business Unit Scoping Enabled" languagecode="1033" />
+  </displayname>
+  <introducedversion>1.1.0.18</introducedversion>
+  <iscustomizable>1</iscustomizable>
+  <isrequired>0</isrequired>
+  <secretstore>0</secretstore>
+  <type>100000000</type>
+</environmentvariabledefinition>

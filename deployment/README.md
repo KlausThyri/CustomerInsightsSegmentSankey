@@ -135,7 +135,7 @@ exists in this repository.
 
 ### Setup Center configuration variables
 
-All six are optional strings that ship **without default values**, so importing
+All seven are optional strings that ship **without default values**, so importing
 the solution never introduces a credential.
 
 | Variable | Purpose |
@@ -146,6 +146,7 @@ the solution never introduces a credential.
 | `klth_SetupBrokerScope` | Optional, legacy. Only for a self-hosted service that authorizes by delegated API scope instead of the browser session. |
 | `klth_SetupApiPackageUrl` | Optional. HTTPS URL of the published API package. Blank uses the pinned release asset that ships with the solution; set it only to point your Web App at your own mirrored copy. |
 | `klth_SetupConfiguration` | Target configuration and resume state. Secrets are stripped before writing; no session token is ever written to Dataverse. |
+| `klth_BusinessUnitScopingEnabled` | `true` when the irreversible Customer Insights - Journeys Business unit scoping feature is enabled. Setup writes the explicit administrator choice because Microsoft exposes no supported read API. Exact owning-BU equality is applied; child BUs are excluded. |
 
 ### What the browser deploys, and how
 

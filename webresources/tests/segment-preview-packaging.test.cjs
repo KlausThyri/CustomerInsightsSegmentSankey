@@ -36,7 +36,8 @@ const SETUP_VARIABLES = [
   "klth_SetupBrokerUrl",
   "klth_SetupBrokerScope",
   "klth_SetupEntraClientId",
-  "klth_SetupConfiguration"
+  "klth_SetupConfiguration",
+  "klth_BusinessUnitScopingEnabled"
 ];
 
 test("the solution version is ahead of the shipped 1.0.0.0 build", () => {

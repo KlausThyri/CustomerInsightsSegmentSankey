@@ -1,19 +1,19 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<PluginAssembly FullName="CustomerInsightsSegmentSankey, Version=0.0.18.0, Culture=neutral, PublicKeyToken=7723c9b9c78b183b" PluginAssemblyId="458b9dc7-1d9a-f111-b8dc-7ced8d762587" CustomizationLevel="1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<PluginAssembly FullName="CustomerInsightsSegmentSankey, Version=0.0.19.0, Culture=neutral, PublicKeyToken=7723c9b9c78b183b" PluginAssemblyId="458b9dc7-1d9a-f111-b8dc-7ced8d762587" CustomizationLevel="1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <IsolationMode>2</IsolationMode>
   <SourceType>0</SourceType>
   <IntroducedVersion>1.0.0.0</IntroducedVersion>
   <FileName>/PluginAssemblies/CustomerInsightsSegmentSankey-458B9DC7-1D9A-F111-B8DC-7CED8D762587/CustomerInsightsSegmentSankey.dll</FileName>
   <PluginTypes>
-    <PluginType AssemblyQualifiedName="CustomerInsightsSegmentSankey.CustomApi.GetSegmentFilterCountsPlugin, CustomerInsightsSegmentSankey, Version=0.0.18.0, Culture=neutral, PublicKeyToken=7723c9b9c78b183b" PluginTypeId="6913c1cd-1d9a-f111-b8dc-7ced8d762587" Name="Get Segment Filter Counts">
+    <PluginType AssemblyQualifiedName="CustomerInsightsSegmentSankey.CustomApi.GetSegmentFilterCountsPlugin, CustomerInsightsSegmentSankey, Version=0.0.19.0, Culture=neutral, PublicKeyToken=7723c9b9c78b183b" PluginTypeId="6913c1cd-1d9a-f111-b8dc-7ced8d762587" Name="Get Segment Filter Counts">
       <Description>Plugin Type: Get Segment Filter Counts</Description>
       <FriendlyName>Get Segment Filter Counts</FriendlyName>
     </PluginType>
-    <PluginType AssemblyQualifiedName="CustomerInsightsSegmentSankey.CustomApi.GetSegmentMembersPlugin, CustomerInsightsSegmentSankey, Version=0.0.18.0, Culture=neutral, PublicKeyToken=7723c9b9c78b183b" PluginTypeId="03efc3ba-e79b-f111-b8dc-7ced8d762587" Name="Get Segment Members">
+    <PluginType AssemblyQualifiedName="CustomerInsightsSegmentSankey.CustomApi.GetSegmentMembersPlugin, CustomerInsightsSegmentSankey, Version=0.0.19.0, Culture=neutral, PublicKeyToken=7723c9b9c78b183b" PluginTypeId="03efc3ba-e79b-f111-b8dc-7ced8d762587" Name="Get Segment Members">
       <Description>Plugin Type: Get Segment Members</Description>
       <FriendlyName>Get Segment Members</FriendlyName>
     </PluginType>
-    <PluginType AssemblyQualifiedName="CustomerInsightsSegmentSankey.CustomApi.ManageSegmentPreviewSetupPlugin, CustomerInsightsSegmentSankey, Version=0.0.18.0, Culture=neutral, PublicKeyToken=7723c9b9c78b183b" PluginTypeId="444a9d53-869c-f111-b8dc-7ced8d762587" Name="Manage Segment Preview Setup">
+    <PluginType AssemblyQualifiedName="CustomerInsightsSegmentSankey.CustomApi.ManageSegmentPreviewSetupPlugin, CustomerInsightsSegmentSankey, Version=0.0.19.0, Culture=neutral, PublicKeyToken=7723c9b9c78b183b" PluginTypeId="444a9d53-869c-f111-b8dc-7ced8d762587" Name="Manage Segment Preview Setup">
       <FriendlyName>Manage Segment Preview Setup</FriendlyName>
     </PluginType>
   </PluginTypes>

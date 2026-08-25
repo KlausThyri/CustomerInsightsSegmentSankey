@@ -10,6 +10,8 @@ public sealed class SegmentCountRequest
 
 public sealed class SegmentQueryNode
 {
+    public Guid? BusinessUnitId { get; set; }
+
     public SegmentOperand? FirstOperand { get; set; }
 
     public List<SegmentSetOperation> SetOperations { get; set; } = [];

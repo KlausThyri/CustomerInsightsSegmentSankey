@@ -128,6 +128,7 @@ test("automatic target derives all new-installation defaults without requiring a
   assert.equal(target.fabricWorkspaceName, "rg-segment-preview Segment Preview");
   assert.equal(target.fabricServingLakehouseName, "SegmentPreviewServing");
   assert.equal(target.fabricDataverseDeltaFolder, undefined);
+  assert.equal(target.businessUnitScopingEnabled, false);
   assert.equal(target.fabricCapacityId, undefined);
   assert.deepEqual(engine.validateTarget(input), { valid: true, errors: [] });
 });
@@ -317,7 +318,21 @@ test("mergeConfiguration applies defaults, later wins, and ignores placeholders"
   assert.equal(merged.location, "northeurope");
   assert.equal(merged.webAppName, "segment-preview-api");
   assert.equal(merged.fabricDataverseDeltaFolder, undefined);
+  assert.equal(merged.businessUnitScopingEnabled, false);
   assert.equal(merged.requiredDataverseTables, engine.TARGET_DEFAULTS.requiredDataverseTables);
+});
+
+test("mergeConfiguration preserves an explicit business-unit scoping choice", () => {
+  assert.equal(
+    engine.mergeConfiguration({ businessUnitScopingEnabled: true })
+      .businessUnitScopingEnabled,
+    true
+  );
+  assert.equal(
+    engine.mergeConfiguration({ businessUnitScopingEnabled: "false" })
+      .businessUnitScopingEnabled,
+    false
+  );
 });
 
 test("serializeConfiguration never persists a secret", () => {
@@ -2018,6 +2033,7 @@ test("a live broker-mode run delegates, writes the environment variables, and ve
   const requests = [];
   let currentUrl = "https://old.invalid/api/";
   let currentKey = null;
+  let currentBusinessUnitScoping = null;
   const fetchImpl = createFetchMock([
     ENV_QUERY_ROUTE(() => [
       {
@@ -2035,6 +2051,15 @@ test("a live broker-mode run delegates, writes the environment variables, and ve
         environmentvariabledefinition_environmentvariablevalue: currentKey
           ? [{ environmentvariablevalueid: "v2", value: currentKey }]
           : []
+      },
+      {
+        schemaname: "klth_BusinessUnitScopingEnabled",
+        environmentvariabledefinitionid: "d3",
+        defaultvalue: null,
+        environmentvariabledefinition_environmentvariablevalue:
+          currentBusinessUnitScoping === null
+            ? []
+            : [{ environmentvariablevalueid: "v3", value: currentBusinessUnitScoping }]
       }
     ]),
     {
@@ -2045,8 +2070,17 @@ test("a live broker-mode run delegates, writes the environment variables, and ve
       respond: (request) => {
         const body = JSON.parse(request.init.body);
         requests.push(body);
-        if (request.method === "PATCH") currentUrl = body.value;
-        else currentKey = body.value;
+        if (request.url.endsWith("environmentvariablevalues(v1)")) {
+          currentUrl = body.value;
+        } else if (
+          request.url.endsWith("environmentvariablevalues(v2)") ||
+          body["EnvironmentVariableDefinitionId@odata.bind"] ===
+            "/environmentvariabledefinitions(d2)"
+        ) {
+          currentKey = body.value;
+        } else {
+          currentBusinessUnitScoping = body.value;
+        }
         return jsonResponse(204);
       }
     },
@@ -2120,9 +2154,10 @@ test("a live broker-mode run delegates, writes the environment variables, and ve
   assert.equal(brokerRequest.apiPackage.blobName, engine.packageBlobName(brokerRequest.apiPackage));
   assert.match(brokerRequest.secrets.behavioralApiKey, /^[A-Za-z0-9_-]{64}$/);
   assert.equal(result.results.find((entry) => entry.id === "fabric-notebook").message, "Skipped by the provisioning service.");
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 3);
   assert.equal(requests[0].value, "https://broker-provisioned.azurewebsites.net/api/");
   assert.equal(requests[1].value, brokerRequest.secrets.behavioralApiKey);
+  assert.equal(requests[2].value, "false");
   assert.deepEqual(result.manual, ["Enable the Fabric tenant setting for service principals."]);
   assert.equal(result.context.overallState, "partial");
   assert.match(result.context.apiKeyFingerprint, /^sha256:[0-9a-f]{16}$/);
@@ -2266,6 +2301,14 @@ test("loadSetupContext reports missing variables and the manual blockers", async
             value: JSON.stringify({ target: { location: "northeurope" }, state: { secret: true } })
           }
         ]
+      },
+      {
+        schemaname: "klth_BusinessUnitScopingEnabled",
+        environmentvariabledefinitionid: "d3",
+        defaultvalue: null,
+        environmentvariabledefinition_environmentvariablevalue: [
+          { environmentvariablevalueid: "v3", value: "true" }
+        ]
       }
     ])
   ]);
@@ -2275,6 +2318,7 @@ test("loadSetupContext reports missing variables and the manual blockers", async
   assert.equal(context.mode.blockers.length, 2);
   assert.ok(context.missingVariables.includes("klth_SetupEntraClientId"));
   assert.equal(context.target.location, "northeurope");
+  assert.equal(context.target.businessUnitScopingEnabled, true);
   assert.equal(context.state.secret, true);
   assert.equal(context.plan.find((step) => step.id === "secret").status, "completed");
   assert.equal(context.environmentDomain, "contoso.crm4.dynamics.com");

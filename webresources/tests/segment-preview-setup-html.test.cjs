@@ -65,7 +65,7 @@ test("the provisioning engine and Azure template are loaded before the inline lo
 test("all external setup scripts use the current cache-busting revision", () => {
   const external = externalScripts(html);
   assert.equal(external.length, 3);
-  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.17$/));
+  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.18$/));
 });
 
 test("the Azure infrastructure step renders an accessible nested progress indicator", () => {
@@ -185,7 +185,15 @@ test("new installation exposes only subscription and resource group as required"
   assert.match(html, /id="targetAdvanced"[\s\S]*Advanced options \(optional\)/);
   assert.ok(code.includes("engine.applyAutomaticTarget(readFields())"));
   assert.equal((code.match(/requirement:\s*"required"/g) || []).length, 2);
-  assert.equal((code.match(/requirement:\s*"optional"/g) || []).length, 10);
+  assert.equal((code.match(/requirement:\s*"optional"/g) || []).length, 11);
+});
+
+test("business-unit scoping is an explicit accessible setup switch", () => {
+  assert.match(html, /key: "businessUnitScopingEnabled"/);
+  assert.match(html, /Business-unit scoping/);
+  assert.match(html, /role", "switch"/);
+  assert.match(html, /child business units are excluded/i);
+  assert.match(html, /Settings > Feature switches/);
 });
 
 test("the Dataverse source fields explain automatic shortcut discovery", () => {

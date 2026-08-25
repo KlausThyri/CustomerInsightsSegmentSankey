@@ -18,6 +18,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
     {
         private const string ApiUrlVariable = "klth_FabricBehavioralApiUrl";
         private const string ApiKeyVariable = "klth_FabricBehavioralApiKey";
+        private const string BusinessUnitScopingVariable =
+            "klth_BusinessUnitScopingEnabled";
         private static readonly HttpClient HttpClient = CreateHttpClient();
         private readonly IOrganizationService service;
         private readonly ITracingService tracing;
@@ -46,7 +48,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
             var endpoint = new Uri(behavioralEndpoint, "segment-counts");
             var requestPayload = new FabricSegmentRequestBuilder(service)
-                .Build(segmentDefinitionId);
+                .Build(
+                    segmentDefinitionId,
+                    ReadBusinessUnitScopingEnabled());
             using (var request = new HttpRequestMessage(HttpMethod.Post, endpoint))
             {
                 request.Headers.Add(
@@ -124,6 +128,28 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             return EnvironmentVariableReader.Read(service, schemaName, true);
         }
 
+        private bool ReadBusinessUnitScopingEnabled()
+        {
+            var value = EnvironmentVariableReader.Read(
+                service,
+                BusinessUnitScopingVariable,
+                false);
+            if (value == null ||
+                string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            throw new InvalidPluginExecutionException(
+                "The environment variable " + BusinessUnitScopingVariable +
+                " must contain true or false.");
+        }
+
         private static string Serialize<T>(T value)
         {
             var serializer = new DataContractJsonSerializer(typeof(T));
@@ -180,13 +206,43 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     StringComparer.OrdinalIgnoreCase);
         }
 
-        public FabricSegmentCountApiRequest Build(Guid segmentDefinitionId)
+        public FabricSegmentCountApiRequest Build(
+            Guid segmentDefinitionId,
+            bool businessUnitScopingEnabled)
         {
             var recursionPath = new HashSet<Guid>();
-            return new FabricSegmentCountApiRequest
+            if (!recursionPath.Add(segmentDefinitionId))
             {
-                Query = BuildDefinition(segmentDefinitionId, recursionPath)
-            };
+                throw new InvalidPluginExecutionException(
+                    "The segment references contain a cycle at " +
+                    segmentDefinitionId.ToString("D") + ".");
+            }
+
+            try
+            {
+                var definition = RetrieveDefinition(segmentDefinitionId);
+                var businessUnit = definition.GetAttributeValue<EntityReference>(
+                    "owningbusinessunit");
+                if (businessUnitScopingEnabled && businessUnit == null)
+                {
+                    throw new InvalidPluginExecutionException(
+                        "Business-unit scoping is enabled, but the segment definition " +
+                        segmentDefinitionId.ToString("D") +
+                        " has no owning business unit.");
+                }
+
+                var query = BuildQuery(
+                    new MqlParser(ReadSegmentQuery(definition)).Parse(),
+                    recursionPath);
+                query.BusinessUnitId = businessUnitScopingEnabled
+                    ? (Guid?)businessUnit.Id
+                    : null;
+                return new FabricSegmentCountApiRequest { Query = query };
+            }
+            finally
+            {
+                recursionPath.Remove(segmentDefinitionId);
+            }
         }
 
         private FabricSegmentQueryRequest BuildDefinition(
@@ -202,24 +258,36 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
             try
             {
-                var definition = service.Retrieve(
-                    SegmentEntityName,
-                    definitionId,
-                    new ColumnSet(SegmentQueryAttribute));
-                var mql = definition.GetAttributeValue<string>(SegmentQueryAttribute);
-                if (string.IsNullOrWhiteSpace(mql))
-                {
-                    throw new InvalidPluginExecutionException(
-                        "The segment definition " + definitionId.ToString("D") +
-                        " does not contain an MQL query.");
-                }
-
-                return BuildQuery(new MqlParser(mql).Parse(), recursionPath);
+                var definition = RetrieveDefinition(definitionId);
+                return BuildQuery(
+                    new MqlParser(ReadSegmentQuery(definition)).Parse(),
+                    recursionPath);
             }
             finally
             {
                 recursionPath.Remove(definitionId);
             }
+        }
+
+        private Entity RetrieveDefinition(Guid definitionId)
+        {
+            return service.Retrieve(
+                SegmentEntityName,
+                definitionId,
+                new ColumnSet(SegmentQueryAttribute, "owningbusinessunit"));
+        }
+
+        private static string ReadSegmentQuery(Entity definition)
+        {
+            var mql = definition.GetAttributeValue<string>(SegmentQueryAttribute);
+            if (string.IsNullOrWhiteSpace(mql))
+            {
+                throw new InvalidPluginExecutionException(
+                    "The segment definition " + definition.Id.ToString("D") +
+                    " does not contain an MQL query.");
+            }
+
+            return mql;
         }
 
         private FabricSegmentQueryRequest BuildQuery(
@@ -774,6 +842,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "setOperations", Order = 2)]
         public List<FabricSegmentSetOperationRequest> SetOperations { get; set; }
+
+        [DataMember(Name = "businessUnitId", Order = 3, EmitDefaultValue = false)]
+        public Guid? BusinessUnitId { get; set; }
     }
 
     [DataContract]

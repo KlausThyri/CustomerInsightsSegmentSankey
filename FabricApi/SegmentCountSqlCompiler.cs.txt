@@ -53,13 +53,15 @@ internal sealed class SegmentCountSqlCompiler
                 "query.firstOperand is required.");
         }
 
-        var context = new CompilationContext(catalog);
+        var context = new CompilationContext(catalog, query.BusinessUnitId);
         var root = context.CompileQuery(query, 0, true);
         profileEntity = root.ProfileEntity;
         return context;
     }
 
-    private sealed class CompilationContext(FabricSegmentCatalogSnapshot catalog)
+    private sealed class CompilationContext(
+        FabricSegmentCatalogSnapshot catalog,
+        Guid? businessUnitId)
     {
         private readonly List<string> ctes = [];
         private readonly List<SqlParameter> parameters = [];
@@ -105,7 +107,7 @@ internal sealed class SegmentCountSqlCompiler
                 current = new OperandResult(cte, current.ProfileEntity);
                 if (exposeStages)
                 {
-                    AddStage(cte, operation.Label, operation.Detail);
+                    AddStage(cte, operation.Label, operation.Detail, current.ProfileEntity);
                 }
             }
 
@@ -421,7 +423,7 @@ internal sealed class SegmentCountSqlCompiler
                 """);
             if (exposeStages)
             {
-                AddStage(current, operand.BaseLabel, operand.BaseDetail);
+                AddStage(current, operand.BaseLabel, operand.BaseDetail, operand.ProfileEntity);
             }
 
             foreach (var step in operand.Steps ?? [])
@@ -447,7 +449,7 @@ internal sealed class SegmentCountSqlCompiler
                 current = next;
                 if (exposeStages)
                 {
-                    AddStage(current, step.Label, step.Detail);
+                    AddStage(current, step.Label, step.Detail, operand.ProfileEntity);
                 }
             }
 
@@ -592,7 +594,7 @@ internal sealed class SegmentCountSqlCompiler
                 """);
             if (exposeStages)
             {
-                AddStage(cte, operand.BaseLabel, operand.BaseDetail);
+                AddStage(cte, operand.BaseLabel, operand.BaseDetail, operand.ProfileEntity);
             }
 
             return new OperandResult(cte, operand.ProfileEntity);
@@ -616,7 +618,7 @@ internal sealed class SegmentCountSqlCompiler
                 """);
             if (exposeStages)
             {
-                AddStage(cte, operand.BaseLabel, operand.BaseDetail);
+                AddStage(cte, operand.BaseLabel, operand.BaseDetail, operand.ProfileEntity);
             }
 
             return new OperandResult(cte, operand.ProfileEntity);
@@ -645,7 +647,7 @@ internal sealed class SegmentCountSqlCompiler
                 """);
             if (exposeStages)
             {
-                AddStage(cte, operand.BaseLabel, operand.BaseDetail);
+                AddStage(cte, operand.BaseLabel, operand.BaseDetail, operand.ProfileEntity);
             }
 
             return new OperandResult(cte, operand.ProfileEntity);
@@ -874,7 +876,11 @@ internal sealed class SegmentCountSqlCompiler
             return name;
         }
 
-        private void AddStage(string cte, string label, string detail)
+        private void AddStage(
+            string cte,
+            string label,
+            string detail,
+            string profileEntity)
         {
             if (string.IsNullOrWhiteSpace(label) || string.IsNullOrWhiteSpace(detail))
             {
@@ -883,7 +889,31 @@ internal sealed class SegmentCountSqlCompiler
                     "Every returned stage requires a non-empty label and detail.");
             }
 
-            stages.Add(new CompiledSegmentStage(stages.Count, cte, label, detail));
+            var stageCte = cte;
+            if (businessUnitId.HasValue)
+            {
+                var profileTable = catalog.ResolveDataverse(profileEntity);
+                AddSource(profileTable);
+                var idColumn = ResolveColumn(profileTable, "Id");
+                var businessUnitColumn = ResolveColumn(
+                    profileTable,
+                    "owningbusinessunit");
+                var scoped = NextCte("business_unit");
+                var businessUnitParameter = AddParameter(businessUnitId.Value);
+                ctes.Add($"""
+                    {Quote(scoped)} AS
+                    (
+                        SELECT DISTINCT source.ProfileId
+                        FROM {Quote(cte)} AS source
+                        INNER JOIN {Qualified(profileTable)} AS profile
+                            ON TRY_CONVERT(uniqueidentifier, profile.{Quote(idColumn)}) = source.ProfileId
+                        WHERE TRY_CONVERT(uniqueidentifier, profile.{Quote(businessUnitColumn)}) = {businessUnitParameter}
+                    )
+                    """);
+                stageCte = scoped;
+            }
+
+            stages.Add(new CompiledSegmentStage(stages.Count, stageCte, label, detail));
         }
 
         private void AddSource(EventTableDescriptor table)
