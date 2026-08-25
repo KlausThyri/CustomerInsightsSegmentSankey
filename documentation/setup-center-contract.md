@@ -424,14 +424,14 @@ renders it, so the page and this document cannot drift apart.
 | Supported account types | Accounts in this organizational directory only |
 | Client secret | **None.** A SPA is a public client and uses PKCE. |
 | Delegated permission | Azure Service Management → `user_impersonation` |
-| Delegated permissions | Power BI Service → `Workspace.ReadWrite.All`, `Item.ReadWrite.All`, `Capacity.Read.All`, `Connection.Read.All` (admin consent required) |
+| Delegated permissions | Power BI Service → `Workspace.ReadWrite.All`, `Item.ReadWrite.All`, `Item.Execute.All`, `Capacity.Read.All`, `OneLake.Read.All`, `Connection.ReadWrite.All` (admin consent required) |
 
 This list is deliberately the whole set, and installing the Dataverse shortcuts
 does not extend it: the browser only asks the Dataverse Custom API for the
 `provision-shortcuts` action, and the shortcuts themselves are created by the Web
 App's own system-assigned managed identity inside the customer's subscription.
-No delegated Fabric write permission is used for them, and no OneLake or
-shortcut-specific scope is requested.
+No delegated OneLake write permission is used for them. `OneLake.Read.All` is
+required only to discover the existing Link to Microsoft Fabric shortcut source.
 
 Everything this path creates stays in the customer's own tenant and
 subscription: the Entra registration, the Azure resource group, Web App and

@@ -827,7 +827,7 @@ Describe 'Browser-only notebook and API deployment' {
                 'FABRIC_DELEGATED_SCOPES\s*=\s*\[(?<body>[^\]]*)\]')).Groups['body'].Value
         $scopes | Should -Not -BeNullOrEmpty
         $names = [regex]::Matches($scopes, '"(?<n>[^"]+)"') | ForEach-Object { $_.Groups['n'].Value }
-        $names | Should -Be @('Workspace.ReadWrite.All', 'Item.ReadWrite.All', 'Item.Execute.All', 'Capacity.Read.All', 'Connection.ReadWrite.All')
+        $names | Should -Be @('Workspace.ReadWrite.All', 'Item.ReadWrite.All', 'Item.Execute.All', 'Capacity.Read.All', 'OneLake.Read.All', 'Connection.ReadWrite.All')
     }
 }
 

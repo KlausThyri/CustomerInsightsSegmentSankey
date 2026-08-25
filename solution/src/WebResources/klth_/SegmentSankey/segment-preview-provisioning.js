@@ -1266,6 +1266,7 @@
     "Item.ReadWrite.All",
     "Item.Execute.All",
     "Capacity.Read.All",
+    "OneLake.Read.All",
     "Connection.ReadWrite.All"
   ];
 
@@ -2257,6 +2258,12 @@
             response = await fabric("GET", path);
           } catch (error) {
             if (error.status === 400 || error.status === 404) break;
+            if (error.status === 401 || error.status === 403) {
+              throw new Error(
+                "Fabric could not read the Lakehouse shortcuts. Add the delegated Power BI Service permission " +
+                  "OneLake.Read.All to the tenant application, grant admin consent, then close and reopen Setup."
+              );
+            }
             throw error;
           }
           var payload = response.body || {};
@@ -3549,7 +3556,20 @@
         if (dryRun) {
           return "The setup status would be re-checked and any missing Fabric shortcuts installed.";
         }
-        var status = await dataverse.executeSetupAction("status");
+        var status = null;
+        for (var statusAttempt = 0; statusAttempt < 30; statusAttempt++) {
+          try {
+            status = await dataverse.executeSetupAction("status");
+            break;
+          } catch (error) {
+            var restartingWithNewKey =
+              /API key is missing or invalid|returned HTTP 401/i.test(
+                String(error && error.message)
+              );
+            if (!restartingWithNewKey || statusAttempt === 29) throw error;
+            await delay(10000, settings.timer);
+          }
+        }
         var provisioned = false;
         if (needsShortcutProvisioning(status)) {
           // Idempotent and server-side: the Custom API calls the Web App, which

@@ -1483,6 +1483,32 @@ test("direct client discovers the Dataverse shortcut source across continuation 
   assert.equal(fetchImpl.calls.length, 2);
 });
 
+test("shortcut discovery explains the missing OneLake delegated permission", async () => {
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.url.includes("/shortcuts?parentPath=Tables"),
+      respond: () =>
+        jsonResponse(403, {
+          message: "The caller does not have sufficient scopes to perform this operation"
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  await assert.rejects(
+    direct.findDataverseShortcutSource(
+      "w1",
+      [{ id: "l1", name: "Dataverse_orga" }],
+      "https://contoso.crm4.dynamics.com"
+    ),
+    /OneLake\.Read\.All.*admin consent.*close and reopen/i
+  );
+});
+
 test("direct client grants a missing Fabric connection role idempotently", async () => {
   const connectionId = "a45e4c00-1625-43aa-8a2a-c64eade09e0e";
   const principalId = "99999999-8888-7777-6666-555555555555";
@@ -2582,6 +2608,7 @@ async function sha256Of(bytes) {
 function dataverseHarness(options = {}) {
   const written = {};
   const actions = [];
+  let transientStatusFailures = options.transientStatusFailures || 0;
   // Each entry is the status the next executeSetupAction call returns; the last
   // one is reused once the list is exhausted.
   const responses = options.responses || [{ overallState: "ready", components: [] }];
@@ -2606,6 +2633,10 @@ function dataverseHarness(options = {}) {
     },
     async executeSetupAction(action) {
       actions.push(action);
+      if (action === "status" && transientStatusFailures > 0) {
+        transientStatusFailures--;
+        throw new Error("The API key is missing or invalid.");
+      }
       if (options.failOn && options.failOn === action) {
         throw new Error("The Segment Preview Azure API is not reachable.");
       }
@@ -3751,6 +3782,19 @@ test("a tenant with every shortcut in place is never asked to provision again", 
   assert.doesNotMatch(result.results.find((entry) => entry.id === "verify").message, /shortcut/i);
 });
 
+test("verification waits for the Web App to accept a newly deployed API key", async () => {
+  const dataverse = dataverseHarness({
+    transientStatusFailures: 2,
+    responses: [SHORTCUTS_READY]
+  });
+  const { orchestrator } = directOrchestrator({ dataverse });
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  assert.deepEqual(dataverse.actions, ["status", "status", "status"]);
+  assert.equal(result.results.find((entry) => entry.id === "verify").status, "succeeded");
+});
+
 test("a shortcut that is not visible yet is re-checked instead of reported as missing", async () => {
   const dataverse = dataverseHarness({
     responses: [SHORTCUTS_MISSING, SHORTCUTS_MISSING, SHORTCUTS_READY]
@@ -3796,6 +3840,7 @@ test("browser permissions cover Fabric provisioning and the notebook schedule", 
     "Item.ReadWrite.All",
     "Item.Execute.All",
     "Capacity.Read.All",
+    "OneLake.Read.All",
     "Connection.ReadWrite.All"
   ]);
   const arm = registration.permissions.find((entry) => entry.api === "Azure Service Management");
