@@ -500,7 +500,11 @@ test("dataverse client patches an existing value and posts a missing one", async
   ]);
   const client = engine.createDataverseClient({ fetch: fetchImpl, clientUrl: "https://contoso.crm4.dynamics.com" });
   const known = {
-    klth_FabricBehavioralApiUrl: { definitionId: "d1", valueId: "v1" },
+    klth_FabricBehavioralApiUrl: {
+      definitionId: "d1",
+      valueId: "v1",
+      value: "https://old.invalid/api/"
+    },
     klth_FabricBehavioralApiKey: { definitionId: "d2", valueId: null }
   };
   const patched = await client.setEnvironmentVariable("klth_FabricBehavioralApiUrl", "https://new.invalid/api/", known);
@@ -510,6 +514,19 @@ test("dataverse client patches an existing value and posts a missing one", async
   assert.ok(written[0].url.endsWith("environmentvariablevalues(v1)"));
   assert.equal(written[0].body.value, "https://new.invalid/api/");
   assert.equal(written[1].body["EnvironmentVariableDefinitionId@odata.bind"], "/environmentvariabledefinitions(d2)");
+  const unchanged = await client.setEnvironmentVariable(
+    "klth_FabricBehavioralApiUrl",
+    "https://new.invalid/api/",
+    {
+      klth_FabricBehavioralApiUrl: {
+        definitionId: "d1",
+        valueId: "v1",
+        value: "https://new.invalid/api/"
+      }
+    }
+  );
+  assert.equal(unchanged.updated, false);
+  assert.equal(written.length, 2, "an unchanged value must not be patched again");
 });
 
 test("dataverse client unwraps the setup Custom API result", async () => {
@@ -1445,6 +1462,53 @@ test("direct client reuses an existing Fabric workspace role", async () => {
   assert.equal(fetchImpl.calls.length, 1);
 });
 
+test("direct client upgrades an insufficient Fabric workspace role", async () => {
+  const workspaceId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const principalId = "99999999-8888-7777-6666-555555555555";
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.init.method === "GET",
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              id: "assignment-id",
+              principal: { id: principalId, type: "ServicePrincipal" },
+              role: "Viewer"
+            }
+          ]
+        })
+    },
+    {
+      match: (request) =>
+        request.init.method === "PATCH" &&
+        request.url.endsWith(
+          `/workspaces/${workspaceId}/roleAssignments/assignment-id`
+        ),
+      respond: () =>
+        jsonResponse(200, {
+          id: "assignment-id",
+          principal: { id: principalId, type: "ServicePrincipal" },
+          role: "Contributor"
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+  const result = await direct.ensureWorkspaceRoleAssignment(
+    workspaceId,
+    principalId
+  );
+  assert.equal(result.created, false);
+  assert.equal(result.updated, true);
+  assert.deepEqual(JSON.parse(fetchImpl.calls[1].init.body), {
+    role: "Contributor"
+  });
+});
+
 test("direct client follows Fabric continuation links", async () => {
   const fetchImpl = createFetchMock([
     {
@@ -2326,7 +2390,13 @@ test("the direct run publishes the notebook through the Fabric definition API", 
 test("an existing notebook is updated in place instead of duplicated", async () => {
   const direct = directHarness({
     notebooks: [{ id: "eeee0000-1111-2222-3333-444444444444", displayName: payload.notebook.displayName }],
-    schedules: [{ id: "sched-1" }]
+    schedules: [
+      {
+        id: "sched-1",
+        enabled: payload.notebook.schedule.enabled,
+        configuration: payload.notebook.schedule.configuration
+      }
+    ]
   });
 
   const { orchestrator } = directOrchestrator({ direct });
@@ -2351,6 +2421,58 @@ test("an existing notebook is updated in place instead of duplicated", async () 
     direct.calls.some((call) => call.kind === "fabric" && /schedules$/.test(call.path)),
     false,
     "an existing schedule must be kept"
+  );
+});
+
+test("an existing notebook schedule is updated instead of duplicated", async () => {
+  const direct = directHarness({
+    notebooks: [
+      {
+        id: "eeee0000-1111-2222-3333-444444444444",
+        displayName: payload.notebook.displayName
+      }
+    ],
+    schedules: [{ id: "sched-1", enabled: false, configuration: {} }]
+  });
+  const { orchestrator } = directOrchestrator({ direct });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  const updates = direct.calls.filter(
+    (call) =>
+      call.kind === "fabric" &&
+      call.method === "PATCH" &&
+      /\/schedules\/sched-1$/.test(call.path)
+  );
+  assert.equal(updates.length, 1);
+  assert.deepEqual(updates[0].body, {
+    enabled: payload.notebook.schedule.enabled,
+    configuration: payload.notebook.schedule.configuration
+  });
+  assert.equal(
+    direct.calls.some(
+      (call) =>
+        call.kind === "fabric" &&
+        call.method === "POST" &&
+        /\/schedules$/.test(call.path)
+    ),
+    false
+  );
+});
+
+test("a schedule lookup failure stops before creating a possible duplicate", async () => {
+  const direct = directHarness({ scheduleListFails: true });
+  const { orchestrator } = directOrchestrator({ direct });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "fabric-notebook");
+  assert.equal(
+    direct.calls.some(
+      (call) =>
+        call.kind === "fabric" &&
+        call.method === "POST" &&
+        /\/schedules$/.test(call.path)
+    ),
+    false
   );
 });
 
@@ -2564,7 +2686,35 @@ test("a repeated run accepts the managed identity's existing workspace role", as
   const result = await orchestrator.run();
   assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
   const step = result.results.find((entry) => entry.id === "fabric-permissions");
-  assert.match(step.message, /already has a workspace role/i);
+  assert.match(step.message, /already has a sufficient workspace role/i);
+});
+
+test("stale Fabric ids fall back to existing resources with matching names", async () => {
+  const direct = directHarness();
+  const digest = await sha256Of(direct.packageBytes);
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: {
+      target: Object.assign({}, VALID_TARGET, {
+        fabricWorkspaceId: "11111111-2222-3333-4444-555555555555",
+        fabricServingLakehouseId: "66666666-7777-8888-9999-000000000000",
+        fabricDataverseLakehouseId: "12341234-5678-5678-9abc-9abcdef01234"
+      }),
+      apiPackageUrl: "https://contoso.example.com/a.zip " + digest
+    }
+  });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  assert.equal(
+    direct.calls.some(
+      (call) =>
+        call.kind === "fabric" &&
+        call.method === "POST" &&
+        (call.path === "workspaces" || /\/lakehouses$/.test(call.path))
+    ),
+    false,
+    "matching workspace and lakehouse names must be reused"
+  );
 });
 
 test("missing connection scope names Connection.ReadWrite.All and reshare access", async () => {

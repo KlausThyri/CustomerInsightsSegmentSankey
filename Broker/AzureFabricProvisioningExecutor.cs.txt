@@ -47,47 +47,47 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
     private async Task<StepOutcome> DiscoverFabricAsync(ProvisioningContext context, CancellationToken cancellationToken)
     {
         var fabric = context.Request.Fabric ?? throw new InvalidOperationException("The run carries no Fabric target.");
-        var workspaceId = Trim(fabric.WorkspaceId);
+        var requestedWorkspaceId = Trim(fabric.WorkspaceId);
+        var workspaceName = Trim(fabric.WorkspaceName);
+        var workspaces = await FabricCollectionAsync(context, "workspaces", cancellationToken).ConfigureAwait(false);
+        var workspaceId = workspaces
+            .FirstOrDefault(item =>
+                requestedWorkspaceId is not null &&
+                string.Equals(Text(item, "id"), requestedWorkspaceId, StringComparison.OrdinalIgnoreCase) ||
+                workspaceName is not null &&
+                string.Equals(Text(item, "displayName"), workspaceName, StringComparison.OrdinalIgnoreCase))
+            is { } foundWorkspace ? Text(foundWorkspace, "id") : null;
 
         if (workspaceId is null)
         {
-            var name = Trim(fabric.WorkspaceName) ?? throw new InvalidOperationException("Supply a Fabric workspace id or a workspace name.");
-            var workspaces = await FabricCollectionAsync(context, "workspaces", cancellationToken).ConfigureAwait(false);
-            workspaceId = workspaces
-                .FirstOrDefault(item => string.Equals(Text(item, "displayName"), name, StringComparison.OrdinalIgnoreCase))
-                is { } existing ? Text(existing, "id") : null;
-
-            if (workspaceId is null)
+            var name = workspaceName ?? throw new InvalidOperationException("Supply a Fabric workspace id or a workspace name.");
+            var capacityId = Trim(fabric.CapacityId);
+            if (capacityId is null)
             {
-                var capacityId = Trim(fabric.CapacityId);
-                if (capacityId is null)
-                {
-                    return StepOutcome.ActionRequired(
-                        "The Fabric workspace '" + name + "' does not exist and no capacity id was supplied.",
-                        "Assign a Fabric capacity and supply its id, or create the workspace '" + name + "' manually, then install again.");
-                }
-
-                var created = await FabricAsync(context, HttpMethod.Post, "workspaces",
-                    new { displayName = name, capacityId }, cancellationToken).ConfigureAwait(false);
-                workspaceId = Text(created, "id");
+                return StepOutcome.ActionRequired(
+                    "The Fabric workspace '" + name + "' does not exist and no capacity id was supplied.",
+                    "Assign a Fabric capacity and supply its id, or create the workspace '" + name + "' manually, then install again.");
             }
+
+            var created = await FabricAsync(context, HttpMethod.Post, "workspaces",
+                new { displayName = name, capacityId }, cancellationToken).ConfigureAwait(false);
+            workspaceId = Text(created, "id");
         }
 
-        var lakehouseId = Trim(fabric.ServingLakehouseId);
+        var requestedLakehouseId = Trim(fabric.ServingLakehouseId);
+        var lakehouseName = Trim(fabric.ServingLakehouseName) ?? "SegmentServing";
+        var lakehouses = await FabricCollectionAsync(context, "workspaces/" + workspaceId + "/lakehouses", cancellationToken).ConfigureAwait(false);
+        var lakehouseId = lakehouses
+            .FirstOrDefault(item =>
+                requestedLakehouseId is not null &&
+                string.Equals(Text(item, "id"), requestedLakehouseId, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(Text(item, "displayName"), lakehouseName, StringComparison.OrdinalIgnoreCase))
+            is { } foundLakehouse ? Text(foundLakehouse, "id") : null;
         if (lakehouseId is null)
         {
-            var lakehouseName = Trim(fabric.ServingLakehouseName) ?? "SegmentServing";
-            var lakehouses = await FabricCollectionAsync(context, "workspaces/" + workspaceId + "/lakehouses", cancellationToken).ConfigureAwait(false);
-            lakehouseId = lakehouses
-                .FirstOrDefault(item => string.Equals(Text(item, "displayName"), lakehouseName, StringComparison.OrdinalIgnoreCase))
-                is { } existing ? Text(existing, "id") : null;
-
-            if (lakehouseId is null)
-            {
-                var created = await FabricAsync(context, HttpMethod.Post, "workspaces/" + workspaceId + "/lakehouses",
-                    new { displayName = lakehouseName }, cancellationToken).ConfigureAwait(false);
-                lakehouseId = Text(created, "id");
-            }
+            var created = await FabricAsync(context, HttpMethod.Post, "workspaces/" + workspaceId + "/lakehouses",
+                new { displayName = lakehouseName }, cancellationToken).ConfigureAwait(false);
+            lakehouseId = Text(created, "id");
         }
 
         context.Outputs["workspaceId"] = workspaceId;
@@ -174,9 +174,29 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
                     },
                     cancellationToken).ConfigureAwait(false);
             }
+            else
+            {
+                var existing = assignments.First(assignment =>
+                    string.Equals(Text(assignment, "id"), principalId, StringComparison.OrdinalIgnoreCase) ||
+                    assignment.TryGetProperty("principal", out var assignedPrincipal) &&
+                    string.Equals(Text(assignedPrincipal, "id"), principalId, StringComparison.OrdinalIgnoreCase));
+                var role = Text(existing, "role");
+                if (role is not ("Admin" or "Member" or "Contributor"))
+                {
+                    var assignmentId = Text(existing, "id") ?? principalId;
+                    await FabricAsync(
+                        context,
+                        HttpMethod.Patch,
+                        path + "/" + Uri.EscapeDataString(assignmentId),
+                        new { role = "Contributor" },
+                        cancellationToken).ConfigureAwait(false);
+                    return StepOutcome.Succeeded(
+                        "The managed identity's existing workspace role was upgraded to Contributor.");
+                }
+            }
             return StepOutcome.Succeeded(
                 exists
-                    ? "The managed identity already has a workspace role."
+                    ? "The managed identity already has a sufficient workspace role."
                     : "The managed identity is a Contributor of the Fabric workspace.");
         }
         catch (InvalidOperationException exception)
@@ -247,9 +267,28 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
         var location = Trim(azure.Location) ?? "westeurope";
         var webAppName = Require(azure.WebAppName, "webAppName");
 
-        await ArmAsync(context, HttpMethod.Put,
-            "/subscriptions/" + subscriptionId + "/resourcegroups/" + Uri.EscapeDataString(resourceGroup),
-            new { location }, ArmApiVersion, cancellationToken).ConfigureAwait(false);
+        var resourceGroupPath =
+            "/subscriptions/" + subscriptionId + "/resourcegroups/" + Uri.EscapeDataString(resourceGroup);
+        try
+        {
+            await ArmAsync(
+                context,
+                HttpMethod.Get,
+                resourceGroupPath,
+                null,
+                ArmApiVersion,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (ProvisioningRequestException exception) when (exception.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            await ArmAsync(
+                context,
+                HttpMethod.Put,
+                resourceGroupPath,
+                new { location },
+                ArmApiVersion,
+                cancellationToken).ConfigureAwait(false);
+        }
 
         var template = _template.Read();
         if (template is null)
@@ -542,7 +581,8 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
         var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException(
+            throw new ProvisioningRequestException(
+                response.StatusCode,
                 method.Method + " " + Redact(url) + " failed with " + (int)response.StatusCode + ".");
         }
 
@@ -565,6 +605,13 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
 
     private static string? Text(JsonElement element, string property) =>
         element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private sealed class ProvisioningRequestException(
+        System.Net.HttpStatusCode statusCode,
+        string message) : InvalidOperationException(message)
+    {
+        public System.Net.HttpStatusCode StatusCode { get; } = statusCode;
+    }
 }
 
 public interface IArmTemplateSource

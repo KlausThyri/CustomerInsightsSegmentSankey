@@ -1200,16 +1200,19 @@
           "The environment variable '" + name + "' does not exist in this environment."
         );
       }
+      if (String(effectiveValue(record) || "") === String(value)) {
+        return { name: name, created: false, updated: false };
+      }
       if (record.valueId) {
         await request("PATCH", "environmentvariablevalues(" + record.valueId + ")", { value: String(value) });
-        return { name: name, created: false };
+        return { name: name, created: false, updated: true };
       }
       await request("POST", "environmentvariablevalues", {
         value: String(value),
         "EnvironmentVariableDefinitionId@odata.bind":
           "/environmentvariabledefinitions(" + record.definitionId + ")"
       });
-      return { name: name, created: true };
+      return { name: name, created: true, updated: true };
     }
 
     /** Calls the setup Custom API that ships with the managed solution. */
@@ -2211,13 +2214,23 @@
         return String((principal && principal.id) || assignment.id || "").toLowerCase() ===
           String(principalId).toLowerCase();
       });
-      if (existing) return { created: false, assignment: existing };
+      if (existing) {
+        var sufficient = /^(Admin|Member|Contributor)$/i.test(String(existing.role || ""));
+        if (sufficient) return { created: false, updated: false, assignment: existing };
+        var assignmentId = existing.id || principalId;
+        var updated = await fabric(
+          "PATCH",
+          path + "/" + encodeURIComponent(assignmentId),
+          { role: "Contributor" }
+        );
+        return { created: false, updated: true, assignment: updated.body || existing };
+      }
 
       var response = await fabric("POST", path, {
         principal: { id: principalId, type: "ServicePrincipal" },
         role: "Contributor"
       });
-      return { created: true, assignment: response.body || null };
+      return { created: true, updated: false, assignment: response.body || null };
     }
 
     async function ensureResourceGroup(subscriptionId, name, location) {
@@ -2705,7 +2718,7 @@
         var workspace = workspaces.filter(function (item) {
           return (
             (target.fabricWorkspaceId && item.id === target.fabricWorkspaceId) ||
-            (!target.fabricWorkspaceId && item.displayName === target.fabricWorkspaceName)
+            (target.fabricWorkspaceName && item.displayName === target.fabricWorkspaceName)
           );
         })[0];
         if (!workspace) {
@@ -2741,7 +2754,7 @@
         var serving = lakehouses.filter(function (item) {
           return (
             (target.fabricServingLakehouseId && item.id === target.fabricServingLakehouseId) ||
-            (!target.fabricServingLakehouseId && item.displayName === target.fabricServingLakehouseName)
+            (target.fabricServingLakehouseName && item.displayName === target.fabricServingLakehouseName)
           );
         })[0];
         if (!serving) {
@@ -2859,13 +2872,28 @@
 
         var schedulePath = workspacePath + "/items/" + notebookId + "/jobs/" +
           (notebook.schedule.jobType || "Execute") + "/schedules";
-        var schedules = [];
-        try {
-          schedules = await direct.fabricCollection(schedulePath);
-        } catch (error) {
-          schedules = [];
-        }
+        var schedules = await direct.fabricCollection(schedulePath);
         if (schedules.length) {
+          var existingSchedule = schedules[0];
+          if (!existingSchedule.id) {
+            throw new Error("Fabric returned an existing notebook schedule without an id.");
+          }
+          var desiredSchedule = {
+            enabled: notebook.schedule.enabled !== false,
+            configuration: notebook.schedule.configuration
+          };
+          var scheduleMatches =
+            existingSchedule.enabled === desiredSchedule.enabled &&
+            JSON.stringify(existingSchedule.configuration || null) ===
+              JSON.stringify(desiredSchedule.configuration || null);
+          if (!scheduleMatches) {
+            await direct.fabric(
+              "PATCH",
+              schedulePath + "/" + encodeURIComponent(existingSchedule.id),
+              desiredSchedule
+            );
+            return "Bootstrap notebook '" + notebook.displayName + "' published; existing schedule updated.";
+          }
           return "Bootstrap notebook '" + notebook.displayName + "' published; existing schedule kept.";
         }
         try {
@@ -3046,9 +3074,10 @@
           context.workspace.id,
           context.principalId
         );
-        return assignment.created
-          ? "Contributor role assigned to the managed identity."
-          : "The managed identity already has a workspace role.";
+        if (assignment.created) return "Contributor role assigned to the managed identity.";
+        return assignment.updated
+          ? "The managed identity's existing workspace role was upgraded to Contributor."
+          : "The managed identity already has a sufficient workspace role.";
       },
 
       "fabric-connection-permissions": async function () {
