@@ -65,7 +65,7 @@ test("the provisioning engine and Azure template are loaded before the inline lo
 test("all external setup scripts use the current cache-busting revision", () => {
   const external = externalScripts(html);
   assert.equal(external.length, 3);
-  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.13$/));
+  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.14$/));
 });
 
 test("the Azure infrastructure step renders an accessible nested progress indicator", () => {
@@ -75,7 +75,10 @@ test("the Azure infrastructure step renders an accessible nested progress indica
   assert.match(html, /entry\.subProgress/);
   assert.match(html, /step-sub-progress-list-azure-infra/);
   assert.match(html, /Azure resources being deployed/);
-  assert.match(html, /detail\.steps\.forEach/);
+  assert.match(html, /renderAzureSubsteps\(\s*substeps/);
+  assert.match(html, /\.step\.running \.step-sub-progress \{ display: block; \}/);
+  assert.match(html, /azureDeploymentStages/);
+  assert.match(html, /Verify and copy the API package/);
 });
 
 test("selecting an existing Resource Group does not force its metadata location", () => {

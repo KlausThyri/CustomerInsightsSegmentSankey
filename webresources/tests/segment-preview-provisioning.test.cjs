@@ -1360,6 +1360,7 @@ test("direct client discovers selectable Azure and Fabric resources", async () =
             {
               id: "d1",
               displayName: "Dataverse",
+              connectivityType: "ShareableCloud",
               connectionDetails: {
                 type: "CommonDataService",
                 path: "https://contoso.crm4.dynamics.com/"
@@ -1395,7 +1396,13 @@ test("direct client discovers selectable Azure and Fabric resources", async () =
   assert.deepEqual(await direct.listLakehouses("w1"), [{ id: "l1", name: "Serving" }]);
   assert.deepEqual(
     await direct.listDataverseConnections("https://contoso.crm4.dynamics.com"),
-    [{ id: "d1", name: "Dataverse", credentialType: "OAuth2" }]
+    [{
+      id: "d1",
+      name: "Dataverse",
+      connectivityType: "ShareableCloud",
+      shareable: true,
+      credentialType: "OAuth2"
+    }]
   );
 });
 
@@ -2322,6 +2329,18 @@ function directHarness(options = {}) {
       calls.push({ kind: "ensureResourceGroup", subscriptionId, resourceGroup });
       return { location: options.resourceGroupLocation || "westeurope" };
     },
+    async listDataverseConnections(environmentUrl) {
+      calls.push({ kind: "listDataverseConnections", environmentUrl });
+      return options.dataverseConnections || [
+        {
+          id: VALID_TARGET.fabricDataverseConnectionId,
+          name: "Dataverse",
+          connectivityType: "ShareableCloud",
+          shareable: true,
+          credentialType: "OAuth2"
+        }
+      ];
+    },
     async ensureConnectionRoleAssignment(connectionId, principalId) {
       calls.push({ kind: "ensureConnectionRoleAssignment", connectionId, principalId });
       if (options.connectionRoleFails) {
@@ -2955,6 +2974,82 @@ test("a generic Fabric connection failure explains that workspace admin is insuf
   assert.match(step.message, /Workspace Admin.*not sufficient/);
   assert.match(step.message, /Manage connections and gateways/);
   assert.match(step.message, /Owner or UserWithReshare/);
+});
+
+test("automatic discovery skips a PersonalCloud Dataverse connection", async () => {
+  const direct = directHarness({
+    dataverseConnections: [
+      {
+        id: "11111111-aaaa-bbbb-cccc-111111111111",
+        name: "Personal Dataverse",
+        connectivityType: "PersonalCloud",
+        shareable: false,
+        credentialType: "OAuth2"
+      },
+      {
+        id: "22222222-aaaa-bbbb-cccc-222222222222",
+        name: "Shared Dataverse",
+        connectivityType: "ShareableCloud",
+        shareable: true,
+        credentialType: "OAuth2"
+      }
+    ]
+  });
+  const target = engine.mergeConfiguration(
+    Object.assign({}, VALID_TARGET, {
+      fabricDataverseConnectionId: "",
+      fabricDataverseLakehouseId: "12341234-5678-5678-9abc-9abcdef01234"
+    })
+  );
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: { target }
+  });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  const assignment = direct.calls.find(
+    (call) => call.kind === "ensureConnectionRoleAssignment"
+  );
+  assert.equal(
+    assignment.connectionId,
+    "22222222-aaaa-bbbb-cccc-222222222222"
+  );
+});
+
+test("automatic discovery explains when only PersonalCloud connections exist", async () => {
+  const direct = directHarness({
+    dataverseConnections: [
+      {
+        id: "11111111-aaaa-bbbb-cccc-111111111111",
+        name: "Personal Dataverse",
+        connectivityType: "PersonalCloud",
+        shareable: false,
+        credentialType: "OAuth2"
+      }
+    ]
+  });
+  const target = engine.mergeConfiguration(
+    Object.assign({}, VALID_TARGET, {
+      fabricDataverseConnectionId: "",
+      fabricDataverseLakehouseId: "12341234-5678-5678-9abc-9abcdef01234"
+    })
+  );
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: { target }
+  });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "fabric-discovery");
+  const message = result.results.find(
+    (entry) => entry.id === "fabric-discovery"
+  ).message;
+  assert.match(message, /PersonalCloud.*shared with a managed identity/is);
+  assert.match(message, /shareable cloud connection/i);
 });
 
 test("the browser never downloads the package itself", async () => {

@@ -377,7 +377,8 @@
     }
     .step-name { font-weight: 600; }
     .step-message { margin: 3px 0 0; color: var(--cp-text-muted); font-size: 12px; line-height: 1.45; }
-    .step-sub-progress { margin-top: 9px; }
+    .step-sub-progress { display: none; margin-top: 9px; }
+    .step.running .step-sub-progress { display: block; }
     .step-sub-progress-header {
       display: flex;
       justify-content: space-between;
@@ -777,9 +778,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.13"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.13"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.13"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.14"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.14"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.14"></script>
 
   <script>
     (() => {
@@ -1969,7 +1970,46 @@
         skipped: "–",
         failed: "!"
       };
+      const azureDeploymentStages = [
+        "Create virtual network and subnets",
+        "Create monitoring resources",
+        "Create App Service plan",
+        "Create private package storage",
+        "Configure private storage networking",
+        "Create package-copy identity",
+        "Grant managed identity storage access",
+        "Verify and copy the API package",
+        "Create Segment Preview web app"
+      ].map((name, index) => ({
+        id: "planned-" + index,
+        name,
+        resourceName: "",
+        status: "pending"
+      }));
       let activePlan = [];
+
+      function renderAzureSubsteps(list, steps) {
+        if (!list) return;
+        list.replaceChildren();
+        const marks = { pending: "•", running: "…", succeeded: "✓", failed: "!" };
+        steps.forEach(step => {
+          const substep = document.createElement("li");
+          substep.className = "step-sub-progress-item " + step.status;
+          const mark = document.createElement("span");
+          mark.className = "substep-mark";
+          mark.textContent = marks[step.status] || "•";
+          const text = document.createElement("span");
+          text.textContent = step.name;
+          if (step.resourceName) {
+            const resourceName = document.createElement("span");
+            resourceName.className = "resource-name";
+            resourceName.textContent = step.resourceName;
+            text.append(resourceName);
+          }
+          substep.append(mark, text);
+          list.append(substep);
+        });
+      }
 
       function updateInstallProgress(currentEntry) {
         if (!activePlan.length) {
@@ -2020,7 +2060,7 @@
             const subProgress = document.createElement("div");
             subProgress.className = "step-sub-progress";
             subProgress.id = "step-sub-progress-azure-infra";
-            subProgress.hidden = true;
+            subProgress.setAttribute("aria-hidden", "true");
             subProgress.setAttribute("role", "progressbar");
             subProgress.setAttribute("aria-label", "Azure infrastructure deployment progress");
             const header = document.createElement("div");
@@ -2042,6 +2082,7 @@
             substeps.className = "step-sub-progress-list";
             substeps.id = "step-sub-progress-list-azure-infra";
             substeps.setAttribute("aria-label", "Azure resources being deployed");
+            renderAzureSubsteps(substeps, azureDeploymentStages);
             subProgress.append(header, track, substeps);
             main.append(subProgress);
           }
@@ -2073,7 +2114,7 @@
           const substeps = document.getElementById("step-sub-progress-list-azure-infra");
           if (subProgress) {
             const detail = entry.subProgress || {};
-            subProgress.hidden = status !== "running";
+            subProgress.setAttribute("aria-hidden", status === "running" ? "false" : "true");
             subProgress.classList.toggle("complete", Boolean(detail.complete));
             subProgress.setAttribute(
               "aria-valuetext",
@@ -2086,25 +2127,10 @@
                 Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
             }
             if (substeps && Array.isArray(detail.steps)) {
-              substeps.replaceChildren();
-              const marks = { pending: "•", running: "…", succeeded: "✓", failed: "!" };
-              detail.steps.forEach(step => {
-                const substep = document.createElement("li");
-                substep.className = "step-sub-progress-item " + step.status;
-                const mark = document.createElement("span");
-                mark.className = "substep-mark";
-                mark.textContent = marks[step.status] || "•";
-                const text = document.createElement("span");
-                text.textContent = step.name;
-                if (step.resourceName) {
-                  const resourceName = document.createElement("span");
-                  resourceName.className = "resource-name";
-                  resourceName.textContent = step.resourceName;
-                  text.append(resourceName);
-                }
-                substep.append(mark, text);
-                substeps.append(substep);
-              });
+              renderAzureSubsteps(
+                substeps,
+                detail.steps.length ? detail.steps : azureDeploymentStages
+              );
             }
           }
         }

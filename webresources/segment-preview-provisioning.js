@@ -2202,6 +2202,8 @@
           return {
             id: connection.id,
             name: connection.displayName || connection.id,
+            connectivityType: connection.connectivityType || "",
+            shareable: connection.connectivityType !== "PersonalCloud",
             credentialType:
               (connection.credentialDetails && connection.credentialDetails.credentialType) || ""
           };
@@ -2927,21 +2929,48 @@
         context.fabricSqlServer = fabricSqlServer(endpoint.connectionString);
         context.fabricSqlDatabase = endpoint.id;
 
-        context.dataverseConnectionId = target.fabricDataverseConnectionId;
-        if (!isGuid(context.dataverseConnectionId)) {
-          var connections = await direct.listDataverseConnections(
-            "https://" + context.environmentDomain
+        var connections = await direct.listDataverseConnections(
+          "https://" + context.environmentDomain
+        );
+        if (!connections.length) {
+          throw new Error(
+            "No Fabric Dataverse connection for this environment was found. Create one in Fabric > Settings > Manage connections and gateways, then run setup again."
           );
-          if (!connections.length) {
+        }
+        var requestedConnectionId = target.fabricDataverseConnectionId;
+        var selectedConnection = isGuid(requestedConnectionId)
+          ? connections.find(function (connection) {
+              return connection.id.toLowerCase() === requestedConnectionId.toLowerCase();
+            })
+          : null;
+        if (isGuid(requestedConnectionId) && !selectedConnection) {
+          throw new Error(
+            "The configured Fabric Dataverse connection does not belong to this environment or is not accessible. Start over to discover the available connection again."
+          );
+        }
+        if (selectedConnection && !selectedConnection.shareable) {
+          throw new Error(
+            "The configured Dataverse connection is PersonalCloud and cannot be shared with a managed identity. " +
+            "Start over so Setup can select a ShareableCloud connection."
+          );
+        }
+        if (!selectedConnection) {
+          var shareableConnections = connections.filter(function (connection) {
+            return connection.shareable;
+          });
+          if (!shareableConnections.length) {
             throw new Error(
-              "No Fabric Dataverse connection for this environment was found. Create one in Fabric > Settings > Manage connections and gateways, then run setup again."
+              "Only PersonalCloud Dataverse connections were found. Microsoft does not allow PersonalCloud connections " +
+              "to be shared with a managed identity. In Fabric > Settings > Manage connections and gateways, create a " +
+              "shareable cloud connection for this Dataverse environment, then run Setup again."
             );
           }
-          var workspaceIdentity = connections.filter(function (connection) {
+          var workspaceIdentity = shareableConnections.filter(function (connection) {
             return connection.credentialType === "WorkspaceIdentity";
           });
-          context.dataverseConnectionId = (workspaceIdentity[0] || connections[0]).id;
+          selectedConnection = workspaceIdentity[0] || shareableConnections[0];
         }
+        context.dataverseConnectionId = selectedConnection.id;
         return "Workspace '" + workspace.displayName + "' and lakehouse '" + serving.displayName + "' resolved.";
       },
 
@@ -3253,7 +3282,7 @@
               "Settings > Manage connections and gateways, select the Dataverse connection, and have its connection " +
               "owner grant you Owner or UserWithReshare access. Then close and reopen Setup and install again.";
             addManual(connectionOwnerMessage);
-            throw new Error(connectionOwnerMessage + "\n" + error.message);
+            throw new Error(connectionOwnerMessage);
           }
           if (
             error.status === 401 ||
