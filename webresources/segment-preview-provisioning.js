@@ -2329,7 +2329,27 @@
       for (var poll = 0; poll < 240; poll++) {
         var snapshot = await arm("GET", path);
         var state = snapshot.body && snapshot.body.properties && snapshot.body.properties.provisioningState;
-        if (callbacks.onProgress) callbacks.onProgress({ id: "azure-infra", status: state });
+        if (callbacks.onProgress) {
+          callbacks.onProgress({
+            id: "azure-infra",
+            status: state,
+            message:
+              state === "Succeeded"
+                ? "Azure infrastructure deployment completed."
+                : "Azure is provisioning the infrastructure. Elapsed time: " +
+                  Math.floor((poll * 5) / 60) +
+                  ":" +
+                  String((poll * 5) % 60).padStart(2, "0"),
+            subProgress: {
+              label:
+                state === "Succeeded"
+                  ? "Azure deployment completed"
+                  : "Azure resource deployment is running",
+              elapsedSeconds: poll * 5,
+              complete: state === "Succeeded"
+            }
+          });
+        }
         if (state === "Succeeded") {
           return (snapshot.body.properties && snapshot.body.properties.outputs) || {};
         }

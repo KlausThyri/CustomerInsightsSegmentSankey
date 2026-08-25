@@ -1656,6 +1656,7 @@ test("direct client follows Fabric continuation links", async () => {
 
 test("direct client polls an ARM deployment until it succeeds", async () => {
   let gets = 0;
+  const progress = [];
   const fetchImpl = createFetchMock([
     { match: (request) => request.method === "PUT", respond: () => jsonResponse(200, {}) },
     {
@@ -1680,12 +1681,17 @@ test("direct client polls an ARM deployment until it succeeds", async () => {
     "rg-segment-preview",
     "segment-preview",
     embeddedTemplate,
-    { webAppName: "segment-preview-api" }
+    { webAppName: "segment-preview-api" },
+    { onProgress: (entry) => progress.push(entry) }
   );
   assert.equal(outputs.webAppUrl.value, "https://x.azurewebsites.net/api/");
   const put = JSON.parse(fetchImpl.calls[0].init.body);
   assert.equal(put.properties.mode, "Incremental");
   assert.deepEqual(put.properties.parameters.webAppName, { value: "segment-preview-api" });
+  assert.equal(progress.length, 2);
+  assert.equal(progress[0].subProgress.label, "Azure resource deployment is running");
+  assert.equal(progress[0].subProgress.complete, false);
+  assert.equal(progress[1].subProgress.complete, true);
 });
 
 test("direct client fails fast on a failed ARM deployment", async () => {
