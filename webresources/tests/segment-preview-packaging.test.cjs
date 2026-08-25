@@ -79,6 +79,16 @@ test("the build script copies the provisioning web resources", () => {
   });
 });
 
+test("the build removes the Marketing app sitemap from the unmanaged package only", () => {
+  assert.match(buildScript, /Remove-UnmanagedMarketingAppSitemap/);
+  assert.match(buildScript, /CustomerInsightsSegmentPreview\.zip/);
+  assert.match(buildScript, /component\.ParentNode\.RemoveChild/);
+  assert.match(
+    buildScript,
+    /Remove-UnmanagedMarketingAppSitemap -ArchivePath \$unmanagedPackage/
+  );
+});
+
 test("each provisioning web resource has a JScript metadata sidecar", () => {
   NEW_WEB_RESOURCES.forEach((name) => {
     const sidecar = path.join(

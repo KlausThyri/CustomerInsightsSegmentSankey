@@ -108,12 +108,17 @@ tenant consents that remain interactive.
 - [Setup Center contract](documentation/setup-center-contract.md)
 - [Optional PowerShell orchestrator](deployment/Install-SegmentPreview.ps1)
 - [Managed Dataverse Solution](deployment/dataverse/CustomerInsightsSegmentPreview_managed.zip)
-- [Unmanaged Dataverse Solution](deployment/dataverse/CustomerInsightsSegmentPreview.zip)
+- [Unmanaged Dataverse Solution](deployment/dataverse/CustomerInsightsSegmentPreview.zip) (developer upgrades; intentionally does not modify the Marketing app sitemap)
 - [System Architecture (PDF)](documentation/CustomerInsightsSegmentSankey-SystemArchitecture.pdf)
 - [System Architecture (Word)](documentation/CustomerInsightsSegmentSankey-SystemArchitecture.docx)
 - [Editable architecture diagrams](documentation/diagrams/)
 
-For production installations, the Managed Solution should be used. The
+For every customer installation, the Managed Solution should be used. Its
+Sitemap component contains only an additive `Segment Preview` SubArea patch, so
+existing customer navigation entries remain intact. The unmanaged developer
+package deliberately omits the Marketing app Sitemap because Dataverse does not
+isolate competing unmanaged Sitemap customizations.
+The
 GitHub release `v1.1.0` additionally contains a complete download package with
 source code, deployment templates, documentation, and both Dataverse solutions.
 

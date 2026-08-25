@@ -575,12 +575,66 @@ Describe 'Managed solution packaging' {
             'segment-preview-azure-template.js' = 'webresources\segment-preview-azure-template.js'
             'segment-preview-payload.js'        = 'webresources\segment-preview-payload.js'
         }
+
         foreach ($entry in $map.GetEnumerator()) {
             $packaged = Join-Path $script:SolutionSource "WebResources\klth_\SegmentSankey\$($entry.Key)"
             $source = Join-Path $script:RepositoryRoot $entry.Value
             Test-Path -LiteralPath $packaged | Should -BeTrue -Because $entry.Key
             (Get-FileHash -LiteralPath $packaged).Hash | Should -Be (Get-FileHash -LiteralPath $source).Hash
         }
+    }
+
+    It 'ships the app sitemap only as a managed additive patch' {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        function Read-SolutionArchiveXml {
+            param(
+                [Parameter(Mandatory)] [string] $ArchivePath,
+                [Parameter(Mandatory)] [string] $EntryName
+            )
+
+            $archive = [IO.Compression.ZipFile]::OpenRead($ArchivePath)
+            try {
+                $entry = $archive.GetEntry($EntryName)
+                $entry | Should -Not -BeNullOrEmpty
+                $reader = [IO.StreamReader]::new($entry.Open())
+                try {
+                    return [xml] $reader.ReadToEnd()
+                }
+                finally {
+                    $reader.Dispose()
+                }
+            }
+            finally {
+                $archive.Dispose()
+            }
+        }
+
+        $unmanagedPath = Join-Path $script:RepositoryRoot 'deployment\dataverse\CustomerInsightsSegmentPreview.zip'
+        $managedPath = Join-Path $script:RepositoryRoot 'deployment\dataverse\CustomerInsightsSegmentPreview_managed.zip'
+        $unmanagedSolution = Read-SolutionArchiveXml $unmanagedPath 'solution.xml'
+        $unmanagedCustomizations = Read-SolutionArchiveXml $unmanagedPath 'customizations.xml'
+        $managedSolution = Read-SolutionArchiveXml $managedPath 'solution.xml'
+        $managedCustomizations = Read-SolutionArchiveXml $managedPath 'customizations.xml'
+
+        $unmanagedSolution.SelectNodes(
+            "/ImportExportXml/SolutionManifest/RootComponents/RootComponent[@type='62' and @schemaName='msdyncrm_MarketingSMBApp']").Count |
+            Should -Be 0
+        $unmanagedCustomizations.SelectNodes(
+            "/ImportExportXml/AppModuleSiteMaps/AppModuleSiteMap[SiteMapUniqueName='msdyncrm_MarketingSMBApp']").Count |
+            Should -Be 0
+
+        $managedSolution.SelectNodes(
+            "/ImportExportXml/SolutionManifest/RootComponents/RootComponent[@type='62' and @schemaName='msdyncrm_MarketingSMBApp']").Count |
+            Should -Be 1
+        $managedSiteMap = $managedCustomizations.SelectSingleNode(
+            "/ImportExportXml/AppModuleSiteMaps/AppModuleSiteMap[SiteMapUniqueName='msdyncrm_MarketingSMBApp']/SiteMap")
+        $managedSiteMap | Should -Not -BeNullOrEmpty
+        $managedSiteMap.SelectNodes('.//SubArea').Count | Should -Be 1
+        $managedSiteMap.SelectSingleNode(
+            ".//SubArea[@Id='klth_SegmentPreviewSetup' and @solutionaction='Added']") |
+            Should -Not -BeNullOrEmpty
+        $managedSiteMap.SelectSingleNode(".//Group[@Id='Overview_Group']").solutionaction |
+            Should -Be 'Modified'
     }
 }
 

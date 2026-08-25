@@ -7,6 +7,7 @@ The Segment Preview consists of three deployable parts:
 | `azure/` | Bicep template for the App Service plan, Web App, Application Insights, Log Analytics, system-assigned managed identity, and all application settings. |
 | Microsoft Fabric | Serving lakehouse, SQL analytics endpoint, Dataverse mirror shortcuts, and the daily bootstrap notebook in `Fabric/`. |
 | `dataverse/CustomerInsightsSegmentPreview_managed.zip` | Plugins, custom APIs, environment variable definitions, web resources, the segment command, and the **Settings > Overview > Segment Preview** navigation entry. |
+| `dataverse/CustomerInsightsSegmentPreview.zip` | Unmanaged developer-upgrade package. It deliberately omits the Marketing app Sitemap so importing it cannot replace customer-owned navigation. Open the Setup web resource directly when installing this package in a development environment. |
 
 The Setup Center is the entry point. Importing the managed solution and pressing
 one button on the setup page is the whole installation procedure — **nothing has
@@ -32,6 +33,12 @@ Both drive the same steps, use the same step ids, and produce the same result.
    single-page application in your own tenant (guided by the page).
 4. Fill in the target fields (subscription, resource group, location, web app
    name, Fabric workspace/lakehouse). The page pre-fills everything it can read.
+
+The managed package contributes only the `klth_SegmentPreviewSetup` SubArea as
+an additive Sitemap difference. It does not ship a complete Customer Insights -
+Journeys Sitemap, so navigation entries supplied by the customer or other
+managed solutions are preserved. Do not use the unmanaged developer package for
+a customer installation.
    In direct mode, **Load subscriptions** lists the enabled subscriptions in your
    Azure tenant. Selecting one loads its existing Resource Groups; the same
    selector also offers **Create a new resource group**. Broker mode keeps a

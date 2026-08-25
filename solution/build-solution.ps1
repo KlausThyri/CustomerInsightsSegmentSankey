@@ -15,6 +15,80 @@ $solutionRoot = Join-Path $PSScriptRoot 'src'
 $webResourceRoot = Join-Path $solutionRoot 'WebResources\klth_\SegmentSankey'
 $pluginRoot = Join-Path $solutionRoot 'PluginAssemblies\CustomerInsightsSegmentSankey-458B9DC7-1D9A-F111-B8DC-7CED8D762587'
 
+function Update-ZipXmlEntry {
+    param(
+        [Parameter(Mandatory)] [string] $ArchivePath,
+        [Parameter(Mandatory)] [string] $EntryName,
+        [Parameter(Mandatory)] [scriptblock] $Transform
+    )
+
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::Open(
+        $ArchivePath,
+        [IO.Compression.ZipArchiveMode]::Update)
+    try {
+        $entry = $archive.GetEntry($EntryName)
+        if (-not $entry) {
+            throw "The solution archive does not contain '$EntryName'."
+        }
+
+        $reader = [IO.StreamReader]::new($entry.Open())
+        try {
+            [xml] $document = $reader.ReadToEnd()
+        }
+        finally {
+            $reader.Dispose()
+        }
+
+        & $Transform $document
+        $entry.Delete()
+        $replacement = $archive.CreateEntry(
+            $EntryName,
+            [IO.Compression.CompressionLevel]::Optimal)
+        $writer = [IO.StreamWriter]::new(
+            $replacement.Open(),
+            [Text.UTF8Encoding]::new($false))
+        try {
+            $document.Save($writer)
+        }
+        finally {
+            $writer.Dispose()
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+}
+
+function Remove-UnmanagedMarketingAppSitemap {
+    param([Parameter(Mandatory)] [string] $ArchivePath)
+
+    Update-ZipXmlEntry -ArchivePath $ArchivePath -EntryName 'solution.xml' -Transform {
+        param([xml] $document)
+        $component = $document.SelectSingleNode(
+            "/ImportExportXml/SolutionManifest/RootComponents/RootComponent[@type='62' and @schemaName='msdyncrm_MarketingSMBApp']")
+        if (-not $component) {
+            throw 'The unmanaged solution does not declare the expected Marketing app sitemap component.'
+        }
+        [void] $component.ParentNode.RemoveChild($component)
+    }
+
+    Update-ZipXmlEntry -ArchivePath $ArchivePath -EntryName 'customizations.xml' -Transform {
+        param([xml] $document)
+        $siteMap = $document.SelectSingleNode(
+            "/ImportExportXml/AppModuleSiteMaps/AppModuleSiteMap[SiteMapUniqueName='msdyncrm_MarketingSMBApp']")
+        if (-not $siteMap) {
+            throw 'The unmanaged solution does not contain the expected Marketing app sitemap patch.'
+        }
+        $container = $siteMap.ParentNode
+        [void] $container.RemoveChild($siteMap)
+        if ($container.SelectNodes('AppModuleSiteMap').Count -eq 0) {
+            [void] $container.ParentNode.RemoveChild($container)
+        }
+    }
+}
+
 dotnet build `
     (Join-Path $repositoryRoot 'CustomerInsightsSegmentSankey.csproj') `
     --configuration $Configuration
@@ -83,12 +157,15 @@ dotnet build `
     (Join-Path $PSScriptRoot 'CustomerInsightsSegmentPreview.cdsproj') `
     --configuration $Configuration
 
+$unmanagedPackage = Join-Path $PSScriptRoot "bin\$Configuration\CustomerInsightsSegmentPreview.zip"
+Remove-UnmanagedMarketingAppSitemap -ArchivePath $unmanagedPackage
+
 $artifactRoot = Join-Path $repositoryRoot 'artifacts'
 $releaseRoot = Join-Path $repositoryRoot 'deployment\dataverse'
 New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
 Copy-Item `
-    -LiteralPath (Join-Path $PSScriptRoot "bin\$Configuration\CustomerInsightsSegmentPreview.zip") `
+    -LiteralPath $unmanagedPackage `
     -Destination (Join-Path $artifactRoot 'CustomerInsightsSegmentPreview.zip') `
     -Force
 Copy-Item `
