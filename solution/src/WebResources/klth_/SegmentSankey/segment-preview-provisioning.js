@@ -744,7 +744,6 @@
   var TARGET_DEFAULTS = {
     location: "westeurope",
     fabricServingLakehouseName: "SegmentPreviewServing",
-    fabricDataverseDeltaFolder: "deltalake",
     requiredDataverseTables: DEFAULT_REQUIRED_TABLES
   };
 
@@ -807,6 +806,8 @@
     "fabricSqlServer",
     "fabricSqlDatabase",
     "dataverseConnectionId",
+    "dataverseLakehouseId",
+    "dataverseDeltaFolder",
     "notebookId",
     "apiBaseUrl",
     "principalId",
@@ -846,6 +847,8 @@
       fabricSqlServer: source.fabricSqlServer,
       fabricSqlDatabase: source.fabricSqlDatabase,
       dataverseConnectionId: source.dataverseConnectionId,
+      dataverseLakehouseId: source.dataverseLakehouseId,
+      dataverseDeltaFolder: source.dataverseDeltaFolder,
       notebookId: source.notebookId,
       apiBaseUrl: source.apiBaseUrl,
       principalId: source.principalId,
@@ -951,12 +954,6 @@
         errors.push({
           field: "fabricDataverseConnectionId",
           message: "The Fabric Dataverse connection must be a GUID."
-        });
-      }
-      if (isBlank(input.fabricDataverseDeltaFolder)) {
-        errors.push({
-          field: "fabricDataverseDeltaFolder",
-          message: "Enter the Dataverse delta folder."
         });
       }
       ["fabricCapacityId", "fabricServingLakehouseId", "fabricDataverseLakehouseId"].forEach(
@@ -2214,6 +2211,72 @@
         });
     }
 
+    async function findDataverseShortcutSource(
+      workspaceId,
+      lakehouses,
+      environmentUrl,
+      requestedLakehouseId
+    ) {
+      var expectedDomain = environmentDomain(environmentUrl);
+      var candidates = (lakehouses || []).filter(function (lakehouse) {
+        return lakehouse.id;
+      });
+      if (isGuid(requestedLakehouseId)) {
+        var requested = requestedLakehouseId.toLowerCase();
+        candidates = candidates.filter(function (lakehouse) {
+          return lakehouse.id.toLowerCase() === requested;
+        }).concat(
+          candidates.filter(function (lakehouse) {
+            return lakehouse.id.toLowerCase() !== requested;
+          })
+        );
+      }
+      for (var index = 0; index < candidates.length; index++) {
+        var lakehouse = candidates[index];
+        var continuationToken = null;
+        do {
+          var path =
+            "workspaces/" +
+            workspaceId +
+            "/items/" +
+            lakehouse.id +
+            "/shortcuts?parentPath=Tables";
+          if (continuationToken) {
+            path += "&continuationToken=" + encodeURIComponent(continuationToken);
+          }
+          var response;
+          try {
+            response = await fabric("GET", path);
+          } catch (error) {
+            if (error.status === 400 || error.status === 404) break;
+            throw error;
+          }
+          var payload = response.body || {};
+          var shortcuts = Array.isArray(payload.value) ? payload.value : [];
+          var source = shortcuts.find(function (shortcut) {
+            var target = shortcut && shortcut.target;
+            var dataverse = target && target.dataverse;
+            return (
+              dataverse &&
+              dataverse.connectionId &&
+              dataverse.deltaLakeFolder &&
+              environmentDomain(dataverse.environmentDomain) === expectedDomain
+            );
+          });
+          if (source) {
+            return {
+              lakehouseId: lakehouse.id,
+              lakehouseName: lakehouse.name || lakehouse.displayName || lakehouse.id,
+              connectionId: source.target.dataverse.connectionId,
+              deltaLakeFolder: source.target.dataverse.deltaLakeFolder
+            };
+          }
+          continuationToken = payload.continuationToken || null;
+        } while (continuationToken);
+      }
+      return null;
+    }
+
     async function ensureConnectionRoleAssignment(connectionId, principalId) {
       var path =
         "connections/" +
@@ -2575,6 +2638,7 @@
       listWorkspaces: listWorkspaces,
       listLakehouses: listLakehouses,
       listDataverseConnections: listDataverseConnections,
+      findDataverseShortcutSource: findDataverseShortcutSource,
       ensureConnectionRoleAssignment: ensureConnectionRoleAssignment,
       ensureWorkspaceRoleAssignment: ensureWorkspaceRoleAssignment,
       listResourceGroups: listResourceGroups,
@@ -2638,6 +2702,12 @@
       if (!isBlank(facts.fabricSqlDatabase)) context.fabricSqlDatabase = facts.fabricSqlDatabase;
       if (!isBlank(facts.dataverseConnectionId)) {
         context.dataverseConnectionId = facts.dataverseConnectionId;
+      }
+      if (!isBlank(facts.dataverseLakehouseId)) {
+        context.dataverseLakehouseId = facts.dataverseLakehouseId;
+      }
+      if (!isBlank(facts.dataverseDeltaFolder)) {
+        context.dataverseDeltaFolder = facts.dataverseDeltaFolder;
       }
       if (!isBlank(facts.notebookId)) context.notebookId = facts.notebookId;
       if (!isBlank(facts.apiBaseUrl)) context.apiBaseUrl = facts.apiBaseUrl;
@@ -2945,41 +3015,60 @@
             "No Fabric Dataverse connection for this environment was found. Create one in Fabric > Settings > Manage connections and gateways, then run setup again."
           );
         }
+        var source = await direct.findDataverseShortcutSource(
+          workspace.id,
+          lakehouses,
+          "https://" + context.environmentDomain,
+          target.fabricDataverseLakehouseId
+        );
+        if (!source) {
+          var linkMessage =
+            "No Link to Microsoft Fabric source was found for this Dataverse environment. In make.powerapps.com " +
+            "select this environment, open Tables > Analyze > Link to Microsoft Fabric, add the required tables, " +
+            "and choose this Fabric workspace. Wait until its Lakehouse contains the tables, then run Setup again.";
+          addManual(linkMessage);
+          throw new Error(linkMessage);
+        }
+
         var requestedConnectionId = target.fabricDataverseConnectionId;
-        var selectedConnection = isGuid(requestedConnectionId)
-          ? connections.find(function (connection) {
-              return connection.id.toLowerCase() === requestedConnectionId.toLowerCase();
-            })
-          : null;
-        if (isGuid(requestedConnectionId) && !selectedConnection) {
+        if (
+          isGuid(requestedConnectionId) &&
+          requestedConnectionId.toLowerCase() !== source.connectionId.toLowerCase()
+        ) {
           throw new Error(
-            "The configured Fabric Dataverse connection does not belong to this environment or is not accessible. Start over to discover the available connection again."
+            "The configured Fabric Dataverse connection does not match the connection used by the Link to Microsoft Fabric Lakehouse. Start over so Setup can discover the linked connection again."
           );
         }
-        if (selectedConnection && !selectedConnection.shareable) {
-          throw new Error(
-            "The configured Dataverse connection is PersonalCloud and cannot be shared with a managed identity. " +
-            "Start over so Setup can select a ShareableCloud connection."
-          );
-        }
+        var selectedConnection = connections.find(function (connection) {
+          return connection.id.toLowerCase() === source.connectionId.toLowerCase();
+        });
         if (!selectedConnection) {
-          var shareableConnections = connections.filter(function (connection) {
-            return connection.shareable;
-          });
-          if (!shareableConnections.length) {
-            throw new Error(
-              "Only PersonalCloud Dataverse connections were found. Microsoft does not allow PersonalCloud connections " +
-              "to be shared with a managed identity. In Fabric > Settings > Manage connections and gateways, create a " +
-              "shareable cloud connection for this Dataverse environment, then run Setup again."
-            );
-          }
-          var workspaceIdentity = shareableConnections.filter(function (connection) {
-            return connection.credentialType === "WorkspaceIdentity";
-          });
-          selectedConnection = workspaceIdentity[0] || shareableConnections[0];
+          throw new Error(
+            "The Dataverse connection used by the Link to Microsoft Fabric Lakehouse is not accessible to the signed-in administrator."
+          );
+        }
+        if (!selectedConnection.shareable) {
+          throw new Error(
+            "The Dataverse connection used by the Link to Microsoft Fabric Lakehouse is PersonalCloud and cannot be " +
+            "shared with a managed identity. In Fabric > Settings > Manage connections and gateways, create a shareable " +
+            "cloud connection and update the link to use it, then run Setup again."
+          );
         }
         context.dataverseConnectionId = selectedConnection.id;
-        return "Workspace '" + workspace.displayName + "' and lakehouse '" + serving.displayName + "' resolved.";
+        context.dataverseLakehouseId = source.lakehouseId;
+        context.dataverseDeltaFolder = source.deltaLakeFolder;
+        target.fabricDataverseConnectionId = selectedConnection.id;
+        target.fabricDataverseLakehouseId = source.lakehouseId;
+        target.fabricDataverseDeltaFolder = source.deltaLakeFolder;
+        return (
+          "Workspace '" +
+          workspace.displayName +
+          "', serving lakehouse '" +
+          serving.displayName +
+          "', and Dataverse source lakehouse '" +
+          source.lakehouseName +
+          "' resolved."
+        );
       },
 
       "fabric-notebook": async function () {
@@ -2993,7 +3082,7 @@
           throw new Error("The Fabric workspace and serving lakehouse must be resolved first.");
         }
 
-        var mirrorId = target.fabricDataverseLakehouseId;
+        var mirrorId = context.dataverseLakehouseId || target.fabricDataverseLakehouseId;
         if (!isGuid(mirrorId)) {
           mirrorId = EMPTY_GUID;
         }
@@ -3165,7 +3254,8 @@
           fabricServingLakehouseId:
             (context.serving && context.serving.id) || target.fabricServingLakehouseId || "",
           fabricDataverseConnectionId: context.dataverseConnectionId || "",
-          fabricDataverseDeltaFolder: target.fabricDataverseDeltaFolder,
+          fabricDataverseDeltaFolder:
+            context.dataverseDeltaFolder || target.fabricDataverseDeltaFolder,
           dataverseEnvironmentUrl: "https://" + context.environmentDomain,
           behavioralApiKey: context.apiKey,
           requiredDataverseTables: (context.requiredTables || []).join(","),

@@ -577,7 +577,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.16">v1.1.0.16</span>
+          <span class="app-version" aria-label="Version 1.1.0.17">v1.1.0.17</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -798,9 +798,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.16"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.16"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.16"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.17"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.17"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.17"></script>
 
   <script>
     (() => {
@@ -936,9 +936,9 @@
         { key: "fabricWorkspaceName", label: "New Fabric workspace name", requirement: "optional", hint: "Automatically generated from the Resource Group name." },
         { key: "fabricCapacityId", label: "Fabric capacity", requirement: "optional", hint: "Optionally select an existing capacity; otherwise setup chooses a suitable active capacity." },
         { key: "fabricServingLakehouseId", label: "Serving lakehouse", requirement: "optional", hint: "Setup reuses or creates the serving lakehouse automatically." },
-        { key: "fabricDataverseLakehouseId", label: "Dataverse mirror Lakehouse ID", requirement: "optional", hint: "Optional. Setup provisions the required Dataverse shortcuts directly. Enter the mirror Lakehouse ID only to include additional tables from an existing Link to Microsoft Fabric mirror in the daily notebook reconciliation." },
-        { key: "fabricDataverseConnectionId", label: "Fabric Dataverse connection", requirement: "optional", hint: "Automatically selects a matching connection for this environment." },
-        { key: "fabricDataverseDeltaFolder", label: "Dataverse delta folder", requirement: "optional", hint: "Defaults to deltalake." },
+        { key: "fabricDataverseLakehouseId", label: "Dataverse source Lakehouse ID", requirement: "optional", hint: "Automatically discovered from this environment's Link to Microsoft Fabric Lakehouse." },
+        { key: "fabricDataverseConnectionId", label: "Fabric Dataverse connection", requirement: "optional", hint: "Automatically discovered from the Dataverse source shortcut." },
+        { key: "fabricDataverseDeltaFolder", label: "Dataverse Managed Lake folder", requirement: "optional", hint: "Automatically discovered from the Dataverse source shortcut." },
         { key: "requiredDataverseTables", label: "Required Dataverse tables", requirement: "optional", hint: "Uses the product defaults unless overridden." }
       ];
 

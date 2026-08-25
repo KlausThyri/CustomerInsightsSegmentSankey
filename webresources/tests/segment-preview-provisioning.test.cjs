@@ -127,7 +127,7 @@ test("automatic target derives all new-installation defaults without requiring a
   assert.match(target.webAppName, /^segment-preview-6f6c1f2e-[a-z0-9]+$/);
   assert.equal(target.fabricWorkspaceName, "rg-segment-preview Segment Preview");
   assert.equal(target.fabricServingLakehouseName, "SegmentPreviewServing");
-  assert.equal(target.fabricDataverseDeltaFolder, "deltalake");
+  assert.equal(target.fabricDataverseDeltaFolder, undefined);
   assert.equal(target.fabricCapacityId, undefined);
   assert.deepEqual(engine.validateTarget(input), { valid: true, errors: [] });
 });
@@ -316,7 +316,7 @@ test("mergeConfiguration applies defaults, later wins, and ignores placeholders"
   );
   assert.equal(merged.location, "northeurope");
   assert.equal(merged.webAppName, "segment-preview-api");
-  assert.equal(merged.fabricDataverseDeltaFolder, "deltalake");
+  assert.equal(merged.fabricDataverseDeltaFolder, undefined);
   assert.equal(merged.requiredDataverseTables, engine.TARGET_DEFAULTS.requiredDataverseTables);
 });
 
@@ -1411,6 +1411,63 @@ test("direct client discovers selectable Azure and Fabric resources", async () =
   );
 });
 
+test("direct client discovers the Dataverse shortcut source across continuation pages", async () => {
+  const deltaLakeFolder =
+    "https://managedlake.dfs.fabric.microsoft.com/dataverse/Dataverse_orga/CDS3";
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.url.endsWith("/workspaces/w1/items/l1/shortcuts?parentPath=Tables"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [{ name: "Unrelated", target: { oneLake: { path: "x" } } }],
+          continuationToken: "next page"
+        })
+    },
+    {
+      match: (request) =>
+        request.url.endsWith(
+          "/workspaces/w1/items/l1/shortcuts?parentPath=Tables&continuationToken=next%20page"
+        ),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              name: "contact",
+              target: {
+                dataverse: {
+                  connectionId: "d1",
+                  deltaLakeFolder,
+                  environmentDomain: "https://contoso.crm4.dynamics.com/"
+                }
+              }
+            }
+          ]
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  assert.deepEqual(
+    await direct.findDataverseShortcutSource(
+      "w1",
+      [{ id: "l1", name: "Dataverse_orga" }],
+      "https://contoso.crm4.dynamics.com"
+    ),
+    {
+      lakehouseId: "l1",
+      lakehouseName: "Dataverse_orga",
+      connectionId: "d1",
+      deltaLakeFolder
+    }
+  );
+  assert.equal(fetchImpl.calls.length, 2);
+});
+
 test("direct client grants a missing Fabric connection role idempotently", async () => {
   const connectionId = "a45e4c00-1625-43aa-8a2a-c64eade09e0e";
   const principalId = "99999999-8888-7777-6666-555555555555";
@@ -1850,8 +1907,10 @@ const VALID_TARGET = {
   fabricWorkspaceId: "11111111-2222-3333-4444-555555555555",
   fabricServingLakehouseId: "66666666-7777-8888-9999-aaaaaaaaaaaa",
   fabricDataverseConnectionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-  fabricDataverseDeltaFolder: "deltalake",
   requiredDataverseTables: engine.TARGET_DEFAULTS.requiredDataverseTables};
+const DATAVERSE_LAKEHOUSE_ID = "12341234-5678-5678-9abc-9abcdef01234";
+const DATAVERSE_DELTA_FOLDER =
+  "https://managedlake.dfs.fabric.microsoft.com/dataverse/Dataverse_orga/2024-01-01/orga/Dataverse/orga/2024-01-01/orga/2024-01-01/orga/CDS3";
 test("a dry run walks every step and performs no write", async () => {
   const fetchImpl = createFetchMock([
     { repeat: true, match: () => true, respond: () => jsonResponse(500, { message: "must not be called" }) }
@@ -2274,7 +2333,10 @@ function directHarness(options = {}) {
         return [{ id: VALID_TARGET.fabricWorkspaceId, displayName: "Segment Preview" }];
       }
       if (/\/lakehouses$/.test(path)) {
-        return [{ id: VALID_TARGET.fabricServingLakehouseId, displayName: "SegmentPreviewServing" }];
+        return [
+          { id: VALID_TARGET.fabricServingLakehouseId, displayName: "SegmentPreviewServing" },
+          { id: DATAVERSE_LAKEHOUSE_ID, displayName: "Dataverse_orga" }
+        ];
       }
       if (/\/notebooks$/.test(path)) return notebooks;
       if (/\/schedules$/.test(path)) {
@@ -2352,6 +2414,22 @@ function directHarness(options = {}) {
           credentialType: "OAuth2"
         }
       ];
+    },
+    async findDataverseShortcutSource(workspaceId, lakehouses, environmentUrl, requestedLakehouseId) {
+      calls.push({
+        kind: "findDataverseShortcutSource",
+        workspaceId,
+        lakehouses,
+        environmentUrl,
+        requestedLakehouseId
+      });
+      if (options.noDataverseShortcutSource) return null;
+      return {
+        lakehouseId: DATAVERSE_LAKEHOUSE_ID,
+        lakehouseName: "Dataverse_orga",
+        connectionId: options.sourceConnectionId || VALID_TARGET.fabricDataverseConnectionId,
+        deltaLakeFolder: DATAVERSE_DELTA_FOLDER
+      };
     },
     async ensureConnectionRoleAssignment(connectionId, principalId) {
       calls.push({ kind: "ensureConnectionRoleAssignment", connectionId, principalId });
@@ -2753,7 +2831,7 @@ test("the notebook step never tells the administrator to run a script", async ()
   });
 });
 
-test("a missing optional Dataverse mirror lakehouse never blocks publication or readiness", async () => {
+test("the discovered Dataverse source configures the notebook and Azure deployment", async () => {
   const direct = directHarness();
   const { orchestrator } = directOrchestrator({
     direct,
@@ -2769,7 +2847,14 @@ test("a missing optional Dataverse mirror lakehouse never blocks publication or 
     .filter((cell) => cell.cell_type === "code")
     .flatMap((cell) => cell.source)
     .join("");
-  assert.ok(source.includes('DATAVERSE_LAKEHOUSE_ID = "00000000-0000-0000-0000-000000000000"'));
+  assert.ok(source.includes(`DATAVERSE_LAKEHOUSE_ID = "${DATAVERSE_LAKEHOUSE_ID}"`));
+  const deployment = direct.calls.find((call) => call.kind === "deployTemplate");
+  assert.equal(
+    deployment.parameters.fabricDataverseDeltaFolder,
+    DATAVERSE_DELTA_FOLDER
+  );
+  assert.equal(result.facts.dataverseLakehouseId, DATAVERSE_LAKEHOUSE_ID);
+  assert.equal(result.facts.dataverseDeltaFolder, DATAVERSE_DELTA_FOLDER);
   assert.equal(result.manual.some((entry) => /Dataverse mirror lakehouse/i.test(entry)), false);
 });
 
@@ -3000,8 +3085,9 @@ test("a generic Fabric connection failure explains that workspace admin is insuf
   assert.match(step.message, /Owner or UserWithReshare/);
 });
 
-test("automatic discovery skips a PersonalCloud Dataverse connection", async () => {
+test("automatic discovery uses the connection referenced by the Dataverse shortcut", async () => {
   const direct = directHarness({
+    sourceConnectionId: "22222222-aaaa-bbbb-cccc-222222222222",
     dataverseConnections: [
       {
         id: "11111111-aaaa-bbbb-cccc-111111111111",
@@ -3044,6 +3130,7 @@ test("automatic discovery skips a PersonalCloud Dataverse connection", async () 
 
 test("automatic discovery explains when only PersonalCloud connections exist", async () => {
   const direct = directHarness({
+    sourceConnectionId: "11111111-aaaa-bbbb-cccc-111111111111",
     dataverseConnections: [
       {
         id: "11111111-aaaa-bbbb-cccc-111111111111",
@@ -3074,6 +3161,23 @@ test("automatic discovery explains when only PersonalCloud connections exist", a
   ).message;
   assert.match(message, /PersonalCloud.*shared with a managed identity/is);
   assert.match(message, /shareable cloud connection/i);
+});
+
+test("automatic discovery explains how to create a missing Link to Microsoft Fabric source", async () => {
+  const direct = directHarness({ noDataverseShortcutSource: true });
+  const { orchestrator } = directOrchestrator({ direct });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "fabric-discovery");
+  const message = result.results.find(
+    (entry) => entry.id === "fabric-discovery"
+  ).message;
+  assert.match(message, /make\.powerapps\.com/i);
+  assert.match(message, /Tables > Analyze > Link to Microsoft Fabric/i);
+  assert.match(message, /run Setup again/i);
+  assert.ok(result.manual.some((entry) => /Link to Microsoft Fabric/i.test(entry)));
 });
 
 test("the browser never downloads the package itself", async () => {
@@ -3261,6 +3365,8 @@ test("collectFacts keeps every durable fact and drops anything secret", () => {
       serving: { id: "lh-1", displayName: "Serving" },
       fabricSqlServer: "contoso.datawarehouse.fabric.microsoft.com",
       fabricSqlDatabase: "Serving",
+      dataverseLakehouseId: DATAVERSE_LAKEHOUSE_ID,
+      dataverseDeltaFolder: DATAVERSE_DELTA_FOLDER,
       notebookId: "nb-1",
       apiBaseUrl: "https://a.azurewebsites.net/api/",
       principalId: "pid-1",
@@ -3273,6 +3379,8 @@ test("collectFacts keeps every durable fact and drops anything secret", () => {
   assert.equal(facts.workspaceId, "ws-1");
   assert.equal(facts.servingLakehouseId, "lh-1");
   assert.equal(facts.notebookId, "nb-1");
+  assert.equal(facts.dataverseLakehouseId, DATAVERSE_LAKEHOUSE_ID);
+  assert.equal(facts.dataverseDeltaFolder, DATAVERSE_DELTA_FOLDER);
   assert.equal(facts.principalId, "pid-1");
   assert.equal(facts.packageSha256, SHIPPED_SHA);
   assert.equal(facts.workspaceName, "Segment Preview");
@@ -3345,6 +3453,8 @@ test("a resumed run recovers the earlier key from the Web App and writes it agai
         servingLakehouseId: VALID_TARGET.fabricServingLakehouseId,
         fabricSqlServer: "contoso.datawarehouse.fabric.microsoft.com",
         fabricSqlDatabase: "SegmentPreviewServing",
+        dataverseLakehouseId: DATAVERSE_LAKEHOUSE_ID,
+        dataverseDeltaFolder: DATAVERSE_DELTA_FOLDER,
         apiBaseUrl: "https://segment-preview-api.azurewebsites.net/api/",
         principalId: "99999999-8888-7777-6666-555555555555",
         packageSha256: SHIPPED_SHA,
@@ -3394,6 +3504,8 @@ test("a resumed pre-package run redeploys Azure so the current API package is in
         servingLakehouseId: VALID_TARGET.fabricServingLakehouseId,
         fabricSqlServer: "contoso.datawarehouse.fabric.microsoft.com",
         fabricSqlDatabase: "SegmentPreviewServing",
+        dataverseLakehouseId: DATAVERSE_LAKEHOUSE_ID,
+        dataverseDeltaFolder: DATAVERSE_DELTA_FOLDER,
         apiBaseUrl: "https://segment-preview-api.azurewebsites.net/api/",
         principalId: "99999999-8888-7777-6666-555555555555"
       }
@@ -3404,6 +3516,11 @@ test("a resumed pre-package run redeploys Azure so the current API package is in
   assert.equal(result.results.find((entry) => entry.id === "azure-infra").status, "succeeded");
   assert.equal(result.results.find((entry) => entry.id === "azure-app").status, "succeeded");
   assert.ok(direct.calls.some((call) => call.kind === "deployTemplate"));
+  const deployment = direct.calls.find((call) => call.kind === "deployTemplate");
+  assert.equal(
+    deployment.parameters.fabricDataverseDeltaFolder,
+    DATAVERSE_DELTA_FOLDER
+  );
   assert.equal(direct.appSettings.SEGMENT_PREVIEW_PACKAGE_SHA256, SHIPPED_SHA);
   assert.equal(
     direct.appSettings.WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID,

@@ -65,7 +65,7 @@ test("the provisioning engine and Azure template are loaded before the inline lo
 test("all external setup scripts use the current cache-busting revision", () => {
   const external = externalScripts(html);
   assert.equal(external.length, 3);
-  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.16$/));
+  external.forEach((source) => assert.match(source, /\?rev=1\.1\.0\.17$/));
 });
 
 test("the Azure infrastructure step renders an accessible nested progress indicator", () => {
@@ -188,10 +188,11 @@ test("new installation exposes only subscription and resource group as required"
   assert.equal((code.match(/requirement:\s*"optional"/g) || []).length, 10);
 });
 
-test("the Dataverse mirror field explains that the mirror is optional", () => {
-  assert.match(html, /Dataverse mirror Lakehouse ID/);
-  assert.match(html, /Setup provisions the required Dataverse shortcuts directly/);
-  assert.match(html, /only to include additional tables/);
+test("the Dataverse source fields explain automatic shortcut discovery", () => {
+  assert.match(html, /Dataverse source Lakehouse ID/);
+  assert.match(html, /Automatically discovered from this environment's Link to Microsoft Fabric Lakehouse/);
+  assert.match(html, /Dataverse Managed Lake folder/);
+  assert.match(html, /Automatically discovered from the Dataverse source shortcut/);
 });
 
 test("provisioning is presented and gated as a three-step workflow", () => {
