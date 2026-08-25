@@ -1164,7 +1164,8 @@
         .join(" or ");
       var path =
         "environmentvariabledefinitions?$select=schemaname,defaultvalue,environmentvariabledefinitionid" +
-        "&$expand=environmentvariabledefinition_environmentvariablevalue($select=value,environmentvariablevalueid)" +
+        "&$expand=environmentvariabledefinition_environmentvariablevalue(" +
+        "$select=value,environmentvariablevalueid,createdon;$orderby=createdon desc)" +
         "&$filter=" +
         encodeURIComponent(filter);
       var response = await request("GET", path);
@@ -2686,6 +2687,13 @@
       return value;
     }
 
+    function environmentValue(record) {
+      if (!record) return null;
+      return record.value !== null && record.value !== undefined
+        ? record.value
+        : record.defaultValue;
+    }
+
     /**
      * Reads the key an earlier run stored in the Web App application settings.
      * The key never leaves the customer tenant: it is written by the Azure
@@ -2987,9 +2995,6 @@
 
         var mirrorId = target.fabricDataverseLakehouseId;
         if (!isGuid(mirrorId)) {
-          addManual(
-            "A Dataverse mirror lakehouse id is still missing. In make.powerapps.com select this environment, open Tables > Analyze > Link to Microsoft Fabric, and mirror the required tables. Then open the created Lakehouse in Fabric, copy the GUID after /lakehouses/ from its URL into Advanced options > Dataverse mirror Lakehouse ID, and install again."
-          );
           mirrorId = EMPTY_GUID;
         }
 
@@ -3321,6 +3326,12 @@
           target.resourceGroup,
           target.webAppName
         );
+        if (current[API_KEY_SETTING] !== context.apiKey) {
+          throw new Error(
+            "Azure did not return the API key that Setup deployed. The Web App configuration is inconsistent, " +
+              "so Dataverse was not updated with a key the API would reject. Run the installation again."
+          );
+        }
         var blobName = packageBlobName(pkg);
         var deployed = String(current[RUN_FROM_PACKAGE_SETTING] || "");
         if (deployed.indexOf("/" + PACKAGE_CONTAINER + "/" + blobName) === -1) {
@@ -3407,6 +3418,16 @@
         var known = await dataverse.getEnvironmentVariables([ENV.apiUrl, ENV.apiKey]);
         await dataverse.setEnvironmentVariable(ENV.apiUrl, url, known);
         await dataverse.setEnvironmentVariable(ENV.apiKey, context.apiKey, known);
+        var written = await dataverse.getEnvironmentVariables([ENV.apiUrl, ENV.apiKey]);
+        if (
+          environmentValue(written[ENV.apiUrl]) !== url ||
+          environmentValue(written[ENV.apiKey]) !== context.apiKey
+        ) {
+          throw new Error(
+            "Dataverse did not return the API URL and key that Setup just wrote. " +
+              "The values were not accepted consistently, so verification was not started."
+          );
+        }
         context.apiBaseUrl = url;
         return "Environment variables written (" + context.apiKeyFingerprint + ").";
       },

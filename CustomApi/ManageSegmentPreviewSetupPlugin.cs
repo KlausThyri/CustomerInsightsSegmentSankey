@@ -222,37 +222,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             IOrganizationService service,
             string schemaName)
         {
-            var query = new QueryExpression("environmentvariabledefinition")
-            {
-                ColumnSet = new ColumnSet("defaultvalue"),
-                TopCount = 1,
-                NoLock = true
-            };
-            query.Criteria.AddCondition(
-                "schemaname",
-                ConditionOperator.Equal,
-                schemaName);
-            var values = query.AddLink(
-                "environmentvariablevalue",
-                "environmentvariabledefinitionid",
-                "environmentvariabledefinitionid",
-                JoinOperator.LeftOuter);
-            values.EntityAlias = "currentvalue";
-            values.Columns = new ColumnSet("value");
-            values.Orders.Add(new OrderExpression("createdon", OrderType.Descending));
-
-            var definition = service.RetrieveMultiple(query).Entities.FirstOrDefault();
-            if (definition == null)
-            {
-                return null;
-            }
-
-            var current = definition.GetAttributeValue<AliasedValue>(
-                "currentvalue.value");
-            var value = current == null
-                ? definition.GetAttributeValue<string>("defaultvalue")
-                : current.Value as string;
-            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            return EnvironmentVariableReader.Read(service, schemaName, false);
         }
 
         private static string Serialize<T>(T value)

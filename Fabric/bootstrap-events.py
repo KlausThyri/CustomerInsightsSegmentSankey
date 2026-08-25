@@ -40,6 +40,10 @@ DATAVERSE_SHORTCUTS_API = (
     f"https://api.fabric.microsoft.com/v1/workspaces/{WORKSPACE_ID}"
     f"/items/{DATAVERSE_LAKEHOUSE_ID}/shortcuts?parentPath=Tables"
 )
+HAS_DATAVERSE_MIRROR = (
+    DATAVERSE_LAKEHOUSE_ID
+    and DATAVERSE_LAKEHOUSE_ID != "00000000-0000-0000-0000-000000000000"
+)
 METADATA_TABLES = {
     "GlobalOptionsetMetadata",
     "OptionsetMetadata",
@@ -104,31 +108,34 @@ event_registry.write.mode("overwrite").option(
 ).saveAsTable(f"{EVENT_SCHEMA}._event_registry")
 
 dataverse_results = []
-try:
+if not HAS_DATAVERSE_MIRROR:
     source_shortcuts = []
-    continuation_token = None
-    while True:
-        source_response = requests.get(
-            DATAVERSE_SHORTCUTS_API,
-            headers=headers,
-            params=(
-                {"continuationToken": continuation_token}
-                if continuation_token
-                else None
-            ),
-            timeout=60,
+else:
+    try:
+        source_shortcuts = []
+        continuation_token = None
+        while True:
+            source_response = requests.get(
+                DATAVERSE_SHORTCUTS_API,
+                headers=headers,
+                params=(
+                    {"continuationToken": continuation_token}
+                    if continuation_token
+                    else None
+                ),
+                timeout=60,
+            )
+            source_response.raise_for_status()
+            source_page = source_response.json()
+            source_shortcuts.extend(source_page.get("value", []))
+            continuation_token = source_page.get("continuationToken")
+            if not continuation_token:
+                break
+    except Exception as error:
+        source_shortcuts = []
+        dataverse_results.append(
+            (None, None, "failed", f"Could not list Dataverse shortcuts: {error}")
         )
-        source_response.raise_for_status()
-        source_page = source_response.json()
-        source_shortcuts.extend(source_page.get("value", []))
-        continuation_token = source_page.get("continuationToken")
-        if not continuation_token:
-            break
-except Exception as error:
-    source_shortcuts = []
-    dataverse_results.append(
-        (None, None, "failed", f"Could not list Dataverse shortcuts: {error}")
-    )
 
 for shortcut in source_shortcuts:
     table_name = shortcut.get("name")

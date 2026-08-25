@@ -446,7 +446,7 @@ test("createHttp surfaces nested ARM validation details", async () => {
 const ENV_QUERY_ROUTE = (records) => ({
   repeat: true,
   match: (request) => request.method === "GET" && request.url.includes("environmentvariabledefinitions?"),
-  respond: () => jsonResponse(200, { value: records })
+  respond: () => jsonResponse(200, { value: typeof records === "function" ? records() : records })
 });
 
 test("dataverse client reads definitions and their current values", async () => {
@@ -476,6 +476,11 @@ test("dataverse client reads definitions and their current values", async () => 
   assert.equal(client.effectiveValue(variables.klth_SetupEntraClientId), null);
   assert.ok(fetchImpl.calls[0].url.startsWith("https://contoso.crm4.dynamics.com/api/data/v9.2/"));
   assert.equal(fetchImpl.calls[0].init.credentials, "same-origin");
+  assert.match(
+    decodeURIComponent(fetchImpl.calls[0].url),
+    /\$orderby=createdon desc/,
+    "the newest current value must be selected deterministically"
+  );
 });
 
 test("dataverse client patches an existing value and posts a missing one", async () => {
@@ -1952,21 +1957,25 @@ test("completed steps are resumed rather than repeated", async () => {
 
 test("a live broker-mode run delegates, writes the environment variables, and verifies", async () => {
   const requests = [];
+  let currentUrl = "https://old.invalid/api/";
+  let currentKey = null;
   const fetchImpl = createFetchMock([
-    ENV_QUERY_ROUTE([
+    ENV_QUERY_ROUTE(() => [
       {
         schemaname: "klth_FabricBehavioralApiUrl",
         environmentvariabledefinitionid: "d1",
         defaultvalue: null,
         environmentvariabledefinition_environmentvariablevalue: [
-          { environmentvariablevalueid: "v1", value: "https://old.invalid/api/" }
+          { environmentvariablevalueid: "v1", value: currentUrl }
         ]
       },
       {
         schemaname: "klth_FabricBehavioralApiKey",
         environmentvariabledefinitionid: "d2",
         defaultvalue: "committed-default",
-        environmentvariabledefinition_environmentvariablevalue: []
+        environmentvariabledefinition_environmentvariablevalue: currentKey
+          ? [{ environmentvariablevalueid: "v2", value: currentKey }]
+          : []
       }
     ]),
     {
@@ -1975,7 +1984,10 @@ test("a live broker-mode run delegates, writes the environment variables, and ve
         request.method === "PATCH" ||
         (request.method === "POST" && request.url.endsWith("environmentvariablevalues")),
       respond: (request) => {
-        requests.push(JSON.parse(request.init.body));
+        const body = JSON.parse(request.init.body);
+        requests.push(body);
+        if (request.method === "PATCH") currentUrl = body.value;
+        else currentKey = body.value;
         return jsonResponse(204);
       }
     },
@@ -2379,6 +2391,9 @@ function directHarness(options = {}) {
         webAppUrl: { value: "https://segment-preview-api.azurewebsites.net/api/" },
         managedIdentityPrincipalId: { value: "99999999-8888-7777-6666-555555555555" }
       };
+      if (!options.leaveApiKeyAlone) {
+        appSettings.BEHAVIORAL_API_KEY = parameters.behavioralApiKey;
+      }
       const url = parameters && parameters.apiPackageUrl;
       const sha = parameters && parameters.apiPackageSha256;
       if (url && sha && !options.packageCopyFails) {
@@ -2451,8 +2466,17 @@ function dataverseHarness(options = {}) {
   return {
     written,
     actions,
-    async getEnvironmentVariables() {
-      return {};
+    async getEnvironmentVariables(names) {
+      const records = {};
+      (names || []).forEach((name) => {
+        if (Object.prototype.hasOwnProperty.call(written, name)) {
+          records[name] = {
+            value: written[name],
+            defaultValue: null
+          };
+        }
+      });
+      return records;
     },
     async setEnvironmentVariable(name, value) {
       written[name] = value;
@@ -2729,7 +2753,7 @@ test("the notebook step never tells the administrator to run a script", async ()
   });
 });
 
-test("a missing Dataverse mirror lakehouse is reported but never blocks publication", async () => {
+test("a missing optional Dataverse mirror lakehouse never blocks publication or readiness", async () => {
   const direct = directHarness();
   const { orchestrator } = directOrchestrator({
     direct,
@@ -2746,7 +2770,7 @@ test("a missing Dataverse mirror lakehouse is reported but never blocks publicat
     .flatMap((cell) => cell.source)
     .join("");
   assert.ok(source.includes('DATAVERSE_LAKEHOUSE_ID = "00000000-0000-0000-0000-000000000000"'));
-  assert.ok(result.manual.some((entry) => /Link to Microsoft Fabric/.test(entry)));
+  assert.equal(result.manual.some((entry) => /Dataverse mirror lakehouse/i.test(entry)), false);
 });
 
 test("resolveApiPackage prefers the environment override over the shipped value", () => {
@@ -3070,6 +3094,20 @@ test("a deployment that did not apply the package fails the run instead of repor
   const { orchestrator } = directOrchestrator({
     direct,
     settings: { apiPackageUrl: "https://contoso.example.com/a.zip " + OVERRIDE_SHA }
+  });
+
+  test("a deployment that did not apply the API key stops before Dataverse is updated", async () => {
+    const direct = directHarness({
+      leaveApiKeyAlone: true,
+      appSettings: { BEHAVIORAL_API_KEY: "different-key" }
+    });
+    const dataverse = dataverseHarness();
+    const { orchestrator } = directOrchestrator({ direct, dataverse });
+    const result = await orchestrator.run();
+    assert.equal(result.ok, false);
+    assert.equal(result.failedStep, "azure-app");
+    assert.match(result.results.find((entry) => entry.id === "azure-app").message, /API key/i);
+    assert.equal(Object.keys(dataverse.written).length, 0);
   });
   const result = await orchestrator.run();
   assert.equal(result.ok, false);

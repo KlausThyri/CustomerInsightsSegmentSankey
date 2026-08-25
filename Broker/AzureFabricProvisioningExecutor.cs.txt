@@ -445,6 +445,7 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
             .ConfigureAwait(false);
         var applied = ReadAppSettings(settings);
         VerifyPackageSettings(applied, package);
+        VerifyApiKeySetting(applied, context.Request.Secrets?.BehavioralApiKey);
 
         await ArmAsync(context, HttpMethod.Post, site + "/restart", null, WebApiVersion, cancellationToken).ConfigureAwait(false);
 
@@ -465,6 +466,7 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
     internal const string PackageIdentitySetting = "WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID";
     internal const string PackageShaSetting = "SEGMENT_PREVIEW_PACKAGE_SHA256";
     internal const string PackageContainer = "segment-preview-api";
+    internal const string ApiKeySetting = "BEHAVIORAL_API_KEY";
 
     /// <summary>Flattens the ARM app-settings response into a plain dictionary.</summary>
     public static Dictionary<string, string?> ReadAppSettings(JsonElement response)
@@ -521,6 +523,22 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
             throw new InvalidOperationException(
                 "The Web App is not configured to read the package with its own managed identity (" +
                 PackageIdentitySetting + " is " + (string.IsNullOrEmpty(identity) ? "empty" : identity) + ").");
+        }
+    }
+
+    public static void VerifyApiKeySetting(
+        IReadOnlyDictionary<string, string?> settings,
+        string? expectedApiKey)
+    {
+        var expected = expectedApiKey ?? string.Empty;
+        var applied = settings.TryGetValue(ApiKeySetting, out var value)
+            ? value ?? string.Empty
+            : string.Empty;
+        if (!string.Equals(applied, expected, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Azure did not return the API key that the provisioning service deployed. " +
+                "Dataverse was not updated with a key the API would reject.");
         }
     }
 

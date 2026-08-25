@@ -84,6 +84,31 @@ public class ApiPackageTests
     }
 
     [Fact]
+    public void AcceptsTheApiKeyThatWasDeployed()
+    {
+        AzureFabricProvisioningExecutor.VerifyApiKeySetting(
+            new Dictionary<string, string?> { ["BEHAVIORAL_API_KEY"] = "expected-key" },
+            "expected-key");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("different-key")]
+    public void RejectsAnApiKeyThatWasNotApplied(string? applied)
+    {
+        var settings = new Dictionary<string, string?>();
+        if (applied is not null)
+        {
+            settings["BEHAVIORAL_API_KEY"] = applied;
+        }
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => AzureFabricProvisioningExecutor.VerifyApiKeySetting(settings, "expected-key"));
+        Assert.Contains("API key", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RejectsAWebAppWithNoPackageSetting()
     {
         var error = Assert.Throws<InvalidOperationException>(

@@ -83,42 +83,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         private string ReadEnvironmentVariable(string schemaName, bool required)
         {
-            var query = new QueryExpression("environmentvariabledefinition")
-            {
-                ColumnSet = new ColumnSet("defaultvalue"),
-                TopCount = 1,
-                NoLock = true
-            };
-            query.Criteria.AddCondition(
-                "schemaname",
-                ConditionOperator.Equal,
-                schemaName);
-            var valueLink = query.AddLink(
-                "environmentvariablevalue",
-                "environmentvariabledefinitionid",
-                "environmentvariabledefinitionid",
-                JoinOperator.LeftOuter);
-            valueLink.EntityAlias = "currentvalue";
-            valueLink.Columns = new ColumnSet("value");
-            valueLink.Orders.Add(new OrderExpression("createdon", OrderType.Descending));
-
-            var definition = service.RetrieveMultiple(query).Entities.FirstOrDefault();
-            var current = definition == null
-                ? null
-                : definition.GetAttributeValue<AliasedValue>("currentvalue.value");
-            var value = current == null
-                ? definition == null
-                    ? null
-                    : definition.GetAttributeValue<string>("defaultvalue")
-                : current.Value as string;
-            if (required && string.IsNullOrWhiteSpace(value))
-            {
-                throw new InvalidPluginExecutionException(
-                    "The required environment variable '" + schemaName +
-                    "' is not configured.");
-            }
-
-            return value == null ? null : value.Trim();
+            return EnvironmentVariableReader.Read(service, schemaName, required);
         }
 
         private static string Serialize<T>(T value)
