@@ -2358,9 +2358,67 @@
         properties: { mode: "Incremental", template: template, parameters: wrapped }
       });
 
+      function deploymentSubsteps(payload) {
+        var labels = {
+          "microsoft.network/virtualnetworks": "Create virtual network and subnets",
+          "microsoft.operationalinsights/workspaces": "Create Log Analytics workspace",
+          "microsoft.insights/components": "Create Application Insights",
+          "microsoft.web/serverfarms": "Create App Service plan",
+          "microsoft.storage/storageaccounts": "Create package storage account",
+          "microsoft.network/privatednszones": "Create private DNS zone",
+          "microsoft.network/privatednszones/virtualnetworklinks": "Link private DNS to the network",
+          "microsoft.network/privateendpoints": "Create storage private endpoint",
+          "microsoft.network/privateendpoints/privatednszonegroups": "Configure private endpoint DNS",
+          "microsoft.storage/storageaccounts/blobservices/containers": "Create private package container",
+          "microsoft.managedidentity/userassignedidentities": "Create package-copy identity",
+          "microsoft.authorization/roleassignments": "Grant managed identity storage access",
+          "microsoft.containerinstance/containergroups": "Verify and copy the API package",
+          "microsoft.web/sites": "Create Segment Preview web app"
+        };
+        var seen = {};
+        return ((payload && payload.value) || [])
+          .map(function (operation) {
+            var properties = operation.properties || {};
+            var target = properties.targetResource || {};
+            var type = String(target.resourceType || "").toLowerCase();
+            var name = target.resourceName || "";
+            var id = String(target.id || operation.id || type + ":" + name);
+            var state = String(properties.provisioningState || "Pending");
+            var status = /^succeeded$/i.test(state)
+              ? "succeeded"
+              : /^(failed|canceled)$/i.test(state)
+                ? "failed"
+                : /^(running|accepted|creating|updating)$/i.test(state)
+                  ? "running"
+                  : "pending";
+            return {
+              id: id,
+              name: labels[type] || target.resourceType || name || "Azure resource",
+              resourceName: name,
+              status: status
+            };
+          })
+          .filter(function (step) {
+            var key = step.id.toLowerCase();
+            if (seen[key]) return false;
+            seen[key] = true;
+            return true;
+          })
+          .sort(function (left, right) {
+            var byName = left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+            return byName || left.resourceName.localeCompare(
+              right.resourceName,
+              undefined,
+              { sensitivity: "base" }
+            );
+          });
+      }
+
       for (var poll = 0; poll < 240; poll++) {
         var snapshot = await arm("GET", path);
         var state = snapshot.body && snapshot.body.properties && snapshot.body.properties.provisioningState;
+        var operations = await arm("GET", path + "/operations", undefined, "2022-09-01");
+        var substeps = deploymentSubsteps(operations.body);
         if (callbacks.onProgress) {
           callbacks.onProgress({
             id: "azure-infra",
@@ -2378,7 +2436,8 @@
                   ? "Azure deployment completed"
                   : "Azure resource deployment is running",
               elapsedSeconds: poll * 5,
-              complete: state === "Succeeded"
+              complete: state === "Succeeded",
+              steps: substeps
             }
           });
         }

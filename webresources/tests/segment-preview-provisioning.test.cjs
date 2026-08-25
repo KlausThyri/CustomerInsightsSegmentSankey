@@ -1699,7 +1699,8 @@ test("direct client polls an ARM deployment until it succeeds", async () => {
     { match: (request) => request.method === "PUT", respond: () => jsonResponse(200, {}) },
     {
       repeat: true,
-      match: (request) => request.method === "GET",
+      match: (request) =>
+        request.method === "GET" && !request.url.endsWith("/operations?api-version=2022-09-01"),
       respond: () => {
         gets++;
         return gets < 2
@@ -1711,6 +1712,27 @@ test("direct client polls an ARM deployment until it succeeds", async () => {
               }
             });
       }
+    },
+    {
+      repeat: true,
+      match: (request) =>
+        request.method === "GET" && request.url.endsWith("/operations?api-version=2022-09-01"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              id: "operation-1",
+              properties: {
+                provisioningState: "Running",
+                targetResource: {
+                  id: "/subscriptions/x/resourceGroups/rg/providers/Microsoft.Web/sites/segment-preview-api",
+                  resourceName: "segment-preview-api",
+                  resourceType: "Microsoft.Web/sites"
+                }
+              }
+            }
+          ]
+        })
     }
   ]);
   const direct = engine.createDirectClient({ fetch: fetchImpl, getToken: async () => "t", timer: immediateTimer });
@@ -1729,6 +1751,12 @@ test("direct client polls an ARM deployment until it succeeds", async () => {
   assert.equal(progress.length, 2);
   assert.equal(progress[0].subProgress.label, "Azure resource deployment is running");
   assert.equal(progress[0].subProgress.complete, false);
+  assert.deepEqual(progress[0].subProgress.steps[0], {
+    id: "/subscriptions/x/resourceGroups/rg/providers/Microsoft.Web/sites/segment-preview-api",
+    name: "Create Segment Preview web app",
+    resourceName: "segment-preview-api",
+    status: "running"
+  });
   assert.equal(progress[1].subProgress.complete, true);
 });
 
@@ -1737,8 +1765,14 @@ test("direct client fails fast on a failed ARM deployment", async () => {
     { match: (request) => request.method === "PUT", respond: () => jsonResponse(200, {}) },
     {
       repeat: true,
-      match: (request) => request.method === "GET",
+      match: (request) =>
+        request.method === "GET" && !request.url.includes("/operations"),
       respond: () => jsonResponse(200, { properties: { provisioningState: "Failed" } })
+    },
+    {
+      repeat: true,
+      match: (request) => request.method === "GET" && request.url.includes("/operations"),
+      respond: () => jsonResponse(200, { value: [] })
     }
   ]);
   const direct = engine.createDirectClient({ fetch: fetchImpl, getToken: async () => "t", timer: immediateTimer });
