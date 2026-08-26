@@ -796,14 +796,17 @@ Describe 'Browser-only notebook and API deployment' {
         $script:Engine | Should -Match 'HEALTH_DELAY_MS'
     }
 
-    It 'opens the API to the browser for the health probe only' {
+    It 'opens only the health and authenticated key-check probes to the setup origin' {
         $cors = Get-Content -LiteralPath (Join-Path $script:BrowserRoot 'FabricApi\SetupHealthCors.cs.txt') -Raw
         $program = Get-Content -LiteralPath (Join-Path $script:BrowserRoot 'FabricApi\Program.cs.txt') -Raw
         $cors | Should -Not -Match 'AllowAnyOrigin'
         $program | Should -Match 'DATAVERSE_ENVIRONMENT_URL'
         $program | Should -Match 'RequireCors\(SetupHealthCors\.PolicyName\)'
+        $program | Should -Match 'RequireCors\(SetupHealthCors\.KeyCheckPolicyName\)'
+        $program | Should -Match '"/api/setup/key-check"'
+        $program | Should -Match '\.WithHeaders\("Accept", "x-api-key"\)'
         $program | Should -Match 'WithMethods\("GET"\)'
-        ([regex]::Matches($program, 'RequireCors\(')).Count | Should -Be 1
+        ([regex]::Matches($program, 'RequireCors\(')).Count | Should -Be 2
     }
 
     It 'sends the pinned package to the optional provisioning service too' {

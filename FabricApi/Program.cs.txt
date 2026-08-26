@@ -23,6 +23,7 @@ builder.Services.AddSingleton<SegmentPreviewSetupService>();
 var setupHealthOrigins = SetupHealthCors.ResolveOrigins(
     builder.Configuration["DATAVERSE_ENVIRONMENT_URL"]);
 builder.Services.AddCors(options =>
+{
     options.AddPolicy(SetupHealthCors.PolicyName, policy =>
     {
         if (setupHealthOrigins.Length == 0)
@@ -35,12 +36,34 @@ builder.Services.AddCors(options =>
             .WithMethods("GET")
             .WithHeaders("Accept")
             .DisallowCredentials();
-    }));
+    });
+    options.AddPolicy(SetupHealthCors.KeyCheckPolicyName, policy =>
+    {
+        if (setupHealthOrigins.Length == 0)
+        {
+            policy.DisallowCredentials();
+            return;
+        }
+
+        policy
+            .WithOrigins(setupHealthOrigins)
+            .WithMethods("GET")
+            .WithHeaders("Accept", "x-api-key")
+            .DisallowCredentials();
+    });
+});
 
 var app = builder.Build();
 app.UseCors();
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.UtcNow }))
     .RequireCors(SetupHealthCors.PolicyName);
+app.MapGet(
+        "/api/setup/key-check",
+        (HttpRequest request) =>
+            HasValidApiKey(request)
+                ? Results.Ok(new { status = "ok", apiKeyAccepted = true, utc = DateTime.UtcNow })
+                : Unauthorized())
+    .RequireCors(SetupHealthCors.KeyCheckPolicyName);
 app.MapPost(
     "/api/segment-counts",
     async (

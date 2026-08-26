@@ -2,18 +2,22 @@
 namespace CustomerInsightsSegmentSankey.FabricApi;
 
 /// <summary>
-/// Cross-origin policy for the health endpoint only.
+/// Cross-origin policies for the setup readiness endpoints.
 ///
 /// The Segment Preview setup page lives on the Dataverse origin and has to poll
 /// the freshly deployed API to know whether App Service finished mounting the
-/// package. Nothing else in this API is reachable from a browser, so the policy
-/// is deliberately narrow: the single Dataverse origin the deployment was
-/// configured with, GET only, no credentials, and only on /api/health.
+/// package and whether the active process accepts the deployed API key. Nothing
+/// else in this API is reachable from a browser, so both policies are deliberately
+/// narrow: the single Dataverse origin the deployment was configured with, GET
+/// only, no credentials, and only on the two readiness endpoints.
 /// </summary>
 public static class SetupHealthCors
 {
     /// <summary>Name of the policy the health endpoint opts into.</summary>
     public const string PolicyName = "segment-preview-setup-health";
+
+    /// <summary>Name of the policy the authenticated key-check endpoint opts into.</summary>
+    public const string KeyCheckPolicyName = "segment-preview-setup-key-check";
 
     /// <summary>
     /// Turns the configured Dataverse environment URL into the exact list of

@@ -2642,6 +2642,46 @@
       return { ok: false, attempts: attempts, error: lastError, url: url };
     }
 
+    /**
+     * Waits until the active Web App process accepts the key Azure just applied.
+     * The unauthenticated health endpoint can still be served by an older warm
+     * worker while App Service is recycling after a settings change.
+     */
+    async function apiKeyCheck(baseUrl, apiKey, options) {
+      var config = options || {};
+      var attempts = config.attempts || HEALTH_ATTEMPTS;
+      var delayMs = config.delayMs || HEALTH_DELAY_MS;
+      var url = String(baseUrl || "").replace(/\/+$/, "") + "/setup/key-check";
+      var lastError = null;
+      for (var attempt = 0; attempt < attempts; attempt++) {
+        if (attempt > 0 && timer) await timer(delayMs);
+        try {
+          var response = await http.send({
+            url: url,
+            method: "GET",
+            headers: { Accept: "application/json", "x-api-key": apiKey }
+          });
+          if (
+            response.status >= 200 &&
+            response.status < 300 &&
+            response.body &&
+            response.body.apiKeyAccepted === true
+          ) {
+            return {
+              ok: true,
+              attempts: attempt + 1,
+              status: response.status,
+              body: response.body
+            };
+          }
+          lastError = "HTTP " + response.status;
+        } catch (error) {
+          lastError = (error && error.message) || String(error);
+        }
+      }
+      return { ok: false, attempts: attempts, error: lastError, url: url };
+    }
+
     function sitePath(subscriptionId, resourceGroup, webAppName) {
       return (
         "/subscriptions/" +
@@ -2673,7 +2713,8 @@
       webAppSettings: webAppSettings,
       setWebAppSettings: setWebAppSettings,
       restartWebApp: restartWebApp,
-      apiHealth: apiHealth
+      apiHealth: apiHealth,
+      apiKeyCheck: apiKeyCheck
     };
   }
 
@@ -3228,13 +3269,11 @@
           context.apiKeyFingerprint = "sha256:dry-run";
           return "A new API key would be generated.";
         }
-        if (completed.secret) {
-          var recovered = await recoverApiKey();
-          if (recovered) {
-            context.apiKey = recovered;
-            context.apiKeyFingerprint = await fingerprint(recovered, cryptoImpl);
-            return "The API key of the earlier run was recovered from the Web App (" + context.apiKeyFingerprint + ").";
-          }
+        var recovered = await recoverApiKey();
+        if (recovered) {
+          context.apiKey = recovered;
+          context.apiKeyFingerprint = await fingerprint(recovered, cryptoImpl);
+          return "The existing API key was recovered from the Web App (" + context.apiKeyFingerprint + ").";
         }
         context.apiKey = generateApiKey(cryptoImpl);
         context.apiKeyFingerprint = await fingerprint(context.apiKey, cryptoImpl);
@@ -3529,13 +3568,29 @@
               "Wait a few minutes and install again; the step is safe to repeat."
           );
         }
+        var keyCheck = await direct.apiKeyCheck(healthBase, context.apiKey, {
+          attempts: settings.healthAttempts,
+          delayMs: settings.healthDelayMs
+        });
+        if (!keyCheck || !keyCheck.ok) {
+          throw new Error(
+            "The API package is running, but the active Web App process did not accept the API key that Azure applied within " +
+              Math.round(((settings.healthAttempts || HEALTH_ATTEMPTS) * (settings.healthDelayMs || HEALTH_DELAY_MS)) / 60000) +
+              " minutes (" +
+              ((keyCheck && keyCheck.error) || "no response") +
+              "). App Service may still be recycling an older worker. Wait a few minutes and install again; Setup will reuse the existing key instead of rotating it."
+          );
+        }
         context.apiHealthy = true;
         return (
           "API package " +
           (pkg.version || "") +
-          " runs from your own storage account and answered /health after " +
+          " runs from your own storage account, answered /health after " +
           health.attempts +
-          (health.attempts === 1 ? " attempt." : " attempts.")
+          (health.attempts === 1 ? " attempt, and" : " attempts, and") +
+          " accepted its API key after " +
+          keyCheck.attempts +
+          (keyCheck.attempts === 1 ? " attempt." : " attempts.")
         );
       },
 

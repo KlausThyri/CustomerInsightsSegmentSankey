@@ -2653,6 +2653,18 @@ function directHarness(options = {}) {
         return { ok: false, attempts: (config && config.attempts) || 60, error: "Failed to fetch", url: baseUrl };
       }
       return { ok: true, attempts: options.healthAttempts || 1, status: 200, body: { status: "ok" } };
+    },
+    async apiKeyCheck(baseUrl, apiKey, config) {
+      calls.push({ kind: "apiKeyCheck", baseUrl, apiKey, config });
+      if (options.keyNeverAccepted) {
+        return { ok: false, attempts: (config && config.attempts) || 60, error: "HTTP 401", url: baseUrl };
+      }
+      return {
+        ok: true,
+        attempts: options.keyCheckAttempts || 1,
+        status: 200,
+        body: { status: "ok", apiKeyAccepted: true }
+      };
     }
   };
 }
@@ -3375,8 +3387,7 @@ test("a deployment that did not apply the package fails the run instead of repor
 
   test("a deployment that did not apply the API key stops before Dataverse is updated", async () => {
     const direct = directHarness({
-      leaveApiKeyAlone: true,
-      appSettings: { BEHAVIORAL_API_KEY: "different-key" }
+      leaveApiKeyAlone: true
     });
     const dataverse = dataverseHarness();
     const { orchestrator } = directOrchestrator({ direct, dataverse });
@@ -3481,8 +3492,26 @@ test("the API is only reported as installed once it actually answers", async () 
   const kinds = direct.calls.map((call) => call.kind);
   const restart = kinds.lastIndexOf("restartWebApp");
   const health = kinds.lastIndexOf("apiHealth");
+  const keyCheck = kinds.lastIndexOf("apiKeyCheck");
   assert.ok(restart >= 0 && health > restart, "the health check has to follow the restart");
+  assert.ok(keyCheck > health, "the authenticated key check has to follow the health check");
   assert.match(direct.calls[health].baseUrl, /\/api\/$/);
+});
+
+test("a Web App that does not accept the applied API key fails before Dataverse is updated", async () => {
+  const direct = directHarness({ keyNeverAccepted: true });
+  const dataverse = dataverseHarness();
+  const digest = await sha256Of(direct.packageBytes);
+  const { orchestrator } = directOrchestrator({
+    direct,
+    dataverse,
+    settings: { apiPackageUrl: "https://contoso.example.com/a.zip " + digest }
+  });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "azure-app");
+  assert.match(result.results.find((entry) => entry.id === "azure-app").message, /did not accept the API key/i);
+  assert.equal(dataverse.written[engine.ENV.apiKey], undefined);
 });
 
 test("a Web App that never answers fails the run instead of claiming the API is live", async () => {
@@ -3634,6 +3663,18 @@ test("a resumed run recovers the earlier key from the Web App and writes it agai
         packageVersion: payload.api.version
       }
     }
+  });
+
+  test("a fresh setup page reuses the existing Web App key instead of rotating it", async () => {
+    const direct = directHarness({ appSettings: { BEHAVIORAL_API_KEY: "stable-existing-key" } });
+    const dataverse = dataverseHarness();
+    const { orchestrator } = directOrchestrator({ direct, dataverse });
+    const result = await orchestrator.run();
+    assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+    assert.match(result.results.find((entry) => entry.id === "secret").message, /existing API key was recovered/i);
+    assert.equal(dataverse.written[engine.ENV.apiKey], "stable-existing-key");
+    const deployment = direct.calls.find((call) => call.kind === "deployTemplate");
+    assert.equal(deployment.parameters.behavioralApiKey, "stable-existing-key");
   });
   const result = await orchestrator.run();
   assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));

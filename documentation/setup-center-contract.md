@@ -136,12 +136,12 @@ PowerShell orchestrator so progress can be correlated across all three.
 | --- | --- | --- | --- |
 | 1 | `preflight` | Preflight | Pure validation, always runs, never delegated. |
 | 2 | `consent` | Preflight | Interactive sign-in. In broker mode this creates and authorizes the session (§4.1). |
-| 3 | `secret` | Preflight | Browser generates the API key **before** any delegation so it can be handed to the service. |
+| 3 | `secret` | Preflight | Reuses the existing Web App API key when present; otherwise the browser generates one **before** any delegation so it can be handed to the service. |
 | 4 | `fabric-discovery` | Fabric | Workspace + serving lakehouse. |
 | 5 | `fabric-notebook` | Fabric | Serving bootstrap notebook. The notebook definition ships inside the solution (`segment-preview-payload.js`); the browser substitutes the resolved ids and calls the Fabric item-definition API directly. |
 | 6 | `azure-infra` | Azure | ARM deployment of the compiled template. Also passes the pinned API package URL and SHA-256 so the deployment copies the package into customer-owned storage (§6.3). The step fails before it touches Azure when no verified package is configured. |
 | 7 | `fabric-permissions` | Fabric | Grants the Web App managed identity access. |
-| 8 | `azure-app` | Azure | Verifies the package settings the deployment applied (blob name, no shared access signature, digest, managed-identity read), restarts the Web App and then polls `/api/health` until the API actually answers. |
+| 8 | `azure-app` | Azure | Verifies the package settings the deployment applied (blob name, no shared access signature, digest, managed-identity read), restarts the Web App, polls `/api/health`, and then polls the authenticated `/api/setup/key-check` endpoint until the active worker accepts the deployed key. |
 | 9 | `dataverse-config` | Dataverse | Writes `klth_FabricBehavioralApiUrl` + `klth_FabricBehavioralApiKey`. Never delegated — the browser owns the Dataverse session. |
 | 10 | `verify` | Verify | Calls `klth_ManageSegmentPreviewSetup` with `klth_action = status`, and when the result still offers the idempotent `provision-shortcuts` action it invokes that too and re-reads the status. |
 
@@ -391,11 +391,15 @@ step that still cannot find what it needs fails with a message naming the step
 that should have recorded it and pointing at **Start over**. No step reports
 success for work it did not do.
 
-The API key is deliberately *not* a fact. On a resumed run the `secret` step:
+The API key is deliberately *not* a fact. On every direct-mode run the `secret` step:
 
 1. reads `BEHAVIORAL_API_KEY` back from the App Service application settings, or
 2. generates a new key and forces `azure-infra`, `azure-app`, `dataverse-config`
    and `verify` to run again, so the new key reaches every consumer atomically.
+
+This applies even when Setup is opened in a fresh browser session. Re-running an
+existing installation therefore does not rotate a healthy key and cannot leave a
+warm App Service worker temporarily using the previous value.
 
 `preflight`, `secret` and `verify` therefore always run, even on a resume.
 
@@ -574,15 +578,19 @@ string (an expiring shared access signature), when `SEGMENT_PREVIEW_PACKAGE_SHA2
 differs from the pinned digest, or when
 `WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID` is not `SystemAssigned`. It then
 records the `packageBlobUrl` fact, restarts the Web App and polls `GET {apiBaseUrl}health`
-until the API answers, retrying for about five minutes because the blob mount and the
-role assignment both become effective asynchronously. A Web App that never answers
-fails the step instead of being reported as installed.
+until the API answers. It then polls `GET {apiBaseUrl}setup/key-check` with the deployed
+key until the active worker accepts it. Both polls retry for about five minutes because
+the blob mount, role assignment, settings update, and worker recycle become effective
+asynchronously. A Web App that never answers or continues serving the previous key
+fails the step before Dataverse is updated.
 
 For that poll to be possible from the setup page the API adds a deliberately narrow
-CORS policy: only `/api/health`, only `GET`, only the `Accept` request header, no
-credentials, and only the origins derived from its own `DATAVERSE_ENVIRONMENT_URL`
-setting. An unset or unparsable value yields no allowed origin at all — the policy is
-never widened to `*`, and no other endpoint is reachable from a browser.
+CORS policy: only `/api/health` and `/api/setup/key-check`, only `GET`, no credentials,
+and only the origins derived from its own `DATAVERSE_ENVIRONMENT_URL` setting. The
+health endpoint permits only `Accept`; the key check additionally permits `x-api-key`
+and rejects a missing or incorrect value. An unset or unparsable environment URL yields
+no allowed origin at all — the policy is never widened to `*`, and no other endpoint is
+reachable from a browser.
 
 The package URL and digest are resolved together, in this order:
 

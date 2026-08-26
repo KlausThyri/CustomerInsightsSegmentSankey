@@ -5,9 +5,9 @@ using Xunit;
 namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
 
 /// <summary>
-/// The health endpoint is the only browser-reachable surface of the API, because
-/// the setup page has to poll it after a deployment. These tests pin how narrow
-/// that opening is.
+/// The two setup-readiness endpoints are the only browser-reachable surfaces of
+/// the API. These tests pin the exact Dataverse origins shared by their narrow
+/// CORS policies.
 /// </summary>
 public class SetupHealthCorsTests
 {
