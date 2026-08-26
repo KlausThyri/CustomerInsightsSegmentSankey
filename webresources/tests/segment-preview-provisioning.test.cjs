@@ -4054,6 +4054,54 @@ test("needsShortcutProvisioning only reacts to the remedial action the API offer
   assert.equal(engine.PROVISION_SHORTCUTS_ACTION, "provision-shortcuts");
 });
 
+test("shortcut provisioning retries while Dataverse is exposing its Fabric table", async () => {
+  const delays = [];
+  const retries = [];
+  let calls = 0;
+  const result = await engine.provisionShortcutsWithRetry(
+    async action => {
+      calls += 1;
+      assert.equal(action, "provision-shortcuts");
+      if (calls === 1) {
+        throw new Error(
+          "The Dataverse table 'contact' could not be added to Fabric. " +
+            "Ensure 'contact' is selected under Link to Microsoft Fabric and wait until it appears in the linked Lakehouse."
+        );
+      }
+      return SHORTCUTS_READY;
+    },
+    {
+      maximumAttempts: 2,
+      pollIntervalMs: 10000,
+      timer: (callback, milliseconds) => {
+        delays.push(milliseconds);
+        callback();
+      },
+      onRetry: attempt => retries.push(attempt)
+    }
+  );
+
+  assert.equal(result, SHORTCUTS_READY);
+  assert.equal(calls, 2);
+  assert.deepEqual(delays, [10000]);
+  assert.deepEqual(retries, [1]);
+});
+
+test("shortcut provisioning does not retry unrelated failures", async () => {
+  let calls = 0;
+  await assert.rejects(
+    engine.provisionShortcutsWithRetry(
+      async () => {
+        calls += 1;
+        throw new Error("The Fabric workspace is forbidden.");
+      },
+      { timer: immediateTimer }
+    ),
+    /workspace is forbidden/
+  );
+  assert.equal(calls, 1);
+});
+
 test("one run installs the missing Fabric shortcuts before it reports the status", async () => {
   const dataverse = dataverseHarness({ responses: [SHORTCUTS_MISSING, SHORTCUTS_READY] });
   const { orchestrator } = directOrchestrator({ dataverse });

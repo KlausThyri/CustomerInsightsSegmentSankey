@@ -74,9 +74,7 @@ test("all external setup scripts use the current cache-busting revision", () => 
 });
 
 test("missing Dataverse source tables are retried for two minutes", () => {
-  assert.match(html, /function isPendingDataverseTableError/);
-  assert.match(html, /const maximumAttempts = 13/);
-  assert.match(html, /await wait\(10000\)/);
+  assert.match(html, /engine\.provisionShortcutsWithRetry\(execute/);
   assert.match(html, /Setup will retry automatically/);
 });
 

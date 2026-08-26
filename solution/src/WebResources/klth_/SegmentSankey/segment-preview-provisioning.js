@@ -690,6 +690,33 @@
     });
   }
 
+  function isPendingDataverseTableError(error) {
+    var message = String((error && error.message) || error || "");
+    return (
+      /could not be added to Fabric/i.test(message) &&
+      /Link to Microsoft Fabric|linked Lakehouse/i.test(message)
+    );
+  }
+
+  async function provisionShortcutsWithRetry(executeAction, options) {
+    var settings = options || {};
+    var maximumAttempts = settings.maximumAttempts || 13;
+    var pollIntervalMs = settings.pollIntervalMs || 10000;
+    for (var attempt = 1; attempt <= maximumAttempts; attempt++) {
+      try {
+        return await executeAction(PROVISION_SHORTCUTS_ACTION);
+      } catch (error) {
+        if (!isPendingDataverseTableError(error) || attempt === maximumAttempts) {
+          throw error;
+        }
+        if (settings.onRetry) {
+          settings.onRetry(attempt, maximumAttempts - 1, error);
+        }
+        await delay(pollIntervalMs, settings.timer);
+      }
+    }
+  }
+
   /** A setup response is only usable as a status when it carries components. */
   function hasStatusComponents(status) {
     return Boolean(status && Array.isArray(status.components) && status.components.length);
@@ -3784,7 +3811,12 @@
         if (needsShortcutProvisioning(status)) {
           // Idempotent and server-side: the Custom API calls the Web App, which
           // creates the shortcuts with its own managed identity.
-          var afterProvision = await dataverse.executeSetupAction(PROVISION_SHORTCUTS_ACTION);
+          var afterProvision = await provisionShortcutsWithRetry(
+            function (action) {
+              return dataverse.executeSetupAction(action);
+            },
+            { timer: settings.timer }
+          );
           provisioned = true;
           status = hasStatusComponents(afterProvision)
             ? afterProvision
@@ -4040,6 +4072,8 @@
     resolveApiPackage: resolveApiPackage,
     packageBlobName: packageBlobName,
     needsShortcutProvisioning: needsShortcutProvisioning,
+    isPendingDataverseTableError: isPendingDataverseTableError,
+    provisionShortcutsWithRetry: provisionShortcutsWithRetry,
     PROVISION_SHORTCUTS_ACTION: PROVISION_SHORTCUTS_ACTION,
     PACKAGE_CONTAINER: PACKAGE_CONTAINER,
     API_KEY_SETTING: API_KEY_SETTING,
