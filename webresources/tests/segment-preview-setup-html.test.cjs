@@ -73,6 +73,13 @@ test("all external setup scripts use the current cache-busting revision", () => 
   external.forEach((source) => assert.ok(source.endsWith(`?rev=${version}`)));
 });
 
+test("closed details and hidden status elements cannot leak component content", () => {
+  assert.match(
+    html,
+    /\[hidden\],\s*details:not\(\[open\]\)\s*>\s*:not\(summary\)\s*\{\s*display:\s*none\s*!important;\s*\}/
+  );
+});
+
 test("missing Dataverse source tables are retried for two minutes", () => {
   assert.match(html, /engine\.provisionShortcutsWithRetry\(execute/);
   assert.match(html, /Setup will retry automatically/);
