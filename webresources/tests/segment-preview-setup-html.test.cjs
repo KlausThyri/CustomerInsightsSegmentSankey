@@ -73,6 +73,13 @@ test("all external setup scripts use the current cache-busting revision", () => 
   external.forEach((source) => assert.ok(source.endsWith(`?rev=${version}`)));
 });
 
+test("missing Dataverse source tables are retried for two minutes", () => {
+  assert.match(html, /function isPendingDataverseTableError/);
+  assert.match(html, /const maximumAttempts = 13/);
+  assert.match(html, /await wait\(10000\)/);
+  assert.match(html, /Setup will retry automatically/);
+});
+
 test("the Azure infrastructure step renders an accessible nested progress indicator", () => {
   assert.match(html, /step-sub-progress-azure-infra/);
   assert.match(html, /aria-label", "Azure infrastructure deployment progress"/);

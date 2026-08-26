@@ -646,7 +646,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.27">v1.1.0.27</span>
+          <span class="app-version" aria-label="Version 1.1.0.28">v1.1.0.28</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -880,9 +880,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.27"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.27"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.27"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.28"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.28"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.28"></script>
 
   <script>
     (() => {
@@ -1521,12 +1521,47 @@
         }
       }
 
+      function isPendingDataverseTableError(error) {
+        const message = String((error && error.message) || error || "");
+        return (
+          /could not be added to Fabric/i.test(message) &&
+          /Link to Microsoft Fabric|linked Lakehouse/i.test(message)
+        );
+      }
+
+      function wait(milliseconds) {
+        return new Promise(resolve => window.setTimeout(resolve, milliseconds));
+      }
+
       async function provision() {
         if (state.loading) return;
         setBusy(true);
-        showNotice("Installing missing Fabric shortcuts…");
+        showNotice(
+          "Waiting for Dataverse tables and installing missing Fabric shortcuts… " +
+            "The initial Microsoft Fabric synchronization can take up to two minutes."
+        );
         try {
-          const result = await execute("provision-shortcuts");
+          const maximumAttempts = 13;
+          let result;
+          for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+            try {
+              result = await execute("provision-shortcuts");
+              break;
+            } catch (error) {
+              if (!isPendingDataverseTableError(error) || attempt === maximumAttempts) {
+                throw error;
+              }
+              showNotice(
+                "Dataverse is still synchronizing its Fabric tables. " +
+                  "Setup will retry automatically (" +
+                  attempt +
+                  " of " +
+                  (maximumAttempts - 1) +
+                  ")."
+              );
+              await wait(10000);
+            }
+          }
           render(result);
           showNotice("Missing Fabric shortcuts were installed successfully.", "success");
         } catch (error) {

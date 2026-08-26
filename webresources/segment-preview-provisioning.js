@@ -2375,6 +2375,46 @@
       return fallbackSource;
     }
 
+    async function waitForDataverseShortcutSource(
+      workspaceId,
+      lakehouses,
+      environmentUrl,
+      requestedLakehouseId,
+      requiredTables,
+      waitOptions
+    ) {
+      var waitSettings = waitOptions || {};
+      var maximumAttempts = waitSettings.maximumAttempts || 13;
+      var pollIntervalMs = waitSettings.pollIntervalMs || 10000;
+      var required = (requiredTables || []).map(function (table) {
+        return String(table).toLowerCase();
+      });
+      var latestSource = null;
+      for (var attempt = 1; attempt <= maximumAttempts; attempt++) {
+        latestSource = await findDataverseShortcutSource(
+          workspaceId,
+          lakehouses,
+          environmentUrl,
+          requestedLakehouseId
+        );
+        var available = latestSource && Array.isArray(latestSource.tables)
+          ? latestSource.tables
+          : [];
+        if (
+          latestSource &&
+          required.every(function (table) {
+            return available.indexOf(table) >= 0;
+          })
+        ) {
+          return latestSource;
+        }
+        if (attempt < maximumAttempts) {
+          await delay(pollIntervalMs, timer);
+        }
+      }
+      return latestSource;
+    }
+
     async function ensureConnectionRoleAssignment(connectionId, principalId) {
       var path =
         "connections/" +
@@ -2777,6 +2817,7 @@
       listLakehouses: listLakehouses,
       listDataverseConnections: listDataverseConnections,
       findDataverseShortcutSource: findDataverseShortcutSource,
+      waitForDataverseShortcutSource: waitForDataverseShortcutSource,
       ensureConnectionRoleAssignment: ensureConnectionRoleAssignment,
       ensureWorkspaceRoleAssignment: ensureWorkspaceRoleAssignment,
       listResourceGroups: listResourceGroups,
@@ -3154,17 +3195,24 @@
             "No Fabric Dataverse connection for this environment was found. Create one in Fabric > Settings > Manage connections and gateways, then run setup again."
           );
         }
-        var source = await direct.findDataverseShortcutSource(
-          workspace.id,
-          lakehouses,
-          "https://" + context.environmentDomain,
-          target.fabricDataverseLakehouseId
-        );
+        var source = direct.waitForDataverseShortcutSource
+          ? await direct.waitForDataverseShortcutSource(
+              workspace.id,
+              lakehouses,
+              "https://" + context.environmentDomain,
+              target.fabricDataverseLakehouseId,
+              ["contact"]
+            )
+          : await direct.findDataverseShortcutSource(
+              workspace.id,
+              lakehouses,
+              "https://" + context.environmentDomain,
+              target.fabricDataverseLakehouseId
+            );
         if (!source) {
           var linkMessage =
-            "No Link to Microsoft Fabric source was found for this Dataverse environment. In make.powerapps.com " +
-            "select this environment, open Tables > Analyze > Link to Microsoft Fabric, add the required tables, " +
-            "and choose this Fabric workspace. Wait until its Lakehouse contains the tables, then run Setup again.";
+            "No Link to Microsoft Fabric source was found for this Dataverse environment after waiting two minutes. " +
+            "In make.powerapps.com select this environment, open Link data, and create a Fabric link for this workspace.";
           addManual(linkMessage);
           throw new Error(linkMessage);
         }
@@ -3178,8 +3226,8 @@
           var missingTableMessage =
             "The Link to Microsoft Fabric Lakehouse does not contain these required Dataverse tables: " +
             missingSourceTables.join(", ") +
-            ". In make.powerapps.com open Tables > Analyze > Link to Microsoft Fabric, add these tables, " +
-            "wait until they appear in the linked Lakehouse, then run Setup again.";
+            ". Setup waited two minutes for the Microsoft synchronization. In make.powerapps.com open Link data > " +
+            "Manage tables and verify that these tables are included in the existing Fabric link.";
           addManual(missingTableMessage);
           throw new Error(missingTableMessage);
         }

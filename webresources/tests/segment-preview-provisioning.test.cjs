@@ -1590,6 +1590,73 @@ test("direct client prefers a Dataverse source Lakehouse that contains contact",
   assert.equal(fetchImpl.calls.length, 2);
 });
 
+test("direct client waits for contact to appear in a new Dataverse Fabric link", async () => {
+  const deltaLakeFolder =
+    "https://managedlake.dfs.fabric.microsoft.com/dataverse/Dataverse_orga/CDS3";
+  const delays = [];
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.url.endsWith("/workspaces/w1/items/l1/shortcuts?parentPath=Tables"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              name: "msdynmkt_purpose",
+              target: {
+                dataverse: {
+                  connectionId: "d1",
+                  deltaLakeFolder,
+                  environmentDomain: "https://contoso.crm4.dynamics.com/"
+                }
+              }
+            }
+          ]
+        })
+    },
+    {
+      match: (request) =>
+        request.url.endsWith("/workspaces/w1/items/l1/shortcuts?parentPath=Tables"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              name: "contact",
+              target: {
+                dataverse: {
+                  connectionId: "d1",
+                  deltaLakeFolder,
+                  environmentDomain: "https://contoso.crm4.dynamics.com/"
+                }
+              }
+            }
+          ]
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: (callback, milliseconds) => {
+      delays.push(milliseconds);
+      callback();
+    }
+  });
+
+  const source = await direct.waitForDataverseShortcutSource(
+    "w1",
+    [{ id: "l1", name: "Dataverse_orga" }],
+    "https://contoso.crm4.dynamics.com",
+    "",
+    ["contact"],
+    { maximumAttempts: 2, pollIntervalMs: 10000 }
+  );
+
+  assert.deepEqual(source.tables, ["contact"]);
+  assert.deepEqual(delays, [10000]);
+  assert.equal(fetchImpl.calls.length, 2);
+});
+
 test("direct client waits between authenticated API key-check attempts", async () => {
   const delays = [];
   const fetchImpl = createFetchMock([
@@ -3417,7 +3484,7 @@ test("automatic discovery explains when only PersonalCloud connections exist", a
   assert.match(message, /shareable cloud connection/i);
 });
 
-test("automatic discovery explains how to create a missing Link to Microsoft Fabric source", async () => {
+test("automatic discovery reports a missing Fabric link after the synchronization wait", async () => {
   const direct = directHarness({ noDataverseShortcutSource: true });
   const { orchestrator } = directOrchestrator({ direct });
 
@@ -3429,12 +3496,12 @@ test("automatic discovery explains how to create a missing Link to Microsoft Fab
     (entry) => entry.id === "fabric-discovery"
   ).message;
   assert.match(message, /make\.powerapps\.com/i);
-  assert.match(message, /Tables > Analyze > Link to Microsoft Fabric/i);
-  assert.match(message, /run Setup again/i);
+  assert.match(message, /after waiting two minutes/i);
+  assert.match(message, /Link data/i);
   assert.ok(result.manual.some((entry) => /Link to Microsoft Fabric/i.test(entry)));
 });
 
-test("automatic discovery requires the contact source table before deployment", async () => {
+test("automatic discovery reports contact missing after the synchronization wait", async () => {
   const direct = directHarness({ sourceTables: ["msdynmkt_purpose"] });
   const { orchestrator } = directOrchestrator({ direct });
 
@@ -3446,7 +3513,8 @@ test("automatic discovery requires the contact source table before deployment", 
     (entry) => entry.id === "fabric-discovery"
   ).message;
   assert.match(message, /does not contain.*contact/i);
-  assert.match(message, /Tables > Analyze > Link to Microsoft Fabric/i);
+  assert.match(message, /waited two minutes/i);
+  assert.match(message, /Link data > Manage tables/i);
   assert.equal(direct.calls.some((entry) => entry.kind === "deployTemplate"), false);
 });
 
