@@ -352,6 +352,7 @@ The state file contains no secret. The API key is represented only by a
 | `The Fabric SQL analytics endpoint is not available yet` | The lakehouse endpoint is still provisioning. Wait until the Fabric portal reports *Success*, then re-run. |
 | `No Fabric cloud connection for '<env>' exists` | Create a Dataverse connection in **Fabric > Settings > Manage connections and gateways**, then re-run or pass `-FabricDataverseConnectionId`. |
 | `The Dataverse mirror lakehouse was not found` | Enable **Link to Microsoft Fabric** in the Power Platform maker portal. |
+| `The Link to Microsoft Fabric Lakehouse does not contain ...` | In **Tables > Analyze > Link to Microsoft Fabric**, add the named primary `contact` table and wait until it appears in the linked Lakehouse before retrying. |
 | `A Dataverse access token ... could not be acquired` | Approve the one-time Azure CLI consent for the environment. |
 | Solution import reports `conflict` | An **unmanaged** `klth_SegmentPreview` solution exists. Remove it before importing the managed package. |
 | Solution import reports `downgrade-blocked` | The installed version is newer than the package. Use `-Force` only if a downgrade is intended. |
@@ -463,7 +464,7 @@ solution is already imported, because it is what carries the setup page.
 | Fabric SQL analytics endpoint | **Detect only** | Read from the lakehouse; provisioning is asynchronous and server-side. |
 | Fabric workspace role for the managed identity | **Full** | `POST workspaces/{id}/roleAssignments` (Contributor). |
 | Fabric bootstrap notebook + daily schedule | **Full** | Created or definition-updated; an existing schedule is preserved. The Setup Center publishes it from the definition shipped in the solution, so no build machine is involved. |
-| Fabric Dataverse mirror lakehouse | **Detect only** | Created by the Dataverse "Link to Microsoft Fabric" feature. |
+| Fabric Dataverse mirror lakehouse | **Detect only** | Created by the Dataverse "Link to Microsoft Fabric" feature. Setup verifies that the primary `contact` source table is present before it deploys dependent resources. |
 | Fabric Dataverse cloud connection | **Detect only** | Requires an interactive OAuth consent in the Fabric portal. |
 | Dataverse managed solution import | **Full** | `ImportSolutionAsync` for a fresh install, `StageAndUpgradeAsync` for an upgrade. |
 | Dataverse environment variable values | **Full** | Created or patched through the Web API. |

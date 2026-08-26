@@ -1477,7 +1477,8 @@ test("direct client discovers the Dataverse shortcut source across continuation 
       lakehouseId: "l1",
       lakehouseName: "Dataverse_orga",
       connectionId: "d1",
-      deltaLakeFolder
+      deltaLakeFolder,
+      tables: ["contact"]
     }
   );
   assert.equal(fetchImpl.calls.length, 2);
@@ -2498,7 +2499,10 @@ function directHarness(options = {}) {
         lakehouseId: DATAVERSE_LAKEHOUSE_ID,
         lakehouseName: "Dataverse_orga",
         connectionId: options.sourceConnectionId || VALID_TARGET.fabricDataverseConnectionId,
-        deltaLakeFolder: DATAVERSE_DELTA_FOLDER
+        deltaLakeFolder: DATAVERSE_DELTA_FOLDER,
+        tables:
+          options.sourceTables ||
+          engine.requiredTables(VALID_TARGET.requiredDataverseTables)
       };
     },
     async ensureConnectionRoleAssignment(connectionId, principalId) {
@@ -3257,6 +3261,32 @@ test("automatic discovery explains how to create a missing Link to Microsoft Fab
   assert.match(message, /Tables > Analyze > Link to Microsoft Fabric/i);
   assert.match(message, /run Setup again/i);
   assert.ok(result.manual.some((entry) => /Link to Microsoft Fabric/i.test(entry)));
+});
+
+test("automatic discovery requires the contact source table before deployment", async () => {
+  const direct = directHarness({ sourceTables: ["msdynmkt_purpose"] });
+  const { orchestrator } = directOrchestrator({ direct });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "fabric-discovery");
+  const message = result.results.find(
+    (entry) => entry.id === "fabric-discovery"
+  ).message;
+  assert.match(message, /does not contain.*contact/i);
+  assert.match(message, /Tables > Analyze > Link to Microsoft Fabric/i);
+  assert.equal(direct.calls.some((entry) => entry.kind === "deployTemplate"), false);
+});
+
+test("automatic discovery does not require secondary tables in the source link", async () => {
+  const direct = directHarness({ sourceTables: ["contact"] });
+  const { orchestrator } = directOrchestrator({ direct });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  assert.equal(direct.calls.some((entry) => entry.kind === "deployTemplate"), true);
 });
 
 test("the browser never downloads the package itself", async () => {

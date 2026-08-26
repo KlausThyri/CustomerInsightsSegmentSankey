@@ -2243,6 +2243,8 @@
       for (var index = 0; index < candidates.length; index++) {
         var lakehouse = candidates[index];
         var continuationToken = null;
+        var source = null;
+        var sourceTables = [];
         do {
           var path =
             "workspaces/" +
@@ -2268,26 +2270,30 @@
           }
           var payload = response.body || {};
           var shortcuts = Array.isArray(payload.value) ? payload.value : [];
-          var source = shortcuts.find(function (shortcut) {
+          shortcuts.forEach(function (shortcut) {
             var target = shortcut && shortcut.target;
             var dataverse = target && target.dataverse;
-            return (
+            if (
               dataverse &&
               dataverse.connectionId &&
               dataverse.deltaLakeFolder &&
               environmentDomain(dataverse.environmentDomain) === expectedDomain
-            );
+            ) {
+              if (!source) source = shortcut;
+              if (shortcut.name) sourceTables.push(String(shortcut.name).toLowerCase());
+            }
           });
-          if (source) {
-            return {
-              lakehouseId: lakehouse.id,
-              lakehouseName: lakehouse.name || lakehouse.displayName || lakehouse.id,
-              connectionId: source.target.dataverse.connectionId,
-              deltaLakeFolder: source.target.dataverse.deltaLakeFolder
-            };
-          }
           continuationToken = payload.continuationToken || null;
         } while (continuationToken);
+        if (source) {
+          return {
+            lakehouseId: lakehouse.id,
+            lakehouseName: lakehouse.name || lakehouse.displayName || lakehouse.id,
+            connectionId: source.target.dataverse.connectionId,
+            deltaLakeFolder: source.target.dataverse.deltaLakeFolder,
+            tables: Array.from(new Set(sourceTables)).sort()
+          };
+        }
       }
       return null;
     }
@@ -3043,6 +3049,21 @@
             "and choose this Fabric workspace. Wait until its Lakehouse contains the tables, then run Setup again.";
           addManual(linkMessage);
           throw new Error(linkMessage);
+        }
+        var missingSourceTables = context.requiredTables.filter(function (table) {
+          return (
+            table.toLowerCase() === "contact" &&
+            (!source.tables || source.tables.indexOf("contact") < 0)
+          );
+        });
+        if (missingSourceTables.length) {
+          var missingTableMessage =
+            "The Link to Microsoft Fabric Lakehouse does not contain these required Dataverse tables: " +
+            missingSourceTables.join(", ") +
+            ". In make.powerapps.com open Tables > Analyze > Link to Microsoft Fabric, add these tables, " +
+            "wait until they appear in the linked Lakehouse, then run Setup again.";
+          addManual(missingTableMessage);
+          throw new Error(missingTableMessage);
         }
 
         var requestedConnectionId = target.fabricDataverseConnectionId;

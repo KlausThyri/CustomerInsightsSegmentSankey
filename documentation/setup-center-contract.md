@@ -432,6 +432,11 @@ does not extend it: the browser only asks the Dataverse Custom API for the
 App's own system-assigned managed identity inside the customer's subscription.
 No delegated OneLake write permission is used for them. `OneLake.Read.All` is
 required only to discover the existing Link to Microsoft Fabric shortcut source.
+Discovery reads all Dataverse shortcuts in that source Lakehouse and stops before
+deployment when the primary `contact` table is absent. The administrator must
+add it under **Tables > Analyze > Link to Microsoft Fabric** and wait for its
+initial synchronization. Additional consent and relationship dependencies are
+still provisioned through the discovered Dataverse cloud connection.
 
 Everything this path creates stays in the customer's own tenant and
 subscription: the Entra registration, the Azure resource group, Web App and

@@ -1,0 +1,53 @@
+#if FABRIC_API
+using System.Net;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+public sealed class FabricDataverseShortcutServiceTests
+{
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public void Transient_create_statuses_are_retried(HttpStatusCode statusCode)
+    {
+        Assert.True(FabricDataverseShortcutService.IsTransientCreateStatus(statusCode));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public void Permanent_create_statuses_are_not_retried(HttpStatusCode statusCode)
+    {
+        Assert.False(FabricDataverseShortcutService.IsTransientCreateStatus(statusCode));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public void Missing_source_table_errors_explain_how_to_update_the_link(
+        HttpStatusCode statusCode)
+    {
+        var message = FabricDataverseShortcutService.CreateFailureMessage(
+            "contact",
+            statusCode);
+
+        Assert.Contains("contact", message);
+        Assert.Contains("Link to Microsoft Fabric", message);
+        Assert.Contains("linked Lakehouse", message);
+    }
+
+    [Fact]
+    public void Forbidden_create_errors_explain_identity_and_connection_access()
+    {
+        var message = FabricDataverseShortcutService.CreateFailureMessage(
+            "contact",
+            HttpStatusCode.Forbidden);
+
+        Assert.Contains("managed identity", message);
+        Assert.Contains("workspace", message);
+        Assert.Contains("connection", message);
+    }
+}
+#endif
