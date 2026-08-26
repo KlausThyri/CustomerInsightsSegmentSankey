@@ -3876,7 +3876,15 @@
   }
 
   async function saveSetupContext(dataverse, target, state, facts) {
-    return dataverse.setEnvironmentVariable(ENV.configuration, serializeConfiguration(target, state, facts));
+    var configuration = await dataverse.setEnvironmentVariable(
+      ENV.configuration,
+      serializeConfiguration(target, state, facts)
+    );
+    await dataverse.setEnvironmentVariable(
+      ENV.businessUnitScoping,
+      target && target.businessUnitScopingEnabled ? "true" : "false"
+    );
+    return configuration;
   }
 
   return {

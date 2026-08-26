@@ -2450,6 +2450,7 @@ test("loadSetupContext reports missing variables and the manual blockers", async
 
 test("saveSetupContext writes the configuration variable without secrets", async () => {
   let written = null;
+  let businessUnitScoping = null;
   const fetchImpl = createFetchMock([
     ENV_QUERY_ROUTE([
       {
@@ -2457,6 +2458,14 @@ test("saveSetupContext writes the configuration variable without secrets", async
         environmentvariabledefinitionid: "d1",
         defaultvalue: null,
         environmentvariabledefinition_environmentvariablevalue: [{ environmentvariablevalueid: "v1", value: "{}" }]
+      },
+      {
+        schemaname: "klth_BusinessUnitScopingEnabled",
+        environmentvariabledefinitionid: "d2",
+        defaultvalue: "false",
+        environmentvariabledefinition_environmentvariablevalue: [
+          { environmentvariablevalueid: "v2", value: "false" }
+        ]
       }
     ]),
     {
@@ -2465,13 +2474,25 @@ test("saveSetupContext writes the configuration variable without secrets", async
         written = JSON.parse(request.init.body).value;
         return jsonResponse(204);
       }
+    },
+    {
+      match: (request) => request.method === "PATCH",
+      respond: (request) => {
+        businessUnitScoping = JSON.parse(request.init.body).value;
+        return jsonResponse(204);
+      }
     }
   ]);
   const dataverse = engine.createDataverseClient({ fetch: fetchImpl, clientUrl: "https://contoso.crm4.dynamics.com" });
-  await engine.saveSetupContext(dataverse, VALID_TARGET, { secret: true, apiKey: "leak" });
+  await engine.saveSetupContext(
+    dataverse,
+    { ...VALID_TARGET, businessUnitScopingEnabled: true },
+    { secret: true, apiKey: "leak" }
+  );
   assert.ok(written);
   assert.equal(written.includes("leak"), false);
   assert.equal(JSON.parse(written).target.webAppName, "segment-preview-api");
+  assert.equal(businessUnitScoping, "true");
 });
 
 

@@ -111,9 +111,11 @@ test("every statically referenced element id exists in the markup", () => {
 });
 
 test("the one-button provisioning controls are present", () => {
-  ["provisionButton", "panelProvisionButton", "previewButton", "panelPreviewButton"].forEach((id) => {
+  ["provisionButton", "panelProvisionButton"].forEach((id) => {
     assert.ok(new RegExp(`id="${id}"`).test(html), `${id} is missing`);
   });
+  assert.doesNotMatch(html, /Preview run/);
+  assert.doesNotMatch(html, /panelPreviewButton|previewButton/);
 
   test("installation exposes an accessible visual progress bar", () => {
     [
@@ -193,8 +195,19 @@ test("business-unit scoping is an explicit accessible setup switch", () => {
   assert.match(html, /key: "businessUnitScopingEnabled"/);
   assert.match(html, /Business-unit scoping/);
   assert.match(html, /role", "switch"/);
+  assert.match(html, /toggle-track/);
+  assert.match(html, /input\.checked \? "On" : "Off"/);
   assert.match(html, /child business units are excluded/i);
   assert.match(html, /Settings > Feature switches/);
+});
+
+test("target settings are saved beside the target and advanced options", () => {
+  assert.match(
+    html,
+    /id="targetAdvanced"[\s\S]*id="saveButton"[^>]*>Save target settings<\/button>[\s\S]*<\/section>/
+  );
+  assert.match(html, /Stores the Business-unit switch and all Advanced options/);
+  assert.match(html, /Target settings saved to this environment/);
 });
 
 test("the Dataverse source fields explain automatic shortcut discovery", () => {

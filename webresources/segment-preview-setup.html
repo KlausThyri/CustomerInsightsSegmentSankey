@@ -360,13 +360,56 @@
     }
     .field input:focus-visible, .field select:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 1px; }
     .field input[aria-invalid="true"], .field select[aria-invalid="true"] { border-color: var(--cp-danger); }
-    .field .toggle-input {
-      width: 20px;
-      min-height: 20px;
-      margin: 6px 0;
-      padding: 0;
-      accent-color: var(--cp-accent);
+    .toggle-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      width: fit-content;
+      cursor: pointer;
+      user-select: none;
     }
+    .field .toggle-input {
+      position: absolute;
+      width: 1px;
+      min-height: 1px;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .toggle-track {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      flex: 0 0 auto;
+      border: 1px solid var(--cp-border-strong);
+      border-radius: 999px;
+      background: var(--cp-surface-soft);
+      transition: background-color .15s ease, border-color .15s ease;
+    }
+    .toggle-track::after {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--cp-bg-elevated);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .28);
+      content: "";
+      transition: transform .15s ease;
+    }
+    .toggle-input:checked + .toggle-track {
+      border-color: var(--cp-accent);
+      background: var(--cp-accent);
+    }
+    .toggle-input:checked + .toggle-track::after { transform: translateX(20px); }
+    .toggle-input:focus-visible + .toggle-track {
+      outline: 2px solid var(--cp-accent);
+      outline-offset: 2px;
+    }
+    .toggle-state { color: var(--cp-text); font-size: 12px; font-weight: 600; }
     .field .hint { color: var(--cp-text-soft); font-size: 11px; line-height: 1.4; }
     .field .error { color: var(--cp-danger); font-size: 11px; }
     .panel-actions {
@@ -584,7 +627,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.25">v1.1.0.25</span>
+          <span class="app-version" aria-label="Version 1.1.0.26">v1.1.0.26</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -593,7 +636,6 @@
       </div>
       <div class="toolbar">
         <button class="button" id="refreshButton" type="button">Refresh status</button>
-        <button class="button" id="previewButton" type="button" hidden>Preview run</button>
         <button class="button" id="startOverButton" type="button">Start over</button>
         <button class="button primary" id="provisionButton" type="button" hidden>Install everything</button>
       </div>
@@ -756,6 +798,10 @@
           <div class="field-grid" id="advancedTargetFields"></div>
         </div>
         </details>
+        <div class="panel-actions">
+          <button class="button" id="saveButton" type="button">Save target settings</button>
+          <span class="note">Stores the Business-unit switch and all Advanced options in this environment.</span>
+        </div>
         </div>
       </section>
 
@@ -764,15 +810,13 @@
           <span class="workflow-number">3</span>
           <div>
             <h3 class="stage-title">Install everything</h3>
-            <p class="stage-description">Review the preview or start the automated Azure and Fabric installation.</p>
+            <p class="stage-description">Start the automated Azure and Fabric installation.</p>
           </div>
           <span class="stage-lock" id="installStepState">Complete step 2 first</span>
         </div>
         <div class="stage-content">
         <div class="panel-actions">
         <button class="button primary" id="panelProvisionButton" type="button">Install everything</button>
-        <button class="button" id="panelPreviewButton" type="button">Preview run</button>
-        <button class="button" id="saveButton" type="button">Save settings</button>
         <span class="note" id="panelNote"></span>
       </div>
 
@@ -805,9 +849,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.25"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.25"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.25"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.26"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.26"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.26"></script>
 
   <script>
     (() => {
@@ -877,7 +921,6 @@
       const summaryMeta = document.getElementById("summaryMeta");
       const notice = document.getElementById("notice");
       const refreshButton = document.getElementById("refreshButton");
-      const previewButton = document.getElementById("previewButton");
       const provisionButton = document.getElementById("provisionButton");
       const setupCenter = document.getElementById("setupCenter");
       const modeBanner = document.getElementById("modeBanner");
@@ -901,7 +944,6 @@
       const consentList = document.getElementById("consentList");
       const panelNote = document.getElementById("panelNote");
       const panelProvisionButton = document.getElementById("panelProvisionButton");
-      const panelPreviewButton = document.getElementById("panelPreviewButton");
       const saveButton = document.getElementById("saveButton");
       const connectPanel = document.getElementById("connectPanel");
       const connectSummary = document.getElementById("connectSummary");
@@ -1001,8 +1043,6 @@
         const automated = Boolean(state.setup?.mode?.automated);
         provisionButton.disabled = value || !automated || !embedded;
         panelProvisionButton.disabled = value || !automated || !embedded;
-        previewButton.disabled = value || !engine || !embedded;
-        panelPreviewButton.disabled = value || !engine || !embedded;
         saveButton.disabled = value || !engine || !embedded;
         connectSaveButton.disabled = value || !engine || !embedded;
         connectBrokerSaveButton.disabled = value || !engine || !embedded;
@@ -1210,15 +1250,6 @@
                 (mode.brokerOrigin || "the provisioning service") +
                 " once. Everything listed below then runs there with your delegated permissions, and every resource it creates belongs to your tenant."
               : "You will be asked to sign in to Microsoft once. Everything listed below then runs automatically, and every resource it creates belongs to your own tenant and subscription.";
-        } else if (field.type === "boolean") {
-          const input = document.createElement("input");
-          input.id = "field-" + field.key;
-          input.type = "checkbox";
-          input.className = "toggle-input";
-          input.setAttribute("role", "switch");
-          input.checked = target[field.key] === true;
-          input.dataset.key = field.key;
-          wrapper.append(label, input, hint, error);
         } else {
           strong.textContent = "This environment is not connected yet";
           const intro = document.createElement("p");
@@ -1286,7 +1317,6 @@
         installStepState.textContent =
           !targetReady ? "Complete step 2 first" : installed ? "Complete" : "Ready";
         panelProvisionButton.disabled = state.loading || !targetReady;
-        panelPreviewButton.disabled = state.loading || !targetReady;
         saveButton.disabled = state.loading || !connected;
       }
 
@@ -1370,6 +1400,29 @@
               hint,
               error
             );
+          } else if (field.type === "boolean") {
+            const control = document.createElement("label");
+            control.className = "toggle-control";
+            control.setAttribute("for", "field-" + field.key);
+            const input = document.createElement("input");
+            input.id = "field-" + field.key;
+            input.type = "checkbox";
+            input.className = "toggle-input";
+            input.setAttribute("role", "switch");
+            input.checked = target[field.key] === true;
+            input.dataset.key = field.key;
+            const track = document.createElement("span");
+            track.className = "toggle-track";
+            track.setAttribute("aria-hidden", "true");
+            const toggleState = document.createElement("span");
+            toggleState.className = "toggle-state";
+            const renderToggleState = () => {
+              toggleState.textContent = input.checked ? "On" : "Off";
+            };
+            input.addEventListener("change", renderToggleState);
+            renderToggleState();
+            control.append(input, track, toggleState);
+            wrapper.append(label, control, hint, error);
           } else {
             const input = document.createElement("input");
             input.id = "field-" + field.key;
@@ -2675,8 +2728,6 @@
       connectBrokerSaveButton.addEventListener("click", connectBroker);
       connectPackageSaveButton.addEventListener("click", connectPackageUrlSave);
       startOverButton.addEventListener("click", startOver);
-      previewButton.addEventListener("click", () => runProvisioning(true));
-      panelPreviewButton.addEventListener("click", () => runProvisioning(true));
       provisionButton.addEventListener("click", () => runProvisioning(false));
       panelProvisionButton.addEventListener("click", () => runProvisioning(false));
       saveButton.addEventListener("click", async () => {
@@ -2690,7 +2741,7 @@
             state.setup?.state || {},
             state.setup?.facts || {}
           );
-          showNotice("Settings saved to this environment.", "success");
+          showNotice("Target settings saved to this environment.", "success");
         } catch (error) {
           showNotice(error.message || String(error), "error");
         } finally {
