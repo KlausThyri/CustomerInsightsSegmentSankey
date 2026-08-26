@@ -2628,7 +2628,7 @@
       var url = String(baseUrl || "").replace(/\/+$/, "") + "/health";
       var lastError = null;
       for (var attempt = 0; attempt < attempts; attempt++) {
-        if (attempt > 0 && timer) await timer(delayMs);
+        if (attempt > 0) await delay(delayMs, timer);
         try {
           var response = await http.send({ url: url, method: "GET", headers: { Accept: "application/json" } });
           if (response.status >= 200 && response.status < 300) {
@@ -2654,7 +2654,7 @@
       var url = String(baseUrl || "").replace(/\/+$/, "") + "/setup/key-check";
       var lastError = null;
       for (var attempt = 0; attempt < attempts; attempt++) {
-        if (attempt > 0 && timer) await timer(delayMs);
+        if (attempt > 0) await delay(delayMs, timer);
         try {
           var response = await http.send({
             url: url,

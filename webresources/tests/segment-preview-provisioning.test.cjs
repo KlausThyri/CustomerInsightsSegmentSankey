@@ -1548,6 +1548,38 @@ test("direct client prefers a Dataverse source Lakehouse that contains contact",
   assert.equal(fetchImpl.calls.length, 2);
 });
 
+test("direct client waits between authenticated API key-check attempts", async () => {
+  const delays = [];
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.url.endsWith("/api/setup/key-check"),
+      respond: () => jsonResponse(404, { code: "not_found" })
+    },
+    {
+      match: (request) => request.url.endsWith("/api/setup/key-check"),
+      respond: () => jsonResponse(200, { status: "ok", apiKeyAccepted: true })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: (callback, milliseconds) => {
+      delays.push(milliseconds);
+      callback();
+    }
+  });
+
+  const result = await direct.apiKeyCheck("https://api.example.com/api/", "stable-key", {
+    attempts: 2,
+    delayMs: 7000
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.attempts, 2);
+  assert.deepEqual(delays, [7000]);
+  assert.equal(fetchImpl.calls[1].init.headers["x-api-key"], "stable-key");
+});
+
 test("shortcut discovery explains the missing OneLake delegated permission", async () => {
   const fetchImpl = createFetchMock([
     {
