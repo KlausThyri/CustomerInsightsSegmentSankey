@@ -339,6 +339,78 @@
     return result.sort();
   }
 
+  function parseSolutionVersion(value) {
+    var match = String(value || "").trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$/i);
+    if (!match) return null;
+    return [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4] || 0)];
+  }
+
+  function compareSolutionVersions(left, right) {
+    var leftParts = parseSolutionVersion(left);
+    var rightParts = parseSolutionVersion(right);
+    if (!leftParts || !rightParts) {
+      throw new Error("Solution versions must use the numeric major.minor.patch.build format.");
+    }
+    for (var index = 0; index < leftParts.length; index++) {
+      if (leftParts[index] !== rightParts[index]) {
+        return leftParts[index] < rightParts[index] ? -1 : 1;
+      }
+    }
+    return 0;
+  }
+
+  function resolveSolutionUpdate(release, installedSolution) {
+    if (!installedSolution || !parseSolutionVersion(installedSolution.version)) {
+      throw new Error("The installed Segment Preview solution version could not be determined.");
+    }
+    var tagName = String((release && release.tag_name) || "").trim();
+    var latestVersion = tagName.replace(/^v/i, "");
+    if (!parseSolutionVersion(latestVersion)) {
+      throw new Error("GitHub returned a release tag that is not a supported solution version.");
+    }
+    var comparison = compareSolutionVersions(latestVersion, installedSolution.version);
+    if (comparison <= 0) {
+      return {
+        available: false,
+        currentVersion: installedSolution.version,
+        latestVersion: latestVersion,
+        tagName: tagName
+      };
+    }
+
+    var managed = installedSolution.ismanaged === true;
+    var assetName =
+      "CustomerInsightsSegmentPreview-" +
+      latestVersion +
+      (managed ? "-managed.zip" : "-unmanaged.zip");
+    var assets = Array.isArray(release.assets) ? release.assets : [];
+    var asset = assets.find(function (candidate) {
+      return candidate && candidate.name === assetName;
+    });
+    var digest = String((asset && asset.digest) || "").toLowerCase();
+    if (!/^sha256:[0-9a-f]{64}$/.test(digest)) {
+      throw new Error(
+        "The latest GitHub release does not contain a SHA-256 protected " +
+          (managed ? "managed" : "unmanaged") +
+          " solution asset."
+      );
+    }
+    return {
+      available: true,
+      currentVersion: installedSolution.version,
+      latestVersion: latestVersion,
+      tagName: tagName,
+      managed: managed,
+      assetName: assetName,
+      digest: digest.slice("sha256:".length),
+      rawFileName: managed
+        ? "CustomerInsightsSegmentPreview_managed.zip"
+        : "CustomerInsightsSegmentPreview.zip",
+      releaseUrl: String((release && release.html_url) || ""),
+      releaseName: String((release && release.name) || tagName)
+    };
+  }
+
   function delay(milliseconds, timer) {
     var schedule = timer || setTimeout;
     return new Promise(function (resolve) {
@@ -3905,6 +3977,8 @@
     brokerOrigin: brokerOrigin,
     isWebAppName: isWebAppName,
     isResourceGroupName: isResourceGroupName,
+    compareSolutionVersions: compareSolutionVersions,
+    resolveSolutionUpdate: resolveSolutionUpdate,
     environmentDomain: environmentDomain,
     apiBaseUrl: apiBaseUrl,
     fabricSqlServer: fabricSqlServer,

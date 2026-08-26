@@ -23,6 +23,31 @@ procedure. Nothing has to be installed on the administrator's computer.
 > hosted instance and no service identity exists in this repository. Nothing
 > here claims a running service.
 
+### In-app solution updates
+
+Starting with solution 1.1.0.27, Setup can update itself without asking the
+administrator to download and import every later solution manually:
+
+1. `Check for updates` reads the repository's latest non-draft GitHub release.
+2. Setup queries Dataverse for `klth_SegmentPreview` and selects the managed or
+   unmanaged package to match the installed solution type.
+3. The package is downloaded from the immutable release tag through
+   `raw.githubusercontent.com`, whose response permits the Dataverse browser
+   origin. Setup never uses an unversioned `main` branch package.
+4. Before import, SHA-256 is calculated with Web Crypto and must equal the
+   digest GitHub published for the corresponding release asset.
+5. The signed-in administrator's existing Dataverse session calls
+   `ImportSolution`. Managed environments preserve unmanaged customizations;
+   unmanaged developer environments explicitly overwrite this solution's
+   components. The unmanaged archive contains no Marketing sitemap component.
+6. Only the Segment Preview web resources are published, then Dynamics reloads
+   the page and runs the newly imported code.
+
+The updater introduces no hosted service, secret, or Dataverse application
+user. It cannot bypass Dataverse authorization: the signed-in user still needs
+the same solution-import privileges as a manual update. Version comparison
+allows upgrades only; equal or older GitHub releases are never imported.
+
 ---
 
 ## 1. The bootstrap problem

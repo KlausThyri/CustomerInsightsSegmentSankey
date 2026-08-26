@@ -62,6 +62,10 @@ test("the provisioning engine and Azure template are loaded before the inline lo
   assert.ok(templateAt < logicAt, "the template must be loaded before it is used");
 });
 
+test("all inline setup scripts are valid JavaScript", () => {
+  inlineScripts(html).forEach(code => assert.doesNotThrow(() => new Function(code)));
+});
+
 test("all external setup scripts use the current cache-busting revision", () => {
   const external = externalScripts(html);
   const version = html.match(/class="app-version"[^>]*>v([^<]+)</)[1];
@@ -210,6 +214,27 @@ test("target settings are saved beside the target and advanced options", () => {
   assert.match(html, /Target settings saved to this environment/);
 });
 
+test("the Setup Center can check and install verified solution updates", () => {
+  [
+    "checkUpdatesButton",
+    "updatePanel",
+    "updateTitle",
+    "updateCopy",
+    "updateReleaseLink",
+    "installUpdateButton"
+  ].forEach(id => assert.ok(html.includes(`id="${id}"`), `${id} is missing`));
+  assert.match(html, /api\.github\.com\/repos\/" \+ UPDATE_REPOSITORY \+ "\/releases\/latest"/);
+  assert.match(html, /raw\.githubusercontent\.com/);
+  assert.match(html, /engine\.resolveSolutionUpdate/);
+  assert.match(html, /sha256Hex\(bytes\)/);
+  assert.match(html, /digest !== update\.digest/);
+  assert.match(html, /dataverseRequest\("ImportSolution"/);
+  assert.match(html, /OverwriteUnmanagedCustomizations: !update\.managed/);
+  assert.match(html, /PublishXml/);
+  assert.match(html, /void checkForUpdates\(\)/);
+  assert.doesNotMatch(html, /github\.com\/" \+ UPDATE_REPOSITORY \+ "\/releases\/download/);
+});
+
 test("the Dataverse source fields explain automatic shortcut discovery", () => {
   assert.match(html, /Dataverse source Lakehouse ID/);
   assert.match(html, /Automatically discovered from this environment's Link to Microsoft Fabric Lakehouse/);
@@ -330,6 +355,8 @@ test("the broker service URL is configurable and never hard-coded", () => {
         url.includes("provisioning.example.com") ||
         url.includes("storage.example.com") ||
         url.includes("azurewebsites.net") ||
+        url.includes("api.github.com") ||
+        url.includes("raw.githubusercontent.com") ||
         url.includes("www.w3.org"),
       `the page must not hard-code the endpoint ${url}`
     );

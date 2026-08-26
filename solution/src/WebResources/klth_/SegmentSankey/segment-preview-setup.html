@@ -193,6 +193,24 @@
     }
     .notice.error { border-left-color: var(--cp-danger); }
     .notice.success { border-left-color: var(--cp-success); }
+    .update-panel {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin: -8px 0 28px;
+      border: 1px solid var(--cp-border);
+      border-left: 4px solid var(--cp-accent);
+      border-radius: .625rem;
+      padding: 14px 16px;
+      background: var(--cp-surface);
+    }
+    .update-panel.current { border-left-color: var(--cp-success); }
+    .update-panel.error { border-left-color: var(--cp-danger); }
+    .update-panel h2 { margin: 0; font-size: 14px; }
+    .update-panel p { margin: 4px 0 0; color: var(--cp-text-muted); font-size: 12px; }
+    .update-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
+    .update-actions a { color: var(--cp-accent); font-size: 12px; }
     .groups { display: grid; gap: 28px; }
     .group-title {
       display: flex;
@@ -613,6 +631,7 @@
       .toolbar { justify-content: flex-start; }
       .summary { grid-template-columns: auto 1fr; }
       .summary-meta { grid-column: 2; text-align: left; }
+      .update-panel { align-items: flex-start; flex-direction: column; }
       .cards { grid-template-columns: 1fr; }
       .step { grid-template-columns: 26px 1fr; }
       .step-phase { grid-column: 2; }
@@ -627,7 +646,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.26">v1.1.0.26</span>
+          <span class="app-version" aria-label="Version 1.1.0.27">v1.1.0.27</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -636,6 +655,7 @@
       </div>
       <div class="toolbar">
         <button class="button" id="refreshButton" type="button">Refresh status</button>
+        <button class="button" id="checkUpdatesButton" type="button">Check for updates</button>
         <button class="button" id="startOverButton" type="button">Start over</button>
         <button class="button primary" id="provisionButton" type="button" hidden>Install everything</button>
       </div>
@@ -648,6 +668,17 @@
         <p class="summary-copy" id="summaryCopy">This may take a few seconds.</p>
       </div>
       <div class="summary-meta" id="summaryMeta"></div>
+    </section>
+
+    <section class="update-panel" id="updatePanel" aria-live="polite" hidden>
+      <div>
+        <h2 id="updateTitle">Checking for updates…</h2>
+        <p id="updateCopy"></p>
+      </div>
+      <div class="update-actions">
+        <a id="updateReleaseLink" href="#" target="_blank" rel="noopener" hidden>Release notes</a>
+        <button class="button primary" id="installUpdateButton" type="button" hidden>Install update</button>
+      </div>
     </section>
 
     <div class="notice" id="notice" role="status" hidden></div>
@@ -849,9 +880,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.26"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.26"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.26"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.27"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.27"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.27"></script>
 
   <script>
     (() => {
@@ -866,6 +897,18 @@
       }
 
       const ACTION_NAME = "klth_ManageSegmentPreviewSetup";
+      const UPDATE_REPOSITORY = "KlausThyri/CustomerInsightsSegmentSankey";
+      const UPDATE_SOLUTION_NAME = "klth_SegmentPreview";
+      const UPDATE_WEB_RESOURCES = [
+        "klth_/SegmentSankey/launcher.js",
+        "klth_/SegmentSankey/segment-members.html",
+        "klth_/SegmentSankey/segment-preview-azure-template.js",
+        "klth_/SegmentSankey/segment-preview-payload.js",
+        "klth_/SegmentSankey/segment-preview-provisioning.js",
+        "klth_/SegmentSankey/segment-preview-setup.html",
+        "klth_/SegmentSankey/segment-sankey-icon.svg",
+        "klth_/SegmentSankey/segment-sankey.html"
+      ];
       const stateLabels = {
         ready: "Installed",
         partial: "Incomplete",
@@ -910,7 +953,10 @@
         resourceGroups: [],
         resourceGroupSubscriptionId: "",
         azureTokenProvider: null,
-        azureTokenClientId: ""
+        azureTokenClientId: "",
+        availableUpdate: null,
+        checkingForUpdates: false,
+        installingUpdate: false
       };
 
       const groupsHost = document.getElementById("groups");
@@ -921,6 +967,12 @@
       const summaryMeta = document.getElementById("summaryMeta");
       const notice = document.getElementById("notice");
       const refreshButton = document.getElementById("refreshButton");
+      const checkUpdatesButton = document.getElementById("checkUpdatesButton");
+      const updatePanel = document.getElementById("updatePanel");
+      const updateTitle = document.getElementById("updateTitle");
+      const updateCopy = document.getElementById("updateCopy");
+      const updateReleaseLink = document.getElementById("updateReleaseLink");
+      const installUpdateButton = document.getElementById("installUpdateButton");
       const provisionButton = document.getElementById("provisionButton");
       const setupCenter = document.getElementById("setupCenter");
       const modeBanner = document.getElementById("modeBanner");
@@ -1008,6 +1060,269 @@
         return xrm.Utility.getGlobalContext().getClientUrl();
       }
 
+      async function dataverseRequest(path, options = {}) {
+        const response = await fetch(
+          getClientUrl().replace(/\/+$/, "") + "/api/data/v9.2/" + path,
+          {
+            method: options.method || "GET",
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json; charset=utf-8",
+              "OData-MaxVersion": "4.0",
+              "OData-Version": "4.0"
+            },
+            body: options.body === undefined ? undefined : JSON.stringify(options.body)
+          }
+        );
+        const text = await response.text();
+        let body = {};
+        if (text) {
+          try {
+            body = JSON.parse(text);
+          } catch {
+            body = { message: text };
+          }
+        }
+        if (!response.ok) {
+          throw new Error(
+            body?.error?.message ||
+              body?.message ||
+              "Dataverse returned HTTP " + response.status + "."
+          );
+        }
+        return body;
+      }
+
+      function renderUpdateState(kind, title, copy, update) {
+        updatePanel.hidden = false;
+        updatePanel.className = "update-panel" + (kind ? " " + kind : "");
+        updateTitle.textContent = title;
+        updateCopy.textContent = copy || "";
+        updateReleaseLink.hidden = !update?.releaseUrl;
+        updateReleaseLink.href = update?.releaseUrl || "#";
+        installUpdateButton.hidden = !update?.available;
+        installUpdateButton.textContent = update?.available
+          ? "Install " + update.latestVersion
+          : "Install update";
+      }
+
+      async function installedSolution() {
+        const filter = encodeURIComponent("uniquename eq '" + UPDATE_SOLUTION_NAME + "'");
+        const result = await dataverseRequest(
+          "solutions?$select=version,ismanaged,uniquename&$filter=" + filter + "&$top=1"
+        );
+        const solution = Array.isArray(result.value) ? result.value[0] : null;
+        if (!solution) {
+          throw new Error("The installed Segment Preview solution could not be found.");
+        }
+        return solution;
+      }
+
+      async function checkForUpdates() {
+        if (!engine || state.checkingForUpdates || state.installingUpdate) return;
+        state.checkingForUpdates = true;
+        state.availableUpdate = null;
+        checkUpdatesButton.disabled = true;
+        renderUpdateState("", "Checking for updates…", "Reading the latest verified GitHub release.");
+        try {
+          const [solution, response] = await Promise.all([
+            installedSolution(),
+            fetch(
+              "https://api.github.com/repos/" + UPDATE_REPOSITORY + "/releases/latest",
+              {
+                cache: "no-store",
+                headers: {
+                  Accept: "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28"
+                }
+              }
+            )
+          ]);
+          const release = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(
+              release?.message || "GitHub returned HTTP " + response.status + "."
+            );
+          }
+          const update = engine.resolveSolutionUpdate(release, solution);
+          state.availableUpdate = update.available ? update : null;
+          if (update.available) {
+            renderUpdateState(
+              "",
+              "Update " + update.latestVersion + " is available",
+              "Installed: " +
+                update.currentVersion +
+                ". Setup will verify and import the " +
+                (update.managed ? "managed" : "unmanaged") +
+                " package.",
+              update
+            );
+          } else {
+            renderUpdateState(
+              "current",
+              "Segment Preview is up to date",
+              "Installed: " + update.currentVersion + " · Latest: " + update.latestVersion
+            );
+          }
+        } catch (error) {
+          renderUpdateState(
+            "error",
+            "Updates could not be checked",
+            (error && error.message) || String(error)
+          );
+        } finally {
+          state.checkingForUpdates = false;
+          checkUpdatesButton.disabled = state.loading || state.installingUpdate;
+        }
+      }
+
+      function bytesToBase64(bytes) {
+        let binary = "";
+        const chunkSize = 32768;
+        for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+          const end = Math.min(offset + chunkSize, bytes.length);
+          for (let index = offset; index < end; index++) {
+            binary += String.fromCharCode(bytes[index]);
+          }
+        }
+        return btoa(binary);
+      }
+
+      async function sha256Hex(bytes) {
+        if (!window.crypto?.subtle) {
+          throw new Error("This browser cannot verify solution package digests.");
+        }
+        const digest = await window.crypto.subtle.digest("SHA-256", bytes);
+        return Array.from(new Uint8Array(digest))
+          .map(byte => byte.toString(16).padStart(2, "0"))
+          .join("");
+      }
+
+      function importJobId() {
+        if (typeof window.crypto?.randomUUID === "function") {
+          return window.crypto.randomUUID();
+        }
+        const bytes = new Uint8Array(16);
+        window.crypto.getRandomValues(bytes);
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        const hex = Array.from(bytes).map(byte => byte.toString(16).padStart(2, "0")).join("");
+        return (
+          hex.slice(0, 8) +
+          "-" +
+          hex.slice(8, 12) +
+          "-" +
+          hex.slice(12, 16) +
+          "-" +
+          hex.slice(16, 20) +
+          "-" +
+          hex.slice(20)
+        );
+      }
+
+      async function publishOwnedWebResources() {
+        const filter = UPDATE_WEB_RESOURCES.map(
+          name => "name eq '" + name.replace(/'/g, "''") + "'"
+        ).join(" or ");
+        const result = await dataverseRequest(
+          "webresourceset?$select=webresourceid&$filter=" + encodeURIComponent(filter)
+        );
+        const ids = (result.value || []).map(record => record.webresourceid).filter(Boolean);
+        if (ids.length !== UPDATE_WEB_RESOURCES.length) {
+          throw new Error(
+            "The update was imported, but not all Segment Preview web resources were found for publishing."
+          );
+        }
+        const parameterXml =
+          "<importexportxml><webresources>" +
+          ids.map(id => "<webresource>" + id + "</webresource>").join("") +
+          "</webresources></importexportxml>";
+        await dataverseRequest("PublishXml", {
+          method: "POST",
+          body: { ParameterXml: parameterXml }
+        });
+      }
+
+      async function installAvailableUpdate() {
+        const update = state.availableUpdate;
+        if (!update || state.installingUpdate) return;
+        const confirmed = window.confirm(
+          "Install Segment Preview " +
+            update.latestVersion +
+            " now? Dataverse will import the verified " +
+            (update.managed ? "managed" : "unmanaged") +
+            " solution and reload this page."
+        );
+        if (!confirmed) return;
+
+        state.installingUpdate = true;
+        setBusy(true);
+        installUpdateButton.disabled = true;
+        checkUpdatesButton.disabled = true;
+        renderUpdateState(
+          "",
+          "Downloading update " + update.latestVersion + "…",
+          "The package will be imported only after its SHA-256 matches the published release digest.",
+          update
+        );
+        try {
+          const rawUrl =
+            "https://raw.githubusercontent.com/" +
+            UPDATE_REPOSITORY +
+            "/" +
+            encodeURIComponent(update.tagName) +
+            "/deployment/dataverse/" +
+            encodeURIComponent(update.rawFileName);
+          const response = await fetch(rawUrl, { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error("The solution package download returned HTTP " + response.status + ".");
+          }
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          const digest = await sha256Hex(bytes);
+          if (digest !== update.digest) {
+            throw new Error(
+              "The downloaded solution package failed SHA-256 verification. Nothing was imported."
+            );
+          }
+
+          renderUpdateState(
+            "",
+            "Installing update " + update.latestVersion + "…",
+            "Keep this page open while Dataverse imports and publishes the solution.",
+            update
+          );
+          await dataverseRequest("ImportSolution", {
+            method: "POST",
+            body: {
+              CustomizationFile: bytesToBase64(bytes),
+              OverwriteUnmanagedCustomizations: !update.managed,
+              PublishWorkflows: true,
+              SkipProductUpdateDependencies: false,
+              ImportJobId: importJobId()
+            }
+          });
+          await publishOwnedWebResources();
+          state.availableUpdate = null;
+          renderUpdateState(
+            "current",
+            "Update " + update.latestVersion + " installed",
+            "The verified solution was imported successfully. Reloading Setup…"
+          );
+          window.setTimeout(() => window.parent.location.reload(), 1500);
+        } catch (error) {
+          state.installingUpdate = false;
+          setBusy(false);
+          installUpdateButton.disabled = false;
+          renderUpdateState(
+            "error",
+            "Update installation failed",
+            (error && error.message) || String(error),
+            update
+          );
+        }
+      }
+
       async function execute(action) {
         const clientUrl = getClientUrl();
         const response = await fetch(
@@ -1039,6 +1354,8 @@
       function setBusy(value) {
         state.loading = value;
         refreshButton.disabled = value;
+        checkUpdatesButton.disabled =
+          value || state.checkingForUpdates || state.installingUpdate;
         const embedded = state.embedded !== false;
         const automated = Boolean(state.setup?.mode?.automated);
         provisionButton.disabled = value || !automated || !embedded;
@@ -2705,6 +3022,8 @@
       }
 
       refreshButton.addEventListener("click", refresh);
+      checkUpdatesButton.addEventListener("click", checkForUpdates);
+      installUpdateButton.addEventListener("click", installAvailableUpdate);
       copyRedirectButton.addEventListener("click", async () => {
         const value = connectRedirectUri.value || "";
         if (!value) return;
@@ -2756,6 +3075,7 @@
           showNotice(error.message || String(error), "error");
         }
         await refresh();
+        void checkForUpdates();
       })();
     })();
   </script>

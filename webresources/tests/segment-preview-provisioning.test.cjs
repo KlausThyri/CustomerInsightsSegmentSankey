@@ -110,6 +110,48 @@ test("requiredTables de-duplicates, lower-cases, sorts, and validates", () => {
   assert.throws(() => engine.requiredTables("bad table"), /not a valid Dataverse table name/);
 });
 
+test("solution version comparison supports three and four numeric components", () => {
+  assert.equal(engine.compareSolutionVersions("1.1.0.27", "1.1.0.26"), 1);
+  assert.equal(engine.compareSolutionVersions("1.1.0", "1.1.0.0"), 0);
+  assert.equal(engine.compareSolutionVersions("1.0.9.9", "1.1.0.0"), -1);
+  assert.throws(() => engine.compareSolutionVersions("latest", "1.1.0.0"), /numeric/);
+});
+
+test("solution update resolution selects the installed package type and requires a digest", () => {
+  const digest = `sha256:${"a".repeat(64)}`;
+  const release = {
+    tag_name: "v1.1.0.27",
+    name: "v1.1.0.27",
+    html_url: "https://github.com/example/releases/tag/v1.1.0.27",
+    assets: [
+      { name: "CustomerInsightsSegmentPreview-1.1.0.27-managed.zip", digest },
+      { name: "CustomerInsightsSegmentPreview-1.1.0.27-unmanaged.zip", digest }
+    ]
+  };
+  const managed = engine.resolveSolutionUpdate(release, { version: "1.1.0.26", ismanaged: true });
+  assert.equal(managed.available, true);
+  assert.equal(managed.assetName, "CustomerInsightsSegmentPreview-1.1.0.27-managed.zip");
+  assert.equal(managed.rawFileName, "CustomerInsightsSegmentPreview_managed.zip");
+  const unmanaged = engine.resolveSolutionUpdate(release, {
+    version: "1.1.0.26",
+    ismanaged: false
+  });
+  assert.equal(unmanaged.assetName, "CustomerInsightsSegmentPreview-1.1.0.27-unmanaged.zip");
+  assert.equal(unmanaged.rawFileName, "CustomerInsightsSegmentPreview.zip");
+  assert.equal(
+    engine.resolveSolutionUpdate(release, { version: "1.1.0.27", ismanaged: true }).available,
+    false
+  );
+  assert.throws(
+    () =>
+      engine.resolveSolutionUpdate(
+        { ...release, assets: [{ name: release.assets[0].name, digest: null }] },
+        { version: "1.1.0.26", ismanaged: true }
+      ),
+    /SHA-256 protected/
+  );
+});
+
 test("validateTarget requires only subscription and resource group for a new installation", () => {
   const result = engine.validateTarget({});
   assert.equal(result.valid, false);
