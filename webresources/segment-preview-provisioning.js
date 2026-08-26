@@ -2240,6 +2240,7 @@
           })
         );
       }
+      var fallbackSource = null;
       for (var index = 0; index < candidates.length; index++) {
         var lakehouse = candidates[index];
         var continuationToken = null;
@@ -2286,16 +2287,20 @@
           continuationToken = payload.continuationToken || null;
         } while (continuationToken);
         if (source) {
-          return {
+          var resolvedSource = {
             lakehouseId: lakehouse.id,
             lakehouseName: lakehouse.name || lakehouse.displayName || lakehouse.id,
             connectionId: source.target.dataverse.connectionId,
             deltaLakeFolder: source.target.dataverse.deltaLakeFolder,
             tables: Array.from(new Set(sourceTables)).sort()
           };
+          if (resolvedSource.tables.indexOf("contact") >= 0) {
+            return resolvedSource;
+          }
+          if (!fallbackSource) fallbackSource = resolvedSource;
         }
       }
-      return null;
+      return fallbackSource;
     }
 
     async function ensureConnectionRoleAssignment(connectionId, principalId) {

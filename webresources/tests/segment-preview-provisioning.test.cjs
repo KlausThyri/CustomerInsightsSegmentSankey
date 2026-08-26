@@ -1484,6 +1484,70 @@ test("direct client discovers the Dataverse shortcut source across continuation 
   assert.equal(fetchImpl.calls.length, 2);
 });
 
+test("direct client prefers a Dataverse source Lakehouse that contains contact", async () => {
+  const deltaLakeFolder =
+    "https://managedlake.dfs.fabric.microsoft.com/dataverse/Dataverse_orga/CDS3";
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.url.endsWith("/workspaces/w1/items/without-contact/shortcuts?parentPath=Tables"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              name: "msdynmkt_purpose",
+              target: {
+                dataverse: {
+                  connectionId: "d1",
+                  deltaLakeFolder,
+                  environmentDomain: "https://contoso.crm4.dynamics.com/"
+                }
+              }
+            }
+          ]
+        })
+    },
+    {
+      match: (request) =>
+        request.url.endsWith("/workspaces/w1/items/with-contact/shortcuts?parentPath=Tables"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              name: "contact",
+              target: {
+                dataverse: {
+                  connectionId: "d2",
+                  deltaLakeFolder,
+                  environmentDomain: "https://contoso.crm4.dynamics.com/"
+                }
+              }
+            }
+          ]
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  const source = await direct.findDataverseShortcutSource(
+    "w1",
+    [
+      { id: "without-contact", name: "Other" },
+      { id: "with-contact", name: "Dataverse_orga" }
+    ],
+    "https://contoso.crm4.dynamics.com"
+  );
+
+  assert.equal(source.lakehouseId, "with-contact");
+  assert.equal(source.connectionId, "d2");
+  assert.deepEqual(source.tables, ["contact"]);
+  assert.equal(fetchImpl.calls.length, 2);
+});
+
 test("shortcut discovery explains the missing OneLake delegated permission", async () => {
   const fetchImpl = createFetchMock([
     {
