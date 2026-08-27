@@ -80,6 +80,13 @@ test("closed details and hidden status elements cannot leak component content", 
   );
 });
 
+test("successful updates navigate to a cache-busted Setup URL", () => {
+  assert.match(html, /new URL\(window\.parent\.location\.href\)/);
+  assert.match(html, /"rev-" \+ update\.latestVersion \+ "-" \+ Date\.now\(\)/);
+  assert.match(html, /window\.parent\.location\.replace\(nextUrl\.toString\(\)\)/);
+  assert.doesNotMatch(html, /window\.parent\.location\.reload\(\)/);
+});
+
 test("missing Dataverse source tables are retried for two minutes", () => {
   assert.match(html, /engine\.provisionShortcutsWithRetry\(execute/);
   assert.match(html, /Setup will retry automatically/);
