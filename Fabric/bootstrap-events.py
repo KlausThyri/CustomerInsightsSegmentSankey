@@ -185,7 +185,9 @@ else:
 
 for shortcut in source_shortcuts:
     table_name = shortcut.get("name")
-    target_type = shortcut.get("target", {}).get("type")
+    source_target = shortcut.get("target", {})
+    target_type = source_target.get("type")
+    dataverse_target = source_target.get("dataverse", {})
     if target_type != "Dataverse" or table_name in METADATA_TABLES:
         continue
 
@@ -203,10 +205,13 @@ for shortcut in source_shortcuts:
                 "path": f"Tables/{DATAVERSE_SCHEMA}",
                 "name": table_name,
                 "target": {
-                    "oneLake": {
-                        "workspaceId": WORKSPACE_ID,
-                        "itemId": DATAVERSE_LAKEHOUSE_ID,
-                        "path": f"Tables/{table_name}",
+                    "dataverse": {
+                        "connectionId": dataverse_target.get("connectionId"),
+                        "deltaLakeFolder": dataverse_target.get("deltaLakeFolder"),
+                        "environmentDomain": dataverse_target.get(
+                            "environmentDomain"
+                        ),
+                        "tableName": table_name,
                     }
                 },
             },

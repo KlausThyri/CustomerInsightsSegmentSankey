@@ -24,7 +24,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
   return {
-    "contentVersion": "1.1.0.41",
+    "contentVersion": "1.1.0.42",
     "notebook": {
       "displayName": "Customer Insights Serving Bootstrap",
       "description": "Registers Journeys event folders and selected Dataverse mirror tables in one serving Lakehouse.",
@@ -260,7 +260,9 @@
               "\n",
               "for shortcut in source_shortcuts:\n",
               "    table_name = shortcut.get(\"name\")\n",
-              "    target_type = shortcut.get(\"target\", {}).get(\"type\")\n",
+              "    source_target = shortcut.get(\"target\", {})\n",
+              "    target_type = source_target.get(\"type\")\n",
+              "    dataverse_target = source_target.get(\"dataverse\", {})\n",
               "    if target_type != \"Dataverse\" or table_name in METADATA_TABLES:\n",
               "        continue\n",
               "\n",
@@ -278,10 +280,13 @@
               "                \"path\": f\"Tables/{DATAVERSE_SCHEMA}\",\n",
               "                \"name\": table_name,\n",
               "                \"target\": {\n",
-              "                    \"oneLake\": {\n",
-              "                        \"workspaceId\": WORKSPACE_ID,\n",
-              "                        \"itemId\": DATAVERSE_LAKEHOUSE_ID,\n",
-              "                        \"path\": f\"Tables/{table_name}\",\n",
+              "                    \"dataverse\": {\n",
+              "                        \"connectionId\": dataverse_target.get(\"connectionId\"),\n",
+              "                        \"deltaLakeFolder\": dataverse_target.get(\"deltaLakeFolder\"),\n",
+              "                        \"environmentDomain\": dataverse_target.get(\n",
+              "                            \"environmentDomain\"\n",
+              "                        ),\n",
+              "                        \"tableName\": table_name,\n",
               "                    }\n",
               "                },\n",
               "            },\n",

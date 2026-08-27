@@ -736,6 +736,15 @@ Describe 'Browser-only notebook and API deployment' {
         if ($marker) { $script:Payload | Should -Match ([regex]::Escape($marker)) }
     }
 
+    It 'creates query-facing Dataverse shortcuts directly from validated target metadata' {
+        $source = Get-Content -LiteralPath (Join-Path $script:BrowserRoot 'Fabric\bootstrap-events.py') -Raw
+        $source | Should -Match '"dataverse"\s*:\s*\{'
+        $source | Should -Match '"connectionId"\s*:\s*dataverse_target\.get'
+        $source | Should -Match '"deltaLakeFolder"\s*:\s*dataverse_target\.get'
+        $source | Should -Match '"environmentDomain"\s*:\s*dataverse_target\.get'
+        $source | Should -Match '"tableName"\s*:\s*table_name'
+    }
+
     It 'publishes the notebook from the browser through the Fabric definition API' {
         $script:Engine | Should -Match '/updateDefinition\?updateMetadata='
         $script:Engine | Should -Match 'definition\.parts\.some'

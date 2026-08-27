@@ -49,6 +49,8 @@ param(
 
     [string] $ApiVersion,
 
+    [string] $ContentVersion,
+
     [switch] $AsString
 )
 
@@ -57,6 +59,12 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).ProviderPath
 $modulePath = Join-Path $repositoryRoot 'deployment\modules\SegmentPreview.Provisioning\SegmentPreview.Provisioning.psd1'
 Import-Module -Name $modulePath -Force
+
+if (-not $ContentVersion) {
+    [xml] $solutionManifest = Get-Content -LiteralPath (
+        Join-Path $repositoryRoot 'solution\src\Other\Solution.xml')
+    $ContentVersion = [string] $solutionManifest.ImportExportXml.SolutionManifest.Version
+}
 
 if ($ApiPackageUrl -and $ApiPackageUrl -notmatch '^https://') {
     throw 'The API package URL must be an absolute https URL.'
@@ -130,7 +138,7 @@ if ($schedule) {
 }
 
 $payload = [ordered]@{
-    contentVersion = [string] $ApiVersion
+    contentVersion = [string] $ContentVersion
     notebook       = [ordered]@{
         displayName = [string] $platform.metadata.displayName
         description = [string] $platform.metadata.description

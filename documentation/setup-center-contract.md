@@ -494,6 +494,10 @@ metadata (`environmentDomain`, `connectionId`, and `deltaLakeFolder`). This
 supports existing combined Lakehouses without creating duplicate resources.
 The validated shortcut `connectionId` replaces a stale retained connection id
 and is written back to Advanced options.
+The bootstrap creates the query-facing `Tables/dataverse/*` aliases as direct
+Dataverse shortcuts using this validated target metadata. It does not create a
+OneLake shortcut back into the same Lakehouse, so separate and co-located source
+layouts follow the same idempotent path.
 When the link
 or its primary `contact` table is not visible yet, Setup polls the Fabric source
 for up to two minutes so a newly created Microsoft synchronization can complete.
