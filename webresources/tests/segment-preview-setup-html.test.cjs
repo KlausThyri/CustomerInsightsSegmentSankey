@@ -87,6 +87,24 @@ test("successful updates navigate to a cache-busted Setup URL", () => {
   assert.doesNotMatch(html, /window\.parent\.location\.reload\(\)/);
 });
 
+test("the installation page exposes a persistent redacted diagnostics log", () => {
+  const groupsAt = html.indexOf('id="groups"');
+  const logAt = html.indexOf('id="viewInstallationLogButton"');
+  assert.ok(logAt > groupsAt, "the installation log action must be at the bottom of the page");
+  assert.match(html, /id="installationLogViewer"\s+hidden/);
+  assert.match(html, /id="copyInstallationLogButton"/);
+  assert.match(html, /id="downloadInstallationLogButton"/);
+  assert.match(html, /klth\.segmentPreview\.installationLog\.v1/);
+  assert.match(html, /window\.sessionStorage\.setItem/);
+  assert.match(html, /function redactDiagnosticValue/);
+  assert.match(html, /CustomizationFile: bytesToBase64\(bytes\)/);
+  assert.doesNotMatch(
+    html,
+    /appendInstallationLog\([^;]*CustomizationFile/s,
+    "solution package content must never be written to the diagnostics log"
+  );
+});
+
 test("an interrupted import response is verified against the installed solution", () => {
   assert.match(html, /async function importSolutionAndConfirm\(update, bytes\)/);
   assert.match(html, /solution = await installedSolution\(\)/);

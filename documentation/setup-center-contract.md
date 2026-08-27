@@ -428,6 +428,24 @@ warm App Service worker temporarily using the previous value.
 
 `preflight`, `secret` and `verify` therefore always run, even on a resume.
 
+### Installation diagnostics log
+
+The Setup Center keeps a timestamped diagnostics log for the lifetime of the
+browser session. The log records page loads, status checks, update checks,
+Dataverse request paths and response codes, the installation plan, every step
+transition, retry messages, manual follow-up steps and errors. It is retained in
+`sessionStorage` across Setup reloads and is capped at 1,000 entries.
+
+A **View installation log** action is rendered at the bottom of the Setup page.
+The administrator can inspect the log inline, copy it to the clipboard, or
+download it as a plain-text `.log` file for support analysis.
+
+The diagnostics contract is metadata-only. Request bodies, solution package
+content, authorization headers, access and refresh tokens, API keys, client
+secrets, credentials and signed URL query values must never be written. Known
+sensitive property names and URL parameters are replaced with `[REDACTED]`
+before an entry is stored or rendered.
+
 A run that fails part way still records the steps that succeeded — except
 `secret`, which is only recorded once `azure-infra` succeeded, because that is
 the step that writes the key into App Service where recovery reads it. If

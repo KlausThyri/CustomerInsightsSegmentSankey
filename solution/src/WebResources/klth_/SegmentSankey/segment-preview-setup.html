@@ -626,6 +626,32 @@
       background: var(--cp-accent);
       transition: width 220ms ease;
     }
+    .diagnostic-log { margin-top: 20px; }
+    .diagnostic-log-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .diagnostic-log-header h2 { margin: 0; }
+    .diagnostic-log-viewer {
+      margin-top: 16px;
+      border-top: 1px solid var(--cp-border);
+      padding-top: 16px;
+    }
+    .diagnostic-log-output {
+      max-height: 420px;
+      overflow: auto;
+      margin: 12px 0 0;
+      border: 1px solid var(--cp-border);
+      border-radius: .625rem;
+      padding: 14px;
+      background: var(--cp-bg-elevated);
+      color: var(--cp-text);
+      font: 12px/1.55 Consolas, "Courier New", monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
     @media (max-width: 720px) {
       .page { width: min(100% - 24px, 1180px); padding-top: 24px; }
       .hero { flex-direction: column; }
@@ -647,7 +673,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.32">v1.1.0.32</span>
+          <span class="app-version" aria-label="Version 1.1.0.33">v1.1.0.33</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -878,12 +904,36 @@
     <div class="groups" id="groups">
       <div class="empty"><span class="spinner" aria-hidden="true"></span></div>
     </div>
+
+    <section class="panel diagnostic-log" aria-labelledby="installationLogHeading">
+      <div class="diagnostic-log-header">
+        <div>
+          <h2 id="installationLogHeading">Installation log</h2>
+          <p class="lead" id="installationLogSummary">
+            Diagnostic events from this browser session. Secrets are excluded.
+          </p>
+        </div>
+        <button class="button" id="viewInstallationLogButton" type="button"
+                aria-expanded="false" aria-controls="installationLogViewer">
+          View installation log
+        </button>
+      </div>
+      <div class="diagnostic-log-viewer" id="installationLogViewer" hidden>
+        <div class="panel-actions">
+          <button class="button" id="copyInstallationLogButton" type="button">Copy log</button>
+          <button class="button" id="downloadInstallationLogButton" type="button">Download log</button>
+          <span class="note">Tokens, API keys, credentials, and package contents are redacted.</span>
+        </div>
+        <pre class="diagnostic-log-output" id="installationLogOutput"
+             aria-live="polite"></pre>
+      </div>
+    </section>
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.32"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.32"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.32"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.33"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.33"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.33"></script>
 
   <script>
     (() => {
@@ -1024,10 +1074,151 @@
       const connectPackageError = document.getElementById("connectPackageError");
       const connectPackageSaveButton = document.getElementById("connectPackageSaveButton");
       const startOverButton = document.getElementById("startOverButton");
+      const viewInstallationLogButton = document.getElementById(
+        "viewInstallationLogButton"
+      );
+      const installationLogViewer = document.getElementById("installationLogViewer");
+      const installationLogSummary = document.getElementById("installationLogSummary");
+      const installationLogOutput = document.getElementById("installationLogOutput");
+      const copyInstallationLogButton = document.getElementById(
+        "copyInstallationLogButton"
+      );
+      const downloadInstallationLogButton = document.getElementById(
+        "downloadInstallationLogButton"
+      );
 
       const engine = window.SegmentPreviewProvisioning || null;
       const azureTemplate = window.SegmentPreviewAzureTemplate || null;
       const setupPayload = window.SegmentPreviewPayload || null;
+      const INSTALLATION_LOG_KEY = "klth.segmentPreview.installationLog.v1";
+      const MAX_INSTALLATION_LOG_ENTRIES = 1000;
+      const installationLog = [];
+
+      function redactDiagnosticString(value) {
+        return String(value)
+          .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[REDACTED]")
+          .replace(
+            /([?&](?:sig|token|code|client_secret|api[_-]?key)=)[^&\s]+/gi,
+            "$1[REDACTED]"
+          );
+      }
+
+      function redactDiagnosticValue(value, key, seen) {
+        if (
+          /api.?key|token|secret|password|authorization|credential|customization.?file|client.?secret|^content$|signature/i.test(
+            key || ""
+          )
+        ) {
+          return "[REDACTED]";
+        }
+        if (value === null || value === undefined) return value;
+        if (typeof value === "string") return redactDiagnosticString(value);
+        if (typeof value !== "object") return value;
+        const visited = seen || new WeakSet();
+        if (visited.has(value)) return "[Circular]";
+        visited.add(value);
+        if (value instanceof Error) {
+          return {
+            name: value.name,
+            message: redactDiagnosticString(value.message),
+            stack: redactDiagnosticString(value.stack || "")
+          };
+        }
+        if (Array.isArray(value)) {
+          return value.map(item => redactDiagnosticValue(item, "", visited));
+        }
+        const clone = {};
+        Object.keys(value).forEach(property => {
+          clone[property] = redactDiagnosticValue(value[property], property, visited);
+        });
+        return clone;
+      }
+
+      function saveInstallationLog() {
+        try {
+          window.sessionStorage.setItem(
+            INSTALLATION_LOG_KEY,
+            JSON.stringify(installationLog)
+          );
+        } catch (error) {
+          console.warn("The installation log could not be saved.", error);
+        }
+      }
+
+      function installationLogText() {
+        return installationLog
+          .map(entry => {
+            const details =
+              entry.details === undefined
+                ? ""
+                : " " + JSON.stringify(entry.details);
+            return (
+              entry.timestamp +
+              " [" +
+              entry.level.toUpperCase() +
+              "] " +
+              entry.event +
+              (entry.message ? " - " + entry.message : "") +
+              details
+            );
+          })
+          .join("\n");
+      }
+
+      function renderInstallationLog() {
+        const count = installationLog.length;
+        installationLogSummary.textContent =
+          count +
+          " diagnostic event" +
+          (count === 1 ? "" : "s") +
+          " from this browser session. Secrets are excluded.";
+        viewInstallationLogButton.textContent =
+          (installationLogViewer.hidden ? "View" : "Hide") +
+          " installation log (" +
+          count +
+          ")";
+        if (!installationLogViewer.hidden) {
+          installationLogOutput.textContent = installationLogText();
+          installationLogOutput.scrollTop = installationLogOutput.scrollHeight;
+        }
+      }
+
+      function appendInstallationLog(level, event, message, details) {
+        installationLog.push({
+          timestamp: new Date().toISOString(),
+          level: level || "info",
+          event: event || "setup.event",
+          message: redactDiagnosticString(message || ""),
+          details:
+            details === undefined
+              ? undefined
+              : redactDiagnosticValue(details, "", new WeakSet())
+        });
+        if (installationLog.length > MAX_INSTALLATION_LOG_ENTRIES) {
+          installationLog.splice(
+            0,
+            installationLog.length - MAX_INSTALLATION_LOG_ENTRIES
+          );
+        }
+        saveInstallationLog();
+        renderInstallationLog();
+      }
+
+      function loadInstallationLog() {
+        try {
+          const stored = JSON.parse(
+            window.sessionStorage.getItem(INSTALLATION_LOG_KEY) || "[]"
+          );
+          if (Array.isArray(stored)) {
+            installationLog.push(
+              ...stored.slice(-MAX_INSTALLATION_LOG_ENTRIES)
+            );
+          }
+        } catch (error) {
+          console.warn("The stored installation log could not be read.", error);
+        }
+        renderInstallationLog();
+      }
 
       const FIELDS = [
         { key: "subscriptionId", label: "Azure subscription", requirement: "required", hint: "Hosts the Azure API." },
@@ -1062,20 +1253,34 @@
       }
 
       async function dataverseRequest(path, options = {}) {
-        const response = await fetch(
-          getClientUrl().replace(/\/+$/, "") + "/api/data/v9.2/" + path,
-          {
-            method: options.method || "GET",
-            credentials: "same-origin",
-            headers: {
-              Accept: "application/json",
-              "Content-Type": "application/json; charset=utf-8",
-              "OData-MaxVersion": "4.0",
-              "OData-Version": "4.0"
-            },
-            body: options.body === undefined ? undefined : JSON.stringify(options.body)
-          }
-        );
+        const method = options.method || "GET";
+        const startedAt = performance.now();
+        appendInstallationLog("debug", "dataverse.request", method + " " + path);
+        let response;
+        try {
+          response = await fetch(
+            getClientUrl().replace(/\/+$/, "") + "/api/data/v9.2/" + path,
+            {
+              method,
+              credentials: "same-origin",
+              headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json; charset=utf-8",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0"
+              },
+              body: options.body === undefined ? undefined : JSON.stringify(options.body)
+            }
+          );
+        } catch (error) {
+          appendInstallationLog(
+            "error",
+            "dataverse.network-error",
+            method + " " + path,
+            { durationMs: Math.round(performance.now() - startedAt), error }
+          );
+          throw error;
+        }
         const text = await response.text();
         let body = {};
         if (text) {
@@ -1086,12 +1291,26 @@
           }
         }
         if (!response.ok) {
+          appendInstallationLog(
+            "error",
+            "dataverse.response",
+            method + " " + path,
+            {
+              status: response.status,
+              durationMs: Math.round(performance.now() - startedAt),
+              message: body?.error?.message || body?.message || ""
+            }
+          );
           throw new Error(
             body?.error?.message ||
               body?.message ||
               "Dataverse returned HTTP " + response.status + "."
           );
         }
+        appendInstallationLog("debug", "dataverse.response", method + " " + path, {
+          status: response.status,
+          durationMs: Math.round(performance.now() - startedAt)
+        });
         return body;
       }
 
@@ -1122,6 +1341,7 @@
 
       async function checkForUpdates() {
         if (!engine || state.checkingForUpdates || state.installingUpdate) return;
+        appendInstallationLog("info", "update.check-started", "Checking the latest release.");
         state.checkingForUpdates = true;
         state.availableUpdate = null;
         checkUpdatesButton.disabled = true;
@@ -1147,6 +1367,16 @@
             );
           }
           const update = engine.resolveSolutionUpdate(release, solution);
+          appendInstallationLog(
+            "info",
+            "update.check-completed",
+            update.available ? "A solution update is available." : "The solution is up to date.",
+            {
+              installedVersion: update.currentVersion,
+              latestVersion: update.latestVersion,
+              managed: solution.ismanaged === true
+            }
+          );
           state.availableUpdate = update.available ? update : null;
           if (update.available) {
             renderUpdateState(
@@ -1167,6 +1397,9 @@
             );
           }
         } catch (error) {
+          appendInstallationLog("error", "update.check-failed", error.message || String(error), {
+            error
+          });
           renderUpdateState(
             "error",
             "Updates could not be checked",
@@ -1287,6 +1520,17 @@
         );
         if (!confirmed) return;
 
+        appendInstallationLog(
+          "info",
+          "update.install-started",
+          "Installing solution update " + update.latestVersion + ".",
+          {
+            currentVersion: update.currentVersion,
+            targetVersion: update.latestVersion,
+            managed: update.managed,
+            assetName: update.assetName
+          }
+        );
         state.installingUpdate = true;
         setBusy(true);
         installUpdateButton.disabled = true;
@@ -1316,6 +1560,12 @@
               "The downloaded solution package failed SHA-256 verification. Nothing was imported."
             );
           }
+          appendInstallationLog(
+            "info",
+            "update.package-verified",
+            "The solution package SHA-256 digest matches the release.",
+            { targetVersion: update.latestVersion, bytes: bytes.length }
+          );
 
           renderUpdateState(
             "",
@@ -1324,7 +1574,18 @@
             update
           );
           await importSolutionAndConfirm(update, bytes);
+          appendInstallationLog(
+            "info",
+            "update.solution-imported",
+            "Dataverse confirmed the target solution version.",
+            { targetVersion: update.latestVersion }
+          );
           await publishOwnedWebResources();
+          appendInstallationLog(
+            "info",
+            "update.webresources-published",
+            "Segment Preview web resources were published."
+          );
           state.availableUpdate = null;
           renderUpdateState(
             "current",
@@ -1340,6 +1601,12 @@
             window.parent.location.replace(nextUrl.toString());
           }, 1500);
         } catch (error) {
+          appendInstallationLog(
+            "error",
+            "update.install-failed",
+            error.message || String(error),
+            { targetVersion: update.latestVersion, error }
+          );
           state.installingUpdate = false;
           setBusy(false);
           installUpdateButton.disabled = false;
@@ -1354,22 +1621,38 @@
 
       async function execute(action) {
         const clientUrl = getClientUrl();
-        const response = await fetch(
-          clientUrl + "/api/data/v9.2/" + ACTION_NAME,
-          {
-            method: "POST",
-            credentials: "same-origin",
-            headers: {
-              Accept: "application/json",
-              "Content-Type": "application/json; charset=utf-8",
-              "OData-MaxVersion": "4.0",
-              "OData-Version": "4.0"
-            },
-            body: JSON.stringify({ klth_action: action })
-          }
-        );
+        const startedAt = performance.now();
+        appendInstallationLog("debug", "setup-api.request", action);
+        let response;
+        try {
+          response = await fetch(
+            clientUrl + "/api/data/v9.2/" + ACTION_NAME,
+            {
+              method: "POST",
+              credentials: "same-origin",
+              headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json; charset=utf-8",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0"
+              },
+              body: JSON.stringify({ klth_action: action })
+            }
+          );
+        } catch (error) {
+          appendInstallationLog("error", "setup-api.network-error", action, {
+            durationMs: Math.round(performance.now() - startedAt),
+            error
+          });
+          throw error;
+        }
         const body = await response.json().catch(() => ({}));
         if (!response.ok) {
+          appendInstallationLog("error", "setup-api.response", action, {
+            status: response.status,
+            durationMs: Math.round(performance.now() - startedAt),
+            message: body?.error?.message || ""
+          });
           throw new Error(
             body?.error?.message || "The setup status could not be loaded."
           );
@@ -1377,6 +1660,10 @@
         if (!body.klth_resultjson) {
           throw new Error("The setup API returned no result.");
         }
+        appendInstallationLog("debug", "setup-api.response", action, {
+          status: response.status,
+          durationMs: Math.round(performance.now() - startedAt)
+        });
         return JSON.parse(body.klth_resultjson);
       }
 
@@ -1417,6 +1704,14 @@
         notice.textContent = message;
         notice.className = "notice" + (kind ? " " + kind : "");
         notice.hidden = !message;
+        if (message) {
+          appendInstallationLog(
+            kind === "error" ? "error" : "info",
+            "setup.notice",
+            message,
+            kind ? { kind } : undefined
+          );
+        }
       }
 
       function iconFor(componentState) {
@@ -1429,6 +1724,23 @@
         state.result = result;
         const components = Array.isArray(result.components) ? result.components : [];
         const overallState = result.overallState || "unavailable";
+        appendInstallationLog(
+          overallState === "unavailable" ? "error" : "info",
+          "setup.status",
+          "Setup status is " + overallState + ".",
+          {
+            apiVersion: result.apiVersion || "",
+            checkedAt: result.checkedAt || "",
+            components: components.map(component => ({
+              id: component.id,
+              category: component.category,
+              state: component.state,
+              message: component.message,
+              details: component.details,
+              action: component.action
+            }))
+          }
+        );
         summary.className = "summary state-" + overallState;
         summaryIcon.innerHTML = iconFor(overallState);
         summaryTitle.textContent =
@@ -2442,6 +2754,7 @@
         status: "pending"
       }));
       let activePlan = [];
+      const installationStepLogSignatures = new Map();
 
       function renderAzureSubsteps(list, steps) {
         if (!list) return;
@@ -2490,9 +2803,20 @@
       }
 
       function renderPlan(plan) {
+        installationStepLogSignatures.clear();
         activePlan = plan.map(step =>
           Object.assign({}, step, { status: step.skipped ? "skipped" : step.status })
         );
+        appendInstallationLog("info", "installation.plan", "Installation plan prepared.", {
+          steps: activePlan.map(step => ({
+            id: step.id,
+            name: step.name,
+            phase: step.phase,
+            status: step.status,
+            skipped: step.skipped,
+            reason: step.reason
+          }))
+        });
         progressList.hidden = false;
         progressList.replaceChildren();
         plan.forEach(step => {
@@ -2555,6 +2879,40 @@
         if (!item) return;
         const reportedStatus = String(entry.status || "").toLowerCase();
         const status = stepMarks[reportedStatus] ? reportedStatus : "running";
+        const subProgress = entry.subProgress
+          ? {
+              label: entry.subProgress.label,
+              complete: entry.subProgress.complete,
+              steps: Array.isArray(entry.subProgress.steps)
+                ? entry.subProgress.steps.map(step => ({
+                    id: step.id,
+                    name: step.name,
+                    resourceName: step.resourceName,
+                    status: step.status
+                  }))
+                : []
+            }
+          : undefined;
+        const diagnostic = {
+          id: entry.id,
+          name: entry.name,
+          phase: entry.phase,
+          status,
+          subProgress
+        };
+        const signature = JSON.stringify({
+          message: entry.message || "",
+          diagnostic
+        });
+        if (installationStepLogSignatures.get(entry.id) !== signature) {
+          installationStepLogSignatures.set(entry.id, signature);
+          appendInstallationLog(
+            status === "failed" ? "error" : "info",
+            "installation.step",
+            entry.message || entry.name || entry.id,
+            diagnostic
+          );
+        }
         item.className = "step " + status;
         item.querySelector(".step-mark").textContent = stepMarks[status] || "•";
         const message = document.getElementById("step-message-" + entry.id);
@@ -2934,6 +3292,29 @@
         }
         state.target = target;
 
+        appendInstallationLog(
+          "info",
+          "installation.started",
+          dryRun ? "Installation preview started." : "Installation started.",
+          {
+            mode: mode.mode,
+            environmentUrl: getClientUrl(),
+            target: {
+              subscriptionId: target.subscriptionId,
+              resourceGroup: target.resourceGroup,
+              location: target.location,
+              webAppName: target.webAppName,
+              fabricCapacityId: target.fabricCapacityId,
+              fabricWorkspaceId: target.fabricWorkspaceId,
+              fabricWorkspaceName: target.fabricWorkspaceName,
+              fabricServingLakehouseId: target.fabricServingLakehouseId,
+              fabricServingLakehouseName: target.fabricServingLakehouseName,
+              fabricDataverseLakehouseId: target.fabricDataverseLakehouseId,
+              requiredDataverseTables: target.requiredDataverseTables,
+              businessUnitScopingEnabled: target.businessUnitScopingEnabled
+            }
+          }
+        );
         setBusy(true);
         showNotice(dryRun ? "Running a preview. Nothing is changed." : "Installing. Keep this page open.");
         renderManual([]);
@@ -3019,6 +3400,18 @@
 
         try {
           const result = await orchestrator.run();
+          appendInstallationLog(
+            result.ok ? "info" : "error",
+            "installation.completed",
+            result.ok ? "Installation run completed." : "Installation run stopped.",
+            {
+              ok: result.ok,
+              failedStep: result.failedStep,
+              completed: result.completed,
+              manual: result.manual,
+              results: result.results
+            }
+          );
           renderManual(result.manual || []);
           if (!dryRun) {
             const completed = Object.assign({}, result.completed || {});
@@ -3049,6 +3442,12 @@
             }
           }
         } catch (error) {
+          appendInstallationLog(
+            "error",
+            "installation.unhandled-error",
+            error.message || String(error),
+            { error }
+          );
           if (!dryRun && mode.mode === "broker") {
             const current = storedSession();
             if (current?.runId) {
@@ -3068,6 +3467,49 @@
       refreshButton.addEventListener("click", refresh);
       checkUpdatesButton.addEventListener("click", checkForUpdates);
       installUpdateButton.addEventListener("click", installAvailableUpdate);
+      viewInstallationLogButton.addEventListener("click", () => {
+        installationLogViewer.hidden = !installationLogViewer.hidden;
+        viewInstallationLogButton.setAttribute(
+          "aria-expanded",
+          String(!installationLogViewer.hidden)
+        );
+        renderInstallationLog();
+      });
+      copyInstallationLogButton.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(installationLogText());
+          showNotice("Installation log copied.", "success");
+        } catch (error) {
+          appendInstallationLog(
+            "error",
+            "installation-log.copy-failed",
+            error.message || String(error),
+            { error }
+          );
+          showNotice("The installation log could not be copied.", "error");
+        }
+      });
+      downloadInstallationLogButton.addEventListener("click", () => {
+        const blob = new Blob([installationLogText()], {
+          type: "text/plain;charset=utf-8"
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download =
+          "segment-preview-installation-" +
+          new Date().toISOString().replace(/[:.]/g, "-") +
+          ".log";
+        document.body.append(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        appendInstallationLog(
+          "info",
+          "installation-log.downloaded",
+          "Installation log downloaded."
+        );
+      });
       copyRedirectButton.addEventListener("click", async () => {
         const value = connectRedirectUri.value || "";
         if (!value) return;
@@ -3110,6 +3552,35 @@
         } finally {
           setBusy(false);
         }
+      });
+
+      loadInstallationLog();
+      appendInstallationLog("info", "setup.page-loaded", "Setup Center loaded.", {
+        solutionUiVersion:
+          document.querySelector(".app-version")?.textContent?.replace(/^v/, "") || "",
+        pageUrl: window.parent.location.href,
+        userAgent: navigator.userAgent
+      });
+      window.addEventListener("error", event => {
+        appendInstallationLog(
+          "error",
+          "browser.error",
+          event.message || "Unhandled browser error.",
+          {
+            filename: event.filename,
+            line: event.lineno,
+            column: event.colno,
+            error: event.error
+          }
+        );
+      });
+      window.addEventListener("unhandledrejection", event => {
+        appendInstallationLog(
+          "error",
+          "browser.unhandled-rejection",
+          event.reason?.message || String(event.reason || "Unhandled promise rejection."),
+          { error: event.reason }
+        );
       });
 
       (async () => {
