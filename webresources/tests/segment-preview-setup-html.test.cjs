@@ -179,11 +179,23 @@ test("the one-button provisioning controls are present", () => {
     assert.ok(inlineScripts(html).some(code => code.includes("function updateInstallProgress")));
   });
 
-  test("Start over clears environment values and restores target defaults", () => {
+  test("Start over clears progress but retains resource identities for rediscovery", () => {
     const code = inlineScripts(html).join("\n");
-    assert.match(code, /resetEnvironmentVariables\(Object\.values\(engine\.ENV\)\)/);
-    assert.match(code, /engine\.applyAutomaticTarget\(engine\.TARGET_DEFAULTS\)/);
+    assert.doesNotMatch(code, /resetEnvironmentVariables\(Object\.values\(engine\.ENV\)\)/);
+    assert.match(code, /const retainedTarget = engine\.applyAutomaticTarget\(state\.setup\?\.target/);
+    assert.match(code, /engine\.saveSetupContext\(dataverse, retainedTarget, \{\}, retainedFacts\)/);
+    assert.match(code, /checked and reused before anything is created/);
     assert.match(code, /engine\.clearBrokerSession/);
+  });
+
+  test("discovered resources update Advanced options and persisted target values", () => {
+    const code = inlineScripts(html).join("\n");
+    assert.match(code, /const resolvedTarget = engine\.applyAutomaticTarget\(result\.context\.target \|\| target\)/);
+    assert.match(code, /state\.setup\.target = resolvedTarget/);
+    assert.match(code, /engine\.saveSetupContext\(dataverse, resolvedTarget, completed, facts\)/);
+    assert.match(code, /state\.fabricWorkspaceId !== resolvedTarget\.fabricWorkspaceId/);
+    assert.match(code, /state\.lakehouses = \[\]/);
+    assert.match(code, /renderFields\(resolvedTarget\)/);
   });
 });
 

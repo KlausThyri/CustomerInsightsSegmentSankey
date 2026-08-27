@@ -736,3 +736,28 @@ the official Microsoft instructions. It prominently requires **Files**, not
 After the shortcut exists, another
 **Install everything** run automatically executes and monitors the bootstrap
 notebook and verifies the resulting `journeys` tables.
+
+### 8.1 Resource reuse and Start over
+
+Every create-capable step must enumerate or read the target first. Azure
+discovery is strictly scoped to the subscription and Resource Group selected
+in step 2. An existing Segment Preview Web App in that Resource Group is
+identified by its application settings for the current Dataverse environment;
+its Fabric ids and existing API key are reused before deployment. Matching
+stored ids take precedence over names. This applies to Azure resource groups
+and deployments, Fabric workspaces and Lakehouses, the
+bootstrap notebook and schedule, role assignments, connections, and
+shortcuts. ARM deployments remain declarative updates of the same named
+resources.
+
+If an id does not resolve and name/environment discovery returns more than one
+candidate, Setup stops before any create call. It reports the candidate ids and
+requires the administrator to choose the intended resource in **Advanced
+options**. Setup never selects the first ambiguous result and never deletes
+duplicates automatically.
+
+**Start over** clears only provisioning completion state and the short-lived
+browser broker session. It retains the selected target and durable discovered
+resource facts in Dataverse. The next run therefore executes discovery again
+against the real tenant and reuses those resources; it does not revert to new
+resource names or delete API configuration.

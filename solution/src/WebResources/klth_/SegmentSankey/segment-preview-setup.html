@@ -694,7 +694,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.38">v1.1.0.38</span>
+          <span class="app-version" aria-label="Version 1.1.0.39">v1.1.0.39</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -1027,9 +1027,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.38"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.38"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.38"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.39"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.39"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.39"></script>
 
   <script>
     (() => {
@@ -3295,26 +3295,29 @@
       }
 
       /**
-       * Returns the setup to its shipped defaults. Current environment-variable
-       * values are deleted so their solution defaults become effective again.
+       * Restarts every provisioning step while retaining the durable resource
+       * identity required to rediscover and reuse the customer's infrastructure.
        */
       async function startOver() {
         if (!engine || state.loading) return;
         setBusy(true);
-        showNotice("Resetting setup settings and environment variables…");
+        showNotice("Restarting setup while preserving existing resource selections…");
         try {
           const dataverse = dataverseClient();
-          await dataverse.resetEnvironmentVariables(Object.values(engine.ENV));
-          state.target = engine.applyAutomaticTarget(engine.TARGET_DEFAULTS);
+          const retainedTarget = engine.applyAutomaticTarget(state.setup?.target || state.target || {});
+          const retainedFacts = state.setup?.facts || {};
+          await engine.saveSetupContext(dataverse, retainedTarget, {}, retainedFacts);
+          state.target = retainedTarget;
           if (state.setup) {
             state.setup.state = {};
-            state.setup.facts = {};
+            state.setup.target = retainedTarget;
+            state.setup.facts = retainedFacts;
           }
           engine.clearBrokerSession(sessionStore());
           await loadSetupCenter();
           await refresh();
           showNotice(
-            "Setup was reset. Advanced options use their defaults and all setup environment-variable values were cleared.",
+            "Setup was restarted. Existing Azure and Fabric resource identities were retained and will be checked and reused before anything is created.",
             "success"
           );
         } catch (error) {
@@ -3539,13 +3542,24 @@
           );
           renderManual(result.manual || []);
           if (!dryRun) {
+            const resolvedTarget = engine.applyAutomaticTarget(result.context.target || target);
+            if (
+              state.fabricWorkspaceId &&
+              state.fabricWorkspaceId !== resolvedTarget.fabricWorkspaceId
+            ) {
+              state.lakehouses = [];
+            }
+            state.fabricWorkspaceId = resolvedTarget.fabricWorkspaceId || "";
             const completed = Object.assign({}, result.completed || {});
             completed.apiKeyFingerprint = result.context.apiKeyFingerprint;
             completed.updatedAt = new Date().toISOString();
             const facts = Object.assign({}, state.setup.facts || {}, result.facts || {});
+            state.target = resolvedTarget;
+            state.setup.target = resolvedTarget;
             state.setup.state = completed;
             state.setup.facts = facts;
-            await engine.saveSetupContext(dataverse, target, completed, facts);
+            await engine.saveSetupContext(dataverse, resolvedTarget, completed, facts);
+            renderFields(resolvedTarget);
           }
           showNotice(
             result.ok

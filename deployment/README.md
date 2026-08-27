@@ -501,6 +501,21 @@ zero-interaction: Microsoft requires a sign-in in every supported flow. Every
 item above that applies to the Setup Center happens **in the browser**, started
 from the setup page itself.
 
+Setup is idempotent and discovery-first. It inventories the selected Azure
+subscription and Resource Group before deployment, identifies an existing
+Segment Preview Web App for the current Dataverse environment from its
+application settings, and reuses its API key and Fabric ids. Before creating
+any Fabric component, it checks the stored id first and the existing resource
+collection second. **Start over** restarts the provisioning steps but
+retains the selected target and discovered resource identities, ensuring the
+fresh run checks and updates the existing deployment instead of creating a
+parallel one.
+
+Ambiguous discovery is fail-safe: if multiple resources match by name or
+Dataverse environment and no stored id identifies one of them, Setup reports
+the candidate ids and stops without creating or deleting anything. Select the
+intended resource in **Advanced options** and run installation again.
+
 ---
 
 ## Secret handling

@@ -1271,6 +1271,148 @@ test("direct client creates a missing Resource Group in the requested location",
   assert.equal(group.location, "westeurope");
 });
 
+test("direct client discovers an existing deployment only inside the selected Resource Group", async () => {
+  const subscriptionId = "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6";
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.includes(
+          `/subscriptions/${subscriptionId}/resourcegroups/rg-existing/providers/Microsoft.Web/sites`
+        ),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              id: `/subscriptions/${subscriptionId}/resourceGroups/rg-existing/providers/Microsoft.Web/sites/segment-existing`,
+              name: "segment-existing"
+            }
+          ]
+        })
+    },
+    {
+      match: (request) =>
+        request.init.method === "POST" &&
+        request.url.includes(
+          "/resourcegroups/rg-existing/providers/Microsoft.Web/sites/segment-existing/config/appsettings/list"
+        ),
+      respond: () =>
+        jsonResponse(200, {
+          properties: {
+            DATAVERSE_ENVIRONMENT_URL: "https://contoso.crm4.dynamics.com",
+            BEHAVIORAL_API_KEY: "existing-key",
+            FABRIC_WORKSPACE_ID: VALID_TARGET.fabricWorkspaceId
+          }
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  test("Resource Group discovery follows every Web App result page", async () => {
+    const subscriptionId = "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6";
+    const nextLink = "https://management.azure.com/next-web-app-page?api-version=2023-12-01";
+    const fetchImpl = createFetchMock([
+      {
+        match: (request) =>
+          request.init.method === "GET" &&
+          request.url.includes("/resourcegroups/rg-existing/providers/Microsoft.Web/sites"),
+        respond: () => jsonResponse(200, { value: [], nextLink })
+      },
+      {
+        match: (request) => request.init.method === "GET" && request.url === nextLink,
+        respond: () =>
+          jsonResponse(200, {
+            value: [{ id: "/sites/segment-existing", name: "segment-existing" }]
+          })
+      },
+      {
+        match: (request) =>
+          request.init.method === "POST" &&
+          request.url.includes("/sites/segment-existing/config/appsettings/list"),
+        respond: () =>
+          jsonResponse(200, {
+            properties: {
+              DATAVERSE_ENVIRONMENT_URL: "https://contoso.crm4.dynamics.com",
+              FABRIC_WORKSPACE_ID: VALID_TARGET.fabricWorkspaceId
+            }
+          })
+      }
+    ]);
+    const direct = engine.createDirectClient({
+      fetch: fetchImpl,
+      getToken: async () => "token",
+      timer: immediateTimer
+    });
+    const deployment = await direct.discoverExistingSegmentPreviewDeployment(
+      subscriptionId,
+      "rg-existing",
+      "https://contoso.crm4.dynamics.com",
+      "generated-new-name"
+    );
+    assert.equal(deployment.name, "segment-existing");
+    assert.equal(fetchImpl.calls[1].url, nextLink);
+  });
+
+  test("Resource Group discovery never adopts a same-name Web App from another environment", async () => {
+    const subscriptionId = "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6";
+    const fetchImpl = createFetchMock([
+      {
+        match: (request) =>
+          request.init.method === "GET" &&
+          request.url.includes("/resourcegroups/rg-shared/providers/Microsoft.Web/sites"),
+        respond: () =>
+          jsonResponse(200, {
+            value: [{ id: "/sites/segment-preview-api", name: "segment-preview-api" }]
+          })
+      },
+      {
+        match: (request) =>
+          request.init.method === "POST" &&
+          request.url.includes("/sites/segment-preview-api/config/appsettings/list"),
+        respond: () =>
+          jsonResponse(200, {
+            properties: {
+              DATAVERSE_ENVIRONMENT_URL: "https://another.crm4.dynamics.com",
+              BEHAVIORAL_API_KEY: "another-environment-key"
+            }
+          })
+      }
+    ]);
+    const direct = engine.createDirectClient({
+      fetch: fetchImpl,
+      getToken: async () => "token",
+      timer: immediateTimer
+    });
+    await assert.rejects(
+      () =>
+        direct.discoverExistingSegmentPreviewDeployment(
+          subscriptionId,
+          "rg-shared",
+          "https://contoso.crm4.dynamics.com",
+          "segment-preview-api"
+        ),
+      /not a Segment Preview deployment for contoso\.crm4\.dynamics\.com/
+    );
+  });
+  const deployment = await direct.discoverExistingSegmentPreviewDeployment(
+    subscriptionId,
+    "rg-existing",
+    "https://contoso.crm4.dynamics.com",
+    "generated-new-name"
+  );
+  assert.equal(deployment.name, "segment-existing");
+  assert.equal(deployment.settings.BEHAVIORAL_API_KEY, "existing-key");
+  assert.equal(fetchImpl.calls.length, 2);
+  assert.ok(
+    fetchImpl.calls.every((call) => call.url.includes("/resourcegroups/rg-existing/")),
+    "discovery must remain scoped to the selected Resource Group"
+  );
+});
+
 test("direct client lists Azure resource groups alphabetically", async () => {
   const fetchImpl = createFetchMock([
     {
@@ -2714,11 +2856,17 @@ function directHarness(options = {}) {
     async fabricCollection(path) {
       calls.push({ kind: "fabricCollection", path });
       if (path === "workspaces") {
-        return [{ id: VALID_TARGET.fabricWorkspaceId, displayName: "Segment Preview" }];
+        return options.workspaces || [{
+          id: VALID_TARGET.fabricWorkspaceId,
+          displayName: options.workspaceDisplayName || "Segment Preview"
+        }];
       }
       if (/\/lakehouses$/.test(path)) {
-        return [
-          { id: VALID_TARGET.fabricServingLakehouseId, displayName: "SegmentPreviewServing" },
+        return options.lakehouses || [
+          {
+            id: VALID_TARGET.fabricServingLakehouseId,
+            displayName: options.servingLakehouseDisplayName || "SegmentPreviewServing"
+          },
           { id: DATAVERSE_LAKEHOUSE_ID, displayName: "Dataverse_orga" }
         ];
       }
@@ -2791,6 +2939,21 @@ function directHarness(options = {}) {
     async ensureResourceGroup(subscriptionId, resourceGroup) {
       calls.push({ kind: "ensureResourceGroup", subscriptionId, resourceGroup });
       return { location: options.resourceGroupLocation || "westeurope" };
+    },
+    async discoverExistingSegmentPreviewDeployment(
+      subscriptionId,
+      resourceGroup,
+      environmentUrl,
+      preferredWebAppName
+    ) {
+      calls.push({
+        kind: "discoverExistingSegmentPreviewDeployment",
+        subscriptionId,
+        resourceGroup,
+        environmentUrl,
+        preferredWebAppName
+      });
+      return options.existingAzureDeployment || null;
     },
     async listDataverseConnections(environmentUrl) {
       calls.push({ kind: "listDataverseConnections", environmentUrl });
@@ -3485,6 +3648,177 @@ test("stale Fabric ids fall back to existing resources with matching names", asy
     ),
     false,
     "matching workspace and lakehouse names must be reused"
+  );
+});
+
+test("Fabric discovery reuses workspace and lakehouse names case-insensitively", async () => {
+  const direct = directHarness({
+    workspaceDisplayName: "segment preview",
+    servingLakehouseDisplayName: "segmentpreviewserving"
+  });
+  const digest = await sha256Of(direct.packageBytes);
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: {
+      target: Object.assign({}, VALID_TARGET, {
+        fabricWorkspaceId: "11111111-2222-3333-4444-555555555555",
+        fabricServingLakehouseId: "66666666-7777-8888-9999-000000000000"
+      }),
+      apiPackageUrl: "https://contoso.example.com/a.zip " + digest
+    }
+  });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  assert.equal(
+    direct.calls.some(
+      (call) =>
+        call.kind === "fabric" &&
+        call.method === "POST" &&
+        (call.path === "workspaces" || /\/lakehouses$/.test(call.path))
+    ),
+    false,
+    "existing resource names must be reused regardless of casing"
+  );
+});
+
+test("resource-group discovery adopts the existing deployment before provisioning", async () => {
+  const direct = directHarness({
+    existingAzureDeployment: {
+      name: "existing-segment-preview-api",
+      settings: {
+        BEHAVIORAL_API_KEY: "existing-key",
+        FABRIC_WORKSPACE_ID: VALID_TARGET.fabricWorkspaceId,
+        FABRIC_SERVING_LAKEHOUSE_ID: VALID_TARGET.fabricServingLakehouseId,
+        FABRIC_DATAVERSE_CONNECTION_ID: VALID_TARGET.fabricDataverseConnectionId,
+        FABRIC_DATAVERSE_DELTA_FOLDER: DATAVERSE_DELTA_FOLDER
+      }
+    },
+    appSettings: { BEHAVIORAL_API_KEY: "existing-key" }
+  });
+  const digest = await sha256Of(direct.packageBytes);
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: {
+      target: Object.assign({}, VALID_TARGET, {
+        webAppName: "new-generated-name",
+        fabricWorkspaceId: "11111111-2222-3333-4444-555555555555",
+        fabricServingLakehouseId: "66666666-7777-8888-9999-000000000000"
+      }),
+      apiPackageUrl: "https://contoso.example.com/a.zip " + digest
+    }
+  });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  const discovery = direct.calls.find(
+    (call) => call.kind === "discoverExistingSegmentPreviewDeployment"
+  );
+  assert.equal(discovery.resourceGroup, VALID_TARGET.resourceGroup);
+  const deployment = direct.calls.find((call) => call.kind === "deployTemplate");
+  assert.equal(deployment.parameters.webAppName, "existing-segment-preview-api");
+  assert.equal(deployment.parameters.fabricWorkspaceId, VALID_TARGET.fabricWorkspaceId);
+  assert.equal(
+    deployment.parameters.fabricServingLakehouseId,
+    VALID_TARGET.fabricServingLakehouseId
+  );
+});
+
+test("stored Fabric ids win over another resource that retained the old name", async () => {
+  const direct = directHarness({
+    workspaces: [
+      { id: "old-name-id", displayName: "Segment Preview" },
+      { id: VALID_TARGET.fabricWorkspaceId, displayName: "Renamed Segment Preview" }
+    ],
+    lakehouses: [
+      { id: "old-name-lakehouse", displayName: "SegmentPreviewServing" },
+      {
+        id: VALID_TARGET.fabricServingLakehouseId,
+        displayName: "Renamed SegmentPreviewServing"
+      },
+      { id: DATAVERSE_LAKEHOUSE_ID, displayName: "Dataverse_orga" }
+    ]
+  });
+
+  test("a newly selected Fabric id overrides a stale retained fact", async () => {
+    const direct = directHarness({
+      workspaces: [
+        { id: "old-workspace-id", displayName: "Old Workspace" },
+        { id: VALID_TARGET.fabricWorkspaceId, displayName: "Selected Workspace" }
+      ]
+    });
+    const digest = await sha256Of(direct.packageBytes);
+    const { orchestrator } = directOrchestrator({
+      direct,
+      settings: {
+        facts: { workspaceId: "old-workspace-id" },
+        apiPackageUrl: "https://contoso.example.com/a.zip " + digest
+      }
+    });
+    const result = await orchestrator.run();
+    assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+    assert.ok(
+      direct.calls.some(
+        (call) =>
+          call.kind === "fabricCollection" &&
+          call.path === `workspaces/${VALID_TARGET.fabricWorkspaceId}/lakehouses`
+      )
+    );
+  });
+  const digest = await sha256Of(direct.packageBytes);
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: { apiPackageUrl: "https://contoso.example.com/a.zip " + digest }
+  });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  assert.ok(
+    direct.calls.some(
+      (call) =>
+        call.kind === "fabricCollection" &&
+        call.path === `workspaces/${VALID_TARGET.fabricWorkspaceId}/lakehouses`
+    )
+  );
+  assert.equal(
+    direct.calls.some(
+      (call) =>
+        call.kind === "fabricCollection" &&
+        call.path === "workspaces/old-name-id/lakehouses"
+    ),
+    false
+  );
+});
+
+test("Fabric discovery stops instead of choosing between duplicate workspace names", async () => {
+  const direct = directHarness({
+    workspaces: [
+      { id: "workspace-one", displayName: "Segment Preview" },
+      { id: "workspace-two", displayName: "segment preview" }
+    ]
+  });
+  const digest = await sha256Of(direct.packageBytes);
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: {
+      target: Object.assign({}, VALID_TARGET, {
+        fabricWorkspaceId: "missing-workspace-id",
+        fabricWorkspaceName: "Segment Preview"
+      }),
+      facts: {},
+      apiPackageUrl: "https://contoso.example.com/a.zip " + digest
+    }
+  });
+  const result = await orchestrator.run();
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "fabric-discovery");
+  const step = result.results.find((entry) => entry.id === "fabric-discovery");
+  assert.match(step.message, /Multiple Fabric workspace resources/);
+  assert.match(step.message, /workspace-one, workspace-two/);
+  assert.match(step.message, /Advanced options/);
+  assert.equal(
+    direct.calls.some(
+      (call) => call.kind === "fabric" && call.method === "POST" && call.path === "workspaces"
+    ),
+    false,
+    "ambiguous discovery must never create another workspace"
   );
 });
 

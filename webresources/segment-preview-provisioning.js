@@ -226,6 +226,30 @@
     return value === null || value === undefined || String(value).trim() === "";
   }
 
+  function sameIdentifier(left, right) {
+    if (isBlank(left) || isBlank(right)) return false;
+    return String(left).trim().toLowerCase() === String(right).trim().toLowerCase();
+  }
+
+  function uniqueNamedResource(items, name, label) {
+    if (isBlank(name)) return null;
+    var matches = (items || []).filter(function (item) {
+      return sameIdentifier(item.displayName || item.name, name);
+    });
+    if (matches.length > 1) {
+      throw new Error(
+        "Multiple " +
+          label +
+          " resources named '" +
+          name +
+          "' were found (" +
+          matches.map(function (item) { return item.id || "no id"; }).join(", ") +
+          "). Select the intended resource by id in Advanced options; Setup will not choose one automatically."
+      );
+    }
+    return matches[0] || null;
+  }
+
   function trimOrNull(value) {
     return isBlank(value) ? null : String(value).trim();
   }
@@ -2839,6 +2863,109 @@
       return (response.body && response.body.properties) || {};
     }
 
+    /**
+     * Inventories the selected Resource Group and finds an existing Segment
+     * Preview Web App for this Dataverse environment before any deployment.
+     */
+    async function discoverExistingSegmentPreviewDeployment(
+      subscriptionId,
+      resourceGroup,
+      environmentUrl,
+      preferredWebAppName
+    ) {
+      var path =
+        "/subscriptions/" +
+        subscriptionId +
+        "/resourcegroups/" +
+        encodeURIComponent(resourceGroup) +
+        "/providers/Microsoft.Web/sites";
+      var sites = [];
+      var next = path;
+      var guard = 0;
+      while (next && guard++ < 100) {
+        var response = await arm("GET", next, undefined, WEB_API_VERSION);
+        var page = response.body || {};
+        if (Array.isArray(page.value)) sites = sites.concat(page.value);
+        next = page.nextLink || null;
+      }
+      var exact = sites.filter(function (site) {
+        return sameIdentifier(site.name, preferredWebAppName);
+      })[0];
+      var wantedDomain = environmentDomain(environmentUrl);
+      var nameConflict = null;
+      if (exact) {
+        var exactSettings = await webAppSettings(
+          subscriptionId,
+          resourceGroup,
+          exact.name
+        );
+        var exactEnvironment = exactSettings.DATAVERSE_ENVIRONMENT_URL;
+        var exactIsSegmentPreview =
+          !isBlank(exactSettings.BEHAVIORAL_API_KEY) ||
+          !isBlank(exactSettings.FABRIC_WORKSPACE_ID) ||
+          !isBlank(exactSettings.SEGMENT_PREVIEW_REQUIRED_TABLES);
+        if (
+          exactIsSegmentPreview &&
+          (
+            isBlank(exactEnvironment) ||
+            environmentDomain(exactEnvironment) === wantedDomain
+          )
+        ) {
+          return {
+            name: exact.name,
+            id: exact.id || null,
+            settings: exactSettings
+          };
+        }
+        nameConflict = exact;
+      }
+
+      var matches = [];
+      for (var index = 0; index < sites.length; index++) {
+        var site = sites[index];
+        if (exact && sameIdentifier(site.id || site.name, exact.id || exact.name)) continue;
+        var current;
+        try {
+          current = await webAppSettings(subscriptionId, resourceGroup, site.name);
+        } catch (error) {
+          if (error.status === 403 || error.status === 404) continue;
+          throw error;
+        }
+        var configuredEnvironment = current.DATAVERSE_ENVIRONMENT_URL;
+        var isSegmentPreview =
+          !isBlank(current.BEHAVIORAL_API_KEY) ||
+          !isBlank(current.FABRIC_WORKSPACE_ID) ||
+          !isBlank(current.SEGMENT_PREVIEW_REQUIRED_TABLES);
+        if (
+          isSegmentPreview &&
+          !isBlank(configuredEnvironment) &&
+          environmentDomain(configuredEnvironment) === wantedDomain
+        ) {
+          matches.push({ name: site.name, id: site.id || null, settings: current });
+        }
+      }
+      if (matches.length > 1) {
+        throw new Error(
+          "The selected Resource Group contains multiple Segment Preview Web Apps for this Dataverse environment (" +
+            matches.map(function (match) { return match.name; }).join(", ") +
+            "). Select the intended Web App name in Advanced options."
+        );
+      }
+      if (matches.length === 1) return matches[0];
+      if (nameConflict) {
+        throw new Error(
+          "Web App '" +
+            nameConflict.name +
+            "' already exists in Resource Group '" +
+            resourceGroup +
+            "' but is not a Segment Preview deployment for " +
+            wantedDomain +
+            ". Setup will not overwrite it. Select the intended existing Web App name in Advanced options or choose a different Resource Group."
+        );
+      }
+      return null;
+    }
+
     /** Replaces the application settings of the Web App with the merged set. */
     async function setWebAppSettings(subscriptionId, resourceGroup, webAppName, properties) {
       var response = await arm(
@@ -2960,6 +3087,7 @@
       listResourceGroups: listResourceGroups,
       ensureResourceGroup: ensureResourceGroup,
       deployTemplate: deployTemplate,
+      discoverExistingSegmentPreviewDeployment: discoverExistingSegmentPreviewDeployment,
       webAppSettings: webAppSettings,
       setWebAppSettings: setWebAppSettings,
       restartWebApp: restartWebApp,
@@ -3104,6 +3232,44 @@
       }
       var value = current && current[API_KEY_SETTING];
       return isBlank(value) ? null : String(value);
+    }
+
+    async function discoverExistingAzureDeployment() {
+      if (
+        mode !== "direct" ||
+        !direct ||
+        typeof direct.discoverExistingSegmentPreviewDeployment !== "function"
+      ) {
+        return null;
+      }
+      var existing = await direct.discoverExistingSegmentPreviewDeployment(
+        target.subscriptionId,
+        target.resourceGroup,
+        environmentUrl,
+        target.webAppName
+      );
+      if (!existing) return null;
+
+      target.webAppName = existing.name;
+      var current = existing.settings || {};
+      if (isGuid(current.FABRIC_WORKSPACE_ID)) {
+        target.fabricWorkspaceId = current.FABRIC_WORKSPACE_ID;
+        facts.workspaceId = current.FABRIC_WORKSPACE_ID;
+      }
+      if (isGuid(current.FABRIC_SERVING_LAKEHOUSE_ID)) {
+        target.fabricServingLakehouseId = current.FABRIC_SERVING_LAKEHOUSE_ID;
+        facts.servingLakehouseId = current.FABRIC_SERVING_LAKEHOUSE_ID;
+      }
+      if (!isBlank(current.FABRIC_DATAVERSE_CONNECTION_ID)) {
+        target.fabricDataverseConnectionId = current.FABRIC_DATAVERSE_CONNECTION_ID;
+        facts.dataverseConnectionId = current.FABRIC_DATAVERSE_CONNECTION_ID;
+      }
+      if (!isBlank(current.FABRIC_DATAVERSE_DELTA_FOLDER)) {
+        target.fabricDataverseDeltaFolder = current.FABRIC_DATAVERSE_DELTA_FOLDER;
+        facts.dataverseDeltaFolder = current.FABRIC_DATAVERSE_DELTA_FOLDER;
+      }
+      context.existingAzureDeployment = existing;
+      return existing;
     }
 
     var results = [];
@@ -3263,12 +3429,17 @@
         if (dryRun) return "Fabric workspace and lakehouse would be resolved.";
         if (mode === "broker") return brokerDelegate("fabric-discovery");
         var workspaces = await direct.fabricCollection("workspaces");
+        var requestedWorkspaceId = target.fabricWorkspaceId || facts.workspaceId;
         var workspace = workspaces.filter(function (item) {
-          return (
-            (target.fabricWorkspaceId && item.id === target.fabricWorkspaceId) ||
-            (target.fabricWorkspaceName && item.displayName === target.fabricWorkspaceName)
-          );
+          return sameIdentifier(item.id, requestedWorkspaceId);
         })[0];
+        if (!workspace) {
+          workspace = uniqueNamedResource(
+            workspaces,
+            target.fabricWorkspaceName,
+            "Fabric workspace"
+          );
+        }
         if (!workspace) {
           var capacityId = target.fabricCapacityId;
           if (!isGuid(capacityId)) {
@@ -3299,12 +3470,17 @@
         context.workspace = workspace;
 
         var lakehouses = await direct.fabricCollection("workspaces/" + workspace.id + "/lakehouses");
+        var requestedServingId = target.fabricServingLakehouseId || facts.servingLakehouseId;
         var serving = lakehouses.filter(function (item) {
-          return (
-            (target.fabricServingLakehouseId && item.id === target.fabricServingLakehouseId) ||
-            (target.fabricServingLakehouseName && item.displayName === target.fabricServingLakehouseName)
-          );
+          return sameIdentifier(item.id, requestedServingId);
         })[0];
+        if (!serving) {
+          serving = uniqueNamedResource(
+            lakehouses,
+            target.fabricServingLakehouseName,
+            "Fabric Lakehouse"
+          );
+        }
         if (!serving) {
           var newLakehouse = await direct.fabric("POST", "workspaces/" + workspace.id + "/lakehouses", {
             displayName: target.fabricServingLakehouseName,
@@ -3313,6 +3489,14 @@
           serving = newLakehouse.body;
         }
         context.serving = serving;
+        target.fabricWorkspaceId = workspace.id;
+        target.fabricWorkspaceName = workspace.displayName || target.fabricWorkspaceName;
+        target.fabricServingLakehouseId = serving.id;
+        target.fabricServingLakehouseName = serving.displayName || target.fabricServingLakehouseName;
+        facts.workspaceId = workspace.id;
+        facts.workspaceName = workspace.displayName || target.fabricWorkspaceName;
+        facts.servingLakehouseId = serving.id;
+        facts.servingLakehouseName = serving.displayName || target.fabricServingLakehouseName;
 
         var details = await direct.fabric(
           "GET",
@@ -3441,9 +3625,17 @@
         });
 
         var workspacePath = "workspaces/" + context.workspace.id;
-        var existing = (await direct.fabricCollection(workspacePath + "/notebooks")).filter(function (item) {
-          return item.displayName === notebook.displayName;
+        var notebooks = await direct.fabricCollection(workspacePath + "/notebooks");
+        var existing = notebooks.filter(function (item) {
+          return sameIdentifier(item.id, facts.notebookId);
         })[0];
+        if (!existing) {
+          existing = uniqueNamedResource(
+            notebooks,
+            notebook.displayName,
+            "Fabric notebook"
+          );
+        }
 
         var notebookId;
         try {
@@ -3553,11 +3745,20 @@
           context.apiKeyFingerprint = "sha256:dry-run";
           return "A new API key would be generated.";
         }
+        await discoverExistingAzureDeployment();
         var recovered = await recoverApiKey();
         if (recovered) {
           context.apiKey = recovered;
           context.apiKeyFingerprint = await fingerprint(recovered, cryptoImpl);
-          return "The existing API key was recovered from the Web App (" + context.apiKeyFingerprint + ").";
+          return (
+            "The existing API key was recovered from Web App '" +
+            target.webAppName +
+            "' in Resource Group '" +
+            target.resourceGroup +
+            "' (" +
+            context.apiKeyFingerprint +
+            ")."
+          );
         }
         context.apiKey = generateApiKey(cryptoImpl);
         context.apiKeyFingerprint = await fingerprint(context.apiKey, cryptoImpl);
@@ -4034,6 +4235,7 @@
     function publicContext() {
       return {
         environmentDomain: context.environmentDomain,
+        target: mergeConfiguration(context.target),
         apiBaseUrl: context.apiBaseUrl,
         apiKeyFingerprint: context.apiKeyFingerprint,
         workspaceId: context.workspace ? context.workspace.id : null,
