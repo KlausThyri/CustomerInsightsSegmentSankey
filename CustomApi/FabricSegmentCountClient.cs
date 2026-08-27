@@ -618,7 +618,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     .Select(value => value.Value)
                     .ToList();
             }
-            else if (predicate.Operator != PredicateOperator.IsNotNull &&
+            else if (predicate.Operator != PredicateOperator.IsNull &&
+                predicate.Operator != PredicateOperator.IsNotNull &&
                 predicate.Values.Count > 0)
             {
                 converted.Value = predicate.Values[0].Value;
@@ -746,6 +747,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
         {
             switch (value)
             {
+                case PredicateOperator.IsNull:
+                    return "ISNULL";
                 case PredicateOperator.IsNotNull:
                     return "ISNOTNULL";
                 case PredicateOperator.Equal:

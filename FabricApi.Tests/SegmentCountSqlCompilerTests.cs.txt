@@ -166,6 +166,45 @@ public sealed class SegmentCountSqlCompilerTests
     }
 
     [Fact]
+    public void Compile_NullOperators_UseSqlNullPredicatesWithoutParameters()
+    {
+        var request = Request(new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Contacts",
+            BaseDetail = "PROFILE(contact)",
+            Steps =
+            [
+                new SegmentFilterStep
+                {
+                    Kind = "profile",
+                    Label = "Data presence",
+                    Detail = "ISNULL(emailaddress1) || ISNOTNULL(firstname)",
+                    Condition = new SegmentCondition
+                    {
+                        Kind = "or",
+                        Children =
+                        [
+                            Predicate("emailaddress1", "ISNULL", default),
+                            Predicate("firstname", "ISNOTNULL", default)
+                        ]
+                    }
+                }
+            ]
+        });
+
+        var result = Compile(
+            request,
+            Table("dataverse", "contact", "contactid", "statecode", "emailaddress1", "firstname"));
+
+        Assert.Contains("p.[emailaddress1] IS NULL", result.Sql);
+        Assert.Contains("p.[firstname] IS NOT NULL", result.Sql);
+        Assert.Single(result.Parameters);
+        Assert.Equal(0, result.Parameters[0].Value);
+    }
+
+    [Fact]
     public void Compile_RelationshipRootNot_DistinguishesRelateAndOptional()
     {
         var notPreferred = new SegmentCondition

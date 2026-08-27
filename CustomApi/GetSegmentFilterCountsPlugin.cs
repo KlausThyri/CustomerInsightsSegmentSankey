@@ -501,6 +501,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
     internal enum PredicateOperator
     {
+        IsNull,
         IsNotNull,
         Equal,
         NotEqual,
@@ -532,6 +533,11 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         public override string Describe()
         {
+            if (Operator == PredicateOperator.IsNull)
+            {
+                return "ISNULL(" + Field.Describe() + ")";
+            }
+
             if (Operator == PredicateOperator.IsNotNull)
             {
                 return "ISNOTNULL(" + Field.Describe() + ")";
@@ -868,6 +874,18 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 return grouped;
             }
 
+            if (IsWord("ISNULL"))
+            {
+                tokenizer.Read();
+                Expect(MqlTokenKind.LeftParenthesis, "'(' after ISNULL");
+                var field = ParseFieldReference();
+                Expect(MqlTokenKind.RightParenthesis, "')' after ISNULL");
+                return new PredicateCondition(
+                    field,
+                    PredicateOperator.IsNull,
+                    new List<MqlLiteral>());
+            }
+
             if (IsWord("ISNOTNULL"))
             {
                 tokenizer.Read();
@@ -945,7 +963,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     new[] { ParseLiteral() });
             }
 
-            throw Error("Expected ==, IN or CONTAINS.");
+            throw Error("Expected ==, !=, a comparison operator, IN or CONTAINS.");
         }
 
         private string ReadComparisonOperator()
