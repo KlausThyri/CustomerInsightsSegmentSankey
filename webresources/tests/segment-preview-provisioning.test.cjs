@@ -1701,6 +1701,7 @@ test("direct client discovers the Dataverse shortcut source across continuation 
       lakehouseName: "Dataverse_orga",
       connectionId: "d1",
       deltaLakeFolder,
+      coLocated: false,
       tables: ["contact"]
     }
   );
@@ -1771,7 +1772,7 @@ test("direct client prefers a Dataverse source Lakehouse that contains contact",
   assert.equal(fetchImpl.calls.length, 2);
 });
 
-test("direct client never reuses the serving Lakehouse as the Dataverse source", async () => {
+test("direct client prefers a separate Dataverse source over the serving Lakehouse", async () => {
   const deltaLakeFolder =
     "https://managedlake.dfs.fabric.microsoft.com/dataverse/Dataverse_orga/CDS3";
   const fetchImpl = createFetchMock([
@@ -1815,8 +1816,69 @@ test("direct client never reuses the serving Lakehouse as the Dataverse source",
   );
 
   assert.equal(source.lakehouseId, DATAVERSE_LAKEHOUSE_ID);
+  assert.equal(source.coLocated, false);
   assert.equal(fetchImpl.calls.length, 1);
   assert.equal(fetchImpl.calls[0].url.includes(VALID_TARGET.fabricServingLakehouseId), false);
+});
+
+test("direct client reuses Dataverse shortcuts in the serving Lakehouse as a fallback", async () => {
+  const deltaLakeFolder =
+    "https://managedlake.dfs.fabric.microsoft.com/dataverse/Dataverse_orga/CDS3";
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.url.endsWith(
+          `/workspaces/w1/items/${DATAVERSE_LAKEHOUSE_ID}/shortcuts?parentPath=Tables`
+        ),
+      respond: () => jsonResponse(200, { value: [] })
+    },
+    {
+      match: (request) =>
+        request.url.endsWith(
+          `/workspaces/w1/items/${VALID_TARGET.fabricServingLakehouseId}/shortcuts?parentPath=Tables`
+        ),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              name: "contact",
+              path: "/Tables",
+              target: {
+                type: "Dataverse",
+                dataverse: {
+                  connectionId: "d-serving",
+                  deltaLakeFolder,
+                  environmentDomain: "https://contoso.crm4.dynamics.com/",
+                  tableName: "contact"
+                }
+              }
+            }
+          ]
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  const source = await direct.findDataverseShortcutSource(
+    "w1",
+    [
+      { id: VALID_TARGET.fabricServingLakehouseId, name: "SegmentPreviewServing" },
+      { id: DATAVERSE_LAKEHOUSE_ID, name: "Dataverse_orga" }
+    ],
+    "https://contoso.crm4.dynamics.com",
+    null,
+    VALID_TARGET.fabricServingLakehouseId
+  );
+
+  assert.equal(source.lakehouseId, VALID_TARGET.fabricServingLakehouseId);
+  assert.equal(source.connectionId, "d-serving");
+  assert.equal(source.coLocated, true);
+  assert.deepEqual(source.tables, ["contact"]);
+  assert.equal(fetchImpl.calls.length, 2);
 });
 
 test("direct client waits for contact to appear in a new Dataverse Fabric link", async () => {

@@ -162,7 +162,7 @@ PowerShell orchestrator so progress can be correlated across all three.
 | 1 | `preflight` | Preflight | Pure validation, always runs, never delegated. |
 | 2 | `consent` | Preflight | Interactive sign-in. In broker mode this creates and authorizes the session (§4.1). |
 | 3 | `secret` | Preflight | Reuses the existing Web App API key when present; otherwise the browser generates one **before** any delegation so it can be handed to the service. |
-| 4 | `fabric-discovery` | Fabric | Workspace + serving lakehouse + the separate Dataverse Link-to-Fabric source lakehouse. The serving lakehouse is explicitly excluded from source discovery, even when it already contains Dataverse shortcuts from an earlier run. |
+| 4 | `fabric-discovery` | Fabric | Workspace + serving lakehouse + Dataverse shortcut source. Setup prefers a separate Dataverse Link-to-Fabric Lakehouse, but if none matches it reuses genuine Dataverse shortcuts already present at the Serving Lakehouse root. |
 | 5 | `fabric-notebook` | Fabric | Serving bootstrap notebook. The notebook definition ships inside the solution (`segment-preview-payload.js`); the browser substitutes the resolved ids, calls the Fabric item-definition API directly, creates or updates the schedule, and immediately starts and monitors one execution. |
 | 6 | `azure-infra` | Azure | ARM deployment of the compiled template. Also passes the pinned API package URL and SHA-256 so the deployment copies the package into customer-owned storage (§6.3). The step fails before it touches Azure when no verified package is configured. |
 | 7 | `fabric-permissions` | Fabric | Grants the Web App managed identity access. |
@@ -486,7 +486,13 @@ does not extend it: the browser only asks the Dataverse Custom API for the
 App's own system-assigned managed identity inside the customer's subscription.
 No delegated OneLake write permission is used for them. `OneLake.Read.All` is
 required only to discover the existing Link to Microsoft Fabric shortcut source.
-Discovery reads all Dataverse shortcuts in that source Lakehouse. When the link
+Discovery reads all Dataverse shortcuts in that source Lakehouse. A separate
+Microsoft-created Link-to-Fabric Lakehouse is preferred. If it is absent,
+discovery also checks the Serving Lakehouse as a fallback and accepts it only
+when a root `Tables/contact` shortcut carries matching Dataverse target
+metadata (`environmentDomain`, `connectionId`, and `deltaLakeFolder`). This
+supports existing combined Lakehouses without creating duplicate resources.
+When the link
 or its primary `contact` table is not visible yet, Setup polls the Fabric source
 for up to two minutes so a newly created Microsoft synchronization can complete.
 The API applies the same bounded polling policy when Fabric initially rejects a

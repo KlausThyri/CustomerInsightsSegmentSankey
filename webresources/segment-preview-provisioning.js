@@ -2420,19 +2420,21 @@
       var excluded = isGuid(excludedLakehouseId)
         ? excludedLakehouseId.toLowerCase()
         : "";
+      var requested = isGuid(requestedLakehouseId)
+        ? requestedLakehouseId.toLowerCase()
+        : "";
       var candidates = (lakehouses || []).filter(function (lakehouse) {
-        return lakehouse.id && lakehouse.id.toLowerCase() !== excluded;
+        return lakehouse.id;
       });
-      if (isGuid(requestedLakehouseId)) {
-        var requested = requestedLakehouseId.toLowerCase();
-        candidates = candidates.filter(function (lakehouse) {
-          return lakehouse.id.toLowerCase() === requested;
-        }).concat(
-          candidates.filter(function (lakehouse) {
-            return lakehouse.id.toLowerCase() !== requested;
-          })
-        );
-      }
+      candidates.sort(function (left, right) {
+        function priority(lakehouse) {
+          var id = lakehouse.id.toLowerCase();
+          if (excluded && id === excluded) return 2;
+          if (requested && id === requested) return 0;
+          return 1;
+        }
+        return priority(left) - priority(right);
+      });
       var fallbackSource = null;
       for (var index = 0; index < candidates.length; index++) {
         var lakehouse = candidates[index];
@@ -2485,6 +2487,7 @@
             lakehouseName: lakehouse.name || lakehouse.displayName || lakehouse.id,
             connectionId: source.target.dataverse.connectionId,
             deltaLakeFolder: source.target.dataverse.deltaLakeFolder,
+            coLocated: Boolean(excluded && lakehouse.id.toLowerCase() === excluded),
             tables: Array.from(new Set(sourceTables)).sort()
           };
           if (resolvedSource.tables.indexOf("contact") >= 0) {
@@ -3539,8 +3542,9 @@
             );
         if (!source) {
           var linkMessage =
-            "No Link to Microsoft Fabric source was found for this Dataverse environment after waiting two minutes. " +
-            "In make.powerapps.com select this environment, open Link data, and create a Fabric link for this workspace.";
+            "No Dataverse shortcut source from Link to Microsoft Fabric was found for this environment after waiting two minutes. " +
+            "Setup checked both separate Dataverse Link-to-Fabric Lakehouses and the selected Serving Lakehouse. " +
+            "In make.powerapps.com select this environment, open Link data, and confirm that contact is linked to this Fabric workspace.";
           addManual(linkMessage);
           throw new Error(linkMessage);
         }
@@ -3590,14 +3594,17 @@
         target.fabricDataverseConnectionId = selectedConnection.id;
         target.fabricDataverseLakehouseId = source.lakehouseId;
         target.fabricDataverseDeltaFolder = source.deltaLakeFolder;
+        var sourceLayout = source.coLocated
+          ? "Dataverse shortcuts co-located in the Serving Lakehouse"
+          : "separate Dataverse source Lakehouse '" + source.lakehouseName + "'";
         return (
           "Workspace '" +
           workspace.displayName +
           "', serving lakehouse '" +
           serving.displayName +
-          "', and Dataverse source lakehouse '" +
-          source.lakehouseName +
-          "' resolved."
+          "', and " +
+          sourceLayout +
+          " resolved."
         );
       },
 

@@ -464,7 +464,7 @@ solution is already imported, because it is what carries the setup page.
 | Fabric SQL analytics endpoint | **Detect only** | Read from the lakehouse; provisioning is asynchronous and server-side. |
 | Fabric workspace role for the managed identity | **Full** | `POST workspaces/{id}/roleAssignments` (Contributor). |
 | Fabric bootstrap notebook + daily schedule | **Full** | Created or definition-updated; an existing schedule is preserved. The Setup Center publishes it from the definition shipped in the solution, immediately runs it to register the exported event folders, and waits for completion, so no build machine is involved. |
-| Fabric Dataverse mirror lakehouse | **Detect only** | Created by the Dataverse "Link to Microsoft Fabric" feature. Setup verifies that the primary `contact` source table is present before it deploys dependent resources and never mistakes the separate serving Lakehouse for this source. |
+| Fabric Dataverse mirror lakehouse | **Detect only** | Created by the Dataverse "Link to Microsoft Fabric" feature. Setup prefers a separate source Lakehouse and verifies `contact`. If genuine Dataverse shortcuts already exist at the Serving Lakehouse root, Setup reuses their matching target metadata as a fallback rather than requiring or creating another Lakehouse. |
 | Fabric Dataverse cloud connection | **Detect only** | Requires an interactive OAuth consent in the Fabric portal. |
 | Dataverse managed solution import | **Full** | `ImportSolutionAsync` for a fresh install, `StageAndUpgradeAsync` for an upgrade. |
 | Dataverse environment variable values | **Full** | Created or patched through the Web API. |
@@ -493,7 +493,7 @@ information in its **Preview** view before any change is made.
 | Fabric tenant setting **Service principals can use Fabric APIs** | Fabric tenant admin | Admin-portal-only setting; there is no public write API. |
 | Fabric capacity purchase or resume | Capacity admin | Commercial decision. Once a capacity exists, the workspace creation is automated. |
 | Fabric cloud connection to Dataverse | Workspace admin | The connection is created through an interactive OAuth dialog. Both paths discover an existing one and report clear instructions when none exists. |
-| Dataverse **Link to Microsoft Fabric** and the Journeys export to Fabric | Power Platform / CI-J admin | No documented public API. Setup explicitly distinguishes the separate Dataverse source Lakehouse from the Journeys shortcut in the Serving Lakehouse and shows the exact Fabric shortcut workflow when Journeys data is missing. |
+| Dataverse **Link to Microsoft Fabric** and the Journeys export to Fabric | Power Platform / CI-J admin | No documented public API. Setup distinguishes Dataverse table shortcuts from the Journeys Files shortcut. Dataverse tables may come from a separate source Lakehouse or already exist at the Serving Lakehouse root; Journeys interactions remain under `Files/Customer Insights Journeys`. |
 | Dataverse System Administrator role | Dataverse admin | Required to import a managed solution and to write environment variable values. |
 
 Everything else in the deployment is automated. Neither path claims
