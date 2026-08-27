@@ -725,3 +725,11 @@ installed on the administrator's computer.
 8. System Administrator role in the Dataverse environment.
 
 Items 4–7 can be *detected and reported* by the Setup Center but not performed.
+When the required Journeys event tables are missing, the component action opens
+a persistent in-page guide. It identifies the selected workspace and Serving
+Lakehouse, walks the administrator through **Get data → New shortcut →
+Dataverse**, requires a System Administrator connection, distinguishes the
+**Customer Insights Journeys** folder from the regular CDS2 source, and links to
+the official Microsoft instructions. After the shortcut exists, another
+**Install everything** run automatically executes and monitors the bootstrap
+notebook and verifies the resulting `journeys` tables.

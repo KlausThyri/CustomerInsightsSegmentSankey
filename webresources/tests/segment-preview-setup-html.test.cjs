@@ -404,6 +404,8 @@ test("the broker service URL is configurable and never hard-coded", () => {
         url.includes("azurewebsites.net") ||
         url.includes("api.github.com") ||
         url.includes("raw.githubusercontent.com") ||
+        url.includes("app.fabric.microsoft.com") ||
+        url.includes("learn.microsoft.com") ||
         url.includes("www.w3.org"),
       `the page must not hard-code the endpoint ${url}`
     );
@@ -477,6 +479,27 @@ test("the page short-circuits when it is loaded as the sign-in popup", () => {
 test("the setup page never refers the administrator to a local installer", () => {
   assert.doesNotMatch(html, /Install-SegmentPreview|offline installer|\.ps1\b/i);
 });
+
+test("the setup center explains how to add required Journeys data to Fabric", () => {
+  assert.match(html, /id="journeysExportGuidance"/);
+  assert.match(html, /Get data → New shortcut/);
+  assert.match(html, /Customer Insights Journeys/);
+  assert.match(html, /System Administrator/);
+  assert.match(html, /Files\/Customer Insights Journeys/);
+  assert.match(
+    html,
+    /learn\.microsoft\.com\/en-us\/dynamics365\/customer-insights\/journeys\/fabric-integration/
+  );
+  assert.match(html, /target="_blank" rel="noopener noreferrer"/);
+  assert.match(html, /id="closeJourneysExportGuidanceButton"/);
+  const code = inlineScripts(html).join("\n");
+  assert.match(code, /item\.id === "journeys-events" &&\s*item\.action === "run-fabric-bootstrap"/);
+  assert.match(code, /action === "run-fabric-bootstrap"[\s\S]*journeysExportGuidance\.scrollIntoView/);
+  assert.match(code, /journeysExportGuidanceHeading\.focus/);
+  assert.match(code, /\(state\.journeysGuidanceTrigger \|\| refreshButton\)\.focus/);
+  assert.match(code, /journeysEnvironmentHost\.textContent = window\.location\.hostname/);
+});
+
 test("the inline script returns immediately when it is the sign-in popup", () => {
   const code = inlineScripts(html).slice(-1)[0];
   let lookups = 0;

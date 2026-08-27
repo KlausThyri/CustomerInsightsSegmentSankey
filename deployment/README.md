@@ -471,7 +471,7 @@ solution is already imported, because it is what carries the setup page.
 | Dataverse publish | **Full** | `PublishAllXmlAsync` with a `PublishAllXml` fallback. |
 | Dataverse shortcut provisioning | **Full** | The `verify` step reads the setup status, and when it still offers `provision-shortcuts` it calls that idempotent action itself and re-reads the status, so one **Install everything** run leaves nothing to press. The shortcuts are created server-side by the Web App's managed identity, so the browser needs no extra Fabric permission. |
 | Fabric tenant setting for service principals | **None** | No public write API exists. |
-| Customer Insights - Journeys export to Fabric | **None** | No public provisioning API exists. |
+| Customer Insights - Journeys export to Fabric | **Guided** | No public provisioning API exists. When the required export is missing, Setup shows the selected workspace and Serving Lakehouse plus the exact **Get data → New shortcut → Dataverse** steps, the required System Administrator credential, interaction-table selection, links to Fabric and Microsoft's documentation, and the result it will verify. |
 | Setup Center bootstrap - direct mode (primary) | **Guided** | Registered once per environment in **your own tenant** through **Connect this environment**, which supplies the exact redirect URI, permissions and portal links and writes the client id back. Entra has no API to create an app registration before an app registration exists, so the portal clicks remain — but they happen in the browser, launched from the setup page. |
 | Setup Center bootstrap - broker mode (optional) | **Full, once a service exists** | Paste the HTTPS service URL into the optional panel of **Connect this environment**. Sign-in happens in a pop-up on the service; nothing is registered per environment. Requires a hosted service, which does not exist yet (contract §7) and is never required. |
 
@@ -493,7 +493,7 @@ information in its **Preview** view before any change is made.
 | Fabric tenant setting **Service principals can use Fabric APIs** | Fabric tenant admin | Admin-portal-only setting; there is no public write API. |
 | Fabric capacity purchase or resume | Capacity admin | Commercial decision. Once a capacity exists, the workspace creation is automated. |
 | Fabric cloud connection to Dataverse | Workspace admin | The connection is created through an interactive OAuth dialog. Both paths discover an existing one and report clear instructions when none exists. |
-| Dataverse **Link to Microsoft Fabric** and the Journeys export to Fabric | Power Platform / CI-J admin | Enabled in the maker and Customer Insights portals; no documented public API. |
+| Dataverse **Link to Microsoft Fabric** and the Journeys export to Fabric | Power Platform / CI-J admin | No documented public API. Setup explicitly distinguishes the separate Dataverse source Lakehouse from the Journeys shortcut in the Serving Lakehouse and shows the exact Fabric shortcut workflow when Journeys data is missing. |
 | Dataverse System Administrator role | Dataverse admin | Required to import a managed solution and to write environment variable values. |
 
 Everything else in the deployment is automated. Neither path claims
