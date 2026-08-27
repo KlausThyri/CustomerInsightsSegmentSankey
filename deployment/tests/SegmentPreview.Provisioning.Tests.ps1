@@ -745,6 +745,14 @@ Describe 'Browser-only notebook and API deployment' {
         $source | Should -Match '"tableName"\s*:\s*table_name'
     }
 
+    It 'does not depend on Spark SQL registry tables to provision shortcuts' {
+        $source = Get-Content -LiteralPath (Join-Path $script:BrowserRoot 'Fabric\bootstrap-events.py') -Raw
+        $source | Should -Not -Match 'spark\.sql'
+        $source | Should -Not -Match 'saveAsTable'
+        $source | Should -Not -Match 'createDataFrame'
+        $source | Should -Match 'Bootstrap completed with incomplete shortcuts'
+    }
+
     It 'publishes the notebook from the browser through the Fabric definition API' {
         $script:Engine | Should -Match '/updateDefinition\?updateMetadata='
         $script:Engine | Should -Match 'definition\.parts\.some'

@@ -22,7 +22,6 @@ from datetime import datetime, timezone
 import re
 
 from notebookutils import mssparkutils
-from pyspark.sql import functions as F
 import requests
 
 EVENT_SOURCE_ROOT = "Files/Customer Insights Journeys"
@@ -57,8 +56,6 @@ METADATA_TABLES = {
     "TargetMetadata",
 }
 
-spark.sql(f"CREATE DATABASE IF NOT EXISTS `{EVENT_SCHEMA}`")
-spark.sql(f"CREATE DATABASE IF NOT EXISTS `{DATAVERSE_SCHEMA}`")
 fabric_token = mssparkutils.credentials.getToken(
     "https://api.fabric.microsoft.com"
 )
@@ -67,15 +64,18 @@ headers = {
     "Content-Type": "application/json",
 }
 DIAGNOSTIC_PATH = "Files/_segment_preview/bootstrap-status.txt"
-mssparkutils.fs.mkdirs("Files/_segment_preview")
 
 
 def write_diagnostic(message):
-    mssparkutils.fs.put(
-        DIAGNOSTIC_PATH,
-        f"{datetime.now(timezone.utc).isoformat()} {message}",
-        True,
-    )
+    try:
+        mssparkutils.fs.mkdirs("Files/_segment_preview")
+        mssparkutils.fs.put(
+            DIAGNOSTIC_PATH,
+            f"{datetime.now(timezone.utc).isoformat()} {message}",
+            True,
+        )
+    except Exception as error:
+        print(f"Could not write bootstrap diagnostic: {error}")
 
 
 write_diagnostic("Starting Journeys event folder discovery")
@@ -102,22 +102,27 @@ def find_event_folders():
             except Exception:
                 continue
         if event_folders:
-            return event_folders
+            return event_folders, None
         inspected.append(f"{source_root}: no Delta event folders")
 
-    raise RuntimeError(
+    return [], (
         "No Customer Insights - Journeys Delta event folders were found. "
         "Enable the Journeys export to Fabric and verify its shortcut. Inspected: "
         + "; ".join(inspected)
     )
 
 
-event_folders = find_event_folders()
-write_diagnostic(
-    f"Discovered {len(event_folders)} Journeys Delta event folders under "
-    f"{event_folders[0][1]}"
-)
 event_results = []
+event_folders, event_discovery_error = find_event_folders()
+if event_discovery_error:
+    event_results.append((None, None, "failed", event_discovery_error))
+    write_diagnostic(event_discovery_error)
+else:
+    write_diagnostic(
+        f"Discovered {len(event_folders)} Journeys Delta event folders under "
+        f"{event_folders[0][1]}"
+    )
+
 for event_name, source_root in event_folders:
     try:
         response = requests.post(
@@ -141,14 +146,6 @@ for event_name, source_root in event_folders:
     except Exception as error:
         event_results.append((event_name, event_name, "failed", str(error)))
 
-event_registry = spark.createDataFrame(
-    event_results,
-    "event_name string, table_name string, status string, error string",
-).withColumn("updated_at", F.lit(datetime.now(timezone.utc)))
-
-event_registry.write.mode("overwrite").option(
-    "overwriteSchema", "true"
-).saveAsTable(f"{EVENT_SCHEMA}._event_registry")
 write_diagnostic(
     f"Registered {len(event_results)} Journeys event table shortcuts"
 )
@@ -226,28 +223,24 @@ for shortcut in source_shortcuts:
             (table_name, table_name, "failed", str(error))
         )
 
-dataverse_registry = spark.createDataFrame(
-    dataverse_results,
-    "source_table string, table_name string, status string, error string",
-).withColumn("updated_at", F.lit(datetime.now(timezone.utc)))
-
-dataverse_registry.write.mode("overwrite").option(
-    "overwriteSchema", "true"
-).saveAsTable(f"{DATAVERSE_SCHEMA}._shortcut_registry")
 write_diagnostic(
     f"Processed {len(dataverse_results)} Dataverse table shortcuts"
 )
 
-event_failures = event_registry.filter("status = 'failed'").count()
-dataverse_failures = dataverse_registry.filter("status = 'failed'").count()
-display(event_registry.orderBy("event_name"))
-display(dataverse_registry.orderBy("source_table"))
+event_failures = sum(1 for result in event_results if result[2] == "failed")
+dataverse_failures = sum(
+    1 for result in dataverse_results if result[2] == "failed"
+)
+print("Journeys results:", event_results)
+print("Dataverse results:", dataverse_results)
 if event_failures or dataverse_failures:
-    raise RuntimeError(
+    write_diagnostic(
+        "Bootstrap completed with incomplete shortcuts: "
         f"{event_failures} Journeys event folder(s) and "
         f"{dataverse_failures} Dataverse shortcut(s) could not be registered"
     )
-write_diagnostic("Bootstrap completed successfully")
+else:
+    write_diagnostic("Bootstrap completed successfully")
 
 # METADATA ********************
 

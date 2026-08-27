@@ -498,6 +498,10 @@ The bootstrap creates the query-facing `Tables/dataverse/*` aliases as direct
 Dataverse shortcuts using this validated target metadata. It does not create a
 OneLake shortcut back into the same Lakehouse, so separate and co-located source
 layouts follow the same idempotent path.
+Shortcut creation itself is REST-based and does not depend on Spark SQL
+databases or registry tables. Individual shortcut failures are retained in the
+notebook diagnostic, while the mandatory final API verification remains the
+authoritative installation gate and reports the missing component to the user.
 When the link
 or its primary `contact` table is not visible yet, Setup polls the Fabric source
 for up to two minutes so a newly created Microsoft synchronization can complete.
