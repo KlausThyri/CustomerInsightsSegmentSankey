@@ -43,6 +43,7 @@
   if (typeof module === "object" && module && module.exports) {
     module.exports = api;
   }
+
   if (root) {
     root.SegmentPreviewProvisioning = api;
   }
@@ -543,10 +544,30 @@
     if (absent.length) {
       throw new Error("The bootstrap notebook needs: " + absent.join(", ") + ".");
     }
-    var result = applyNotebookParameters(notebook.content, supplied);
+    var parameterValues = {};
+    expected.forEach(function (name) {
+      parameterValues[name] = supplied[name];
+    });
+    var result = applyNotebookParameters(notebook.content, parameterValues);
     if (result.missing.length) {
       throw new Error("The bootstrap notebook does not declare: " + result.missing.join(", ") + ".");
     }
+    result.content.metadata = result.content.metadata || {};
+    result.content.metadata.dependencies = result.content.metadata.dependencies || {};
+    result.content.metadata.dependencies.lakehouse = {
+      default_lakehouse: String(supplied.SERVING_LAKEHOUSE_ID),
+      default_lakehouse_name: String(
+        supplied.SERVING_LAKEHOUSE_NAME || supplied.SERVING_LAKEHOUSE_ID
+      ),
+      default_lakehouse_workspace_id: String(supplied.WORKSPACE_ID),
+      known_lakehouses: [
+        {
+          id: String(supplied.SERVING_LAKEHOUSE_ID),
+          name: String(supplied.SERVING_LAKEHOUSE_NAME || supplied.SERVING_LAKEHOUSE_ID),
+          workspace_id: String(supplied.WORKSPACE_ID)
+        }
+      ]
+    };
     var parts = [
       {
         path: notebook.path || "notebook-content.ipynb",
@@ -675,6 +696,7 @@
 
   /** Remedial action the setup Custom API offers for the Fabric shortcuts. */
   var PROVISION_SHORTCUTS_ACTION = "provision-shortcuts";
+  var JOURNEYS_EVENTS_COMPONENT_ID = "journeys-events";
 
   /**
    * True when the reported setup status still offers to install missing
@@ -688,6 +710,14 @@
     return components.some(function (component) {
       return component && component.action === PROVISION_SHORTCUTS_ACTION;
     });
+  }
+
+  function missingRequiredJourneysEvents(status) {
+    if (!status || !Array.isArray(status.components)) return false;
+    var component = status.components.find(function (entry) {
+      return entry && entry.id === JOURNEYS_EVENTS_COMPONENT_ID;
+    });
+    return Boolean(component && component.state !== "ready");
   }
 
   function isPendingDataverseTableError(error) {
@@ -2359,11 +2389,15 @@
       workspaceId,
       lakehouses,
       environmentUrl,
-      requestedLakehouseId
+      requestedLakehouseId,
+      excludedLakehouseId
     ) {
       var expectedDomain = environmentDomain(environmentUrl);
+      var excluded = isGuid(excludedLakehouseId)
+        ? excludedLakehouseId.toLowerCase()
+        : "";
       var candidates = (lakehouses || []).filter(function (lakehouse) {
-        return lakehouse.id;
+        return lakehouse.id && lakehouse.id.toLowerCase() !== excluded;
       });
       if (isGuid(requestedLakehouseId)) {
         var requested = requestedLakehouseId.toLowerCase();
@@ -2458,7 +2492,8 @@
           workspaceId,
           lakehouses,
           environmentUrl,
-          requestedLakehouseId
+          requestedLakehouseId,
+          waitSettings.excludedLakehouseId
         );
         var available = latestSource && Array.isArray(latestSource.tables)
           ? latestSource.tables
@@ -2750,6 +2785,44 @@
       throw new Error("The Fabric operation did not finish within the expected time.");
     }
 
+    async function runNotebookJob(workspaceId, notebookId) {
+      var instancePath =
+        "workspaces/" +
+        encodeURIComponent(workspaceId) +
+        "/items/" +
+        encodeURIComponent(notebookId) +
+        "/jobs/instances?jobType=Execute";
+      var started = await fabric("POST", instancePath);
+      var location = header(started, "Location") || header(started, "location");
+      if (!location && started.body && started.body.id) {
+        location =
+          "workspaces/" +
+          encodeURIComponent(workspaceId) +
+          "/items/" +
+          encodeURIComponent(notebookId) +
+          "/jobs/instances/" +
+          encodeURIComponent(started.body.id);
+      }
+      if (!location) {
+        throw new Error("Fabric started the bootstrap notebook without returning a job location.");
+      }
+
+      for (var poll = 0; poll < 180; poll++) {
+        var snapshot = await fabric("GET", location);
+        var status = String((snapshot.body && snapshot.body.status) || "");
+        if (/^(Completed|Deduped)$/i.test(status)) return snapshot.body;
+        if (/^(Failed|Cancelled)$/i.test(status)) {
+          var failure =
+            (snapshot.body && snapshot.body.failureReason && snapshot.body.failureReason.message) ||
+            (snapshot.body && snapshot.body.error && snapshot.body.error.message) ||
+            status;
+          throw new Error("The Fabric bootstrap notebook finished with state '" + failure + "'.");
+        }
+        await delay(5000, timer);
+      }
+      throw new Error("The Fabric bootstrap notebook did not finish within 15 minutes.");
+    }
+
     function header(response, name) {
       if (!response || !response.headers || typeof response.headers.get !== "function") return null;
       return response.headers.get(name) || null;
@@ -2872,6 +2945,7 @@
       arm: arm,
       fabric: fabric,
       fabricResult: fabricResult,
+      runNotebookJob: runNotebookJob,
       fabricCollection: fabricCollection,
       listSubscriptions: listSubscriptions,
       listCapacities: listCapacities,
@@ -3269,13 +3343,15 @@
               lakehouses,
               "https://" + context.environmentDomain,
               target.fabricDataverseLakehouseId,
-              ["contact"]
+              ["contact"],
+              { excludedLakehouseId: serving.id }
             )
           : await direct.findDataverseShortcutSource(
               workspace.id,
               lakehouses,
               "https://" + context.environmentDomain,
-              target.fabricDataverseLakehouseId
+              target.fabricDataverseLakehouseId,
+              serving.id
             );
         if (!source) {
           var linkMessage =
@@ -3360,6 +3436,7 @@
         var definition = buildNotebookDefinition(notebook, {
           WORKSPACE_ID: context.workspace.id,
           SERVING_LAKEHOUSE_ID: context.serving.id,
+          SERVING_LAKEHOUSE_NAME: context.serving.displayName,
           DATAVERSE_LAKEHOUSE_ID: mirrorId
         });
 
@@ -3405,51 +3482,70 @@
         }
         context.notebookId = notebookId;
 
-        if (!notebook.schedule) {
-          return "Bootstrap notebook '" + notebook.displayName + "' published.";
+        var scheduleMessage = "Bootstrap notebook '" + notebook.displayName + "' published.";
+        if (notebook.schedule) {
+          var schedulePath = workspacePath + "/items/" + notebookId + "/jobs/" +
+            (notebook.schedule.jobType || "Execute") + "/schedules";
+          var schedules = await direct.fabricCollection(schedulePath);
+          if (schedules.length) {
+            var existingSchedule = schedules[0];
+            if (!existingSchedule.id) {
+              throw new Error("Fabric returned an existing notebook schedule without an id.");
+            }
+            var desiredSchedule = {
+              enabled: notebook.schedule.enabled !== false,
+              configuration: notebook.schedule.configuration
+            };
+            var scheduleMatches =
+              existingSchedule.enabled === desiredSchedule.enabled &&
+              JSON.stringify(existingSchedule.configuration || null) ===
+                JSON.stringify(desiredSchedule.configuration || null);
+            if (!scheduleMatches) {
+              await direct.fabric(
+                "PATCH",
+                schedulePath + "/" + encodeURIComponent(existingSchedule.id),
+                desiredSchedule
+              );
+              scheduleMessage =
+                "Bootstrap notebook '" + notebook.displayName + "' published; existing schedule updated.";
+            } else {
+              scheduleMessage =
+                "Bootstrap notebook '" + notebook.displayName + "' published; existing schedule kept.";
+            }
+          } else {
+            try {
+              await direct.fabric("POST", schedulePath, {
+                enabled: notebook.schedule.enabled !== false,
+                configuration: notebook.schedule.configuration
+              });
+            } catch (error) {
+              if (/insufficient scopes|does not have sufficient scopes/i.test(String(error && error.message))) {
+                var schedulePermissionMessage =
+                  "Fabric rejected the notebook schedule for insufficient scopes. Add the delegated Power BI Service permission Item.Execute.All to the tenant application, grant admin consent, then close and reopen this setup page before installing again.";
+                addManual(schedulePermissionMessage);
+                throw new Error(schedulePermissionMessage);
+              }
+              throw error;
+            }
+            scheduleMessage =
+              "Bootstrap notebook '" + notebook.displayName + "' published and scheduled.";
+          }
         }
 
-        var schedulePath = workspacePath + "/items/" + notebookId + "/jobs/" +
-          (notebook.schedule.jobType || "Execute") + "/schedules";
-        var schedules = await direct.fabricCollection(schedulePath);
-        if (schedules.length) {
-          var existingSchedule = schedules[0];
-          if (!existingSchedule.id) {
-            throw new Error("Fabric returned an existing notebook schedule without an id.");
-          }
-          var desiredSchedule = {
-            enabled: notebook.schedule.enabled !== false,
-            configuration: notebook.schedule.configuration
-          };
-          var scheduleMatches =
-            existingSchedule.enabled === desiredSchedule.enabled &&
-            JSON.stringify(existingSchedule.configuration || null) ===
-              JSON.stringify(desiredSchedule.configuration || null);
-          if (!scheduleMatches) {
-            await direct.fabric(
-              "PATCH",
-              schedulePath + "/" + encodeURIComponent(existingSchedule.id),
-              desiredSchedule
-            );
-            return "Bootstrap notebook '" + notebook.displayName + "' published; existing schedule updated.";
-          }
-          return "Bootstrap notebook '" + notebook.displayName + "' published; existing schedule kept.";
-        }
         try {
-          await direct.fabric("POST", schedulePath, {
-            enabled: notebook.schedule.enabled !== false,
-            configuration: notebook.schedule.configuration
-          });
+          await direct.runNotebookJob(context.workspace.id, notebookId);
         } catch (error) {
-          if (/insufficient scopes|does not have sufficient scopes/i.test(String(error && error.message))) {
-            var schedulePermissionMessage =
-              "Fabric rejected the notebook schedule for insufficient scopes. Add the delegated Power BI Service permission Item.Execute.All to the tenant application, grant admin consent, then close and reopen this setup page before installing again.";
-            addManual(schedulePermissionMessage);
-            throw new Error(schedulePermissionMessage);
+          if (/insufficient scopes|does not have sufficient scopes|HTTP 401|HTTP 403/i.test(
+            String(error && error.message)
+          )) {
+            var executionPermissionMessage =
+              "Fabric rejected the initial bootstrap notebook run. Add the delegated Power BI Service permission Item.Execute.All, grant admin consent, and confirm that your user can run notebooks in this workspace.";
+            addManual(executionPermissionMessage);
+            throw new Error(executionPermissionMessage);
           }
           throw error;
         }
-        return "Bootstrap notebook '" + notebook.displayName + "' published and scheduled.";
+        return scheduleMessage + " Initial run completed.";
       },
 
       secret: async function () {
@@ -3870,6 +3966,14 @@
         }
         context.status = status;
         context.shortcutsProvisioned = provisioned;
+        if (missingRequiredJourneysEvents(status)) {
+          var journeysMessage =
+            "Required Customer Insights - Journeys event tables are missing from the Serving Lakehouse. " +
+            "Enable the Customer Insights - Journeys export to Fabric, confirm that its Delta event folders are available under " +
+            "'Files/Customer Insights Journeys', run the 'Customer Insights Serving Bootstrap' notebook, and retry verification.";
+          addManual(journeysMessage);
+          throw new Error(journeysMessage);
+        }
         return (
           "Setup status: " +
           (status.overallState || "unknown") +
@@ -4114,9 +4218,11 @@
     resolveApiPackage: resolveApiPackage,
     packageBlobName: packageBlobName,
     needsShortcutProvisioning: needsShortcutProvisioning,
+    missingRequiredJourneysEvents: missingRequiredJourneysEvents,
     isPendingDataverseTableError: isPendingDataverseTableError,
     provisionShortcutsWithRetry: provisionShortcutsWithRetry,
     PROVISION_SHORTCUTS_ACTION: PROVISION_SHORTCUTS_ACTION,
+    JOURNEYS_EVENTS_COMPONENT_ID: JOURNEYS_EVENTS_COMPONENT_ID,
     PACKAGE_CONTAINER: PACKAGE_CONTAINER,
     API_KEY_SETTING: API_KEY_SETTING,
     RUN_FROM_PACKAGE_SETTING: RUN_FROM_PACKAGE_SETTING,

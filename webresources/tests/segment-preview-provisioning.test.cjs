@@ -1629,6 +1629,54 @@ test("direct client prefers a Dataverse source Lakehouse that contains contact",
   assert.equal(fetchImpl.calls.length, 2);
 });
 
+test("direct client never reuses the serving Lakehouse as the Dataverse source", async () => {
+  const deltaLakeFolder =
+    "https://managedlake.dfs.fabric.microsoft.com/dataverse/Dataverse_orga/CDS3";
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.url.endsWith(
+          `/workspaces/w1/items/${DATAVERSE_LAKEHOUSE_ID}/shortcuts?parentPath=Tables`
+        ),
+      respond: () =>
+        jsonResponse(200, {
+          value: [
+            {
+              name: "contact",
+              target: {
+                dataverse: {
+                  connectionId: "d-source",
+                  deltaLakeFolder,
+                  environmentDomain: "https://contoso.crm4.dynamics.com/"
+                }
+              }
+            }
+          ]
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  const source = await direct.findDataverseShortcutSource(
+    "w1",
+    [
+      { id: VALID_TARGET.fabricServingLakehouseId, name: "SegmentPreviewServing" },
+      { id: DATAVERSE_LAKEHOUSE_ID, name: "Dataverse_orga" }
+    ],
+    "https://contoso.crm4.dynamics.com",
+    VALID_TARGET.fabricServingLakehouseId,
+    VALID_TARGET.fabricServingLakehouseId
+  );
+
+  assert.equal(source.lakehouseId, DATAVERSE_LAKEHOUSE_ID);
+  assert.equal(fetchImpl.calls.length, 1);
+  assert.equal(fetchImpl.calls[0].url.includes(VALID_TARGET.fabricServingLakehouseId), false);
+});
+
 test("direct client waits for contact to appear in a new Dataverse Fabric link", async () => {
   const deltaLakeFolder =
     "https://managedlake.dfs.fabric.microsoft.com/dataverse/Dataverse_orga/CDS3";
@@ -2731,6 +2779,11 @@ function directHarness(options = {}) {
       const result = await this.fabric("GET", "operations/op-1/result");
       return result.body;
     },
+    async runNotebookJob(workspaceId, notebookId) {
+      calls.push({ kind: "runNotebookJob", workspaceId, notebookId });
+      if (options.notebookRunFails) throw new Error(options.notebookRunFails);
+      return { status: "Completed" };
+    },
     async arm(method, path, body, apiVersion) {
       calls.push({ kind: "arm", method, path, body, apiVersion });
       return { body: {} };
@@ -3012,6 +3065,18 @@ test("buildNotebookDefinition emits an InlineBase64 part with every constant app
     payload.notebook.platform
   );
   const decoded = JSON.parse(Buffer.from(notebookPart.payload, "base64").toString("utf8"));
+  assert.deepEqual(decoded.metadata.dependencies.lakehouse, {
+    default_lakehouse: VALID_TARGET.fabricServingLakehouseId,
+    default_lakehouse_name: VALID_TARGET.fabricServingLakehouseId,
+    default_lakehouse_workspace_id: VALID_TARGET.fabricWorkspaceId,
+    known_lakehouses: [
+      {
+        id: VALID_TARGET.fabricServingLakehouseId,
+        name: VALID_TARGET.fabricServingLakehouseId,
+        workspace_id: VALID_TARGET.fabricWorkspaceId
+      }
+    ]
+  });
   const source = decoded.cells
     .filter((cell) => cell.cell_type === "code")
     .flatMap((cell) => cell.source)
@@ -3061,9 +3126,29 @@ test("the direct run publishes the notebook through the Fabric definition API", 
   assert.ok(schedule, "the notebook must be scheduled");
   assert.equal(schedule.body.enabled, true);
   assert.deepEqual(schedule.body.configuration, payload.notebook.schedule.configuration);
+  const initialRun = direct.calls.find((call) => call.kind === "runNotebookJob");
+  assert.deepEqual(initialRun, {
+    kind: "runNotebookJob",
+    workspaceId: VALID_TARGET.fabricWorkspaceId,
+    notebookId: "cccccccc-dddd-eeee-ffff-000000000000"
+  });
   const step = result.results.find((entry) => entry.id === "fabric-notebook");
   assert.equal(step.status, "succeeded");
   assert.match(step.message, /published and scheduled/);
+  assert.match(step.message, /Initial run completed/);
+});
+
+test("a failed initial notebook run stops installation", async () => {
+  const direct = directHarness({
+    notebookRunFails: "The Fabric bootstrap notebook finished with state 'Missing export'."
+  });
+  const { orchestrator } = directOrchestrator({ direct });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "fabric-notebook");
+  assert.match(result.results.find((entry) => entry.id === "fabric-notebook").message, /Missing export/);
 });
 
 test("an existing notebook is updated in place instead of duplicated", async () => {
@@ -4088,6 +4173,19 @@ const SHORTCUTS_READY = {
   ]
 };
 
+const JOURNEYS_EVENTS_MISSING = {
+  overallState: "partial",
+  components: [
+    { id: "dataverse-shortcuts", name: "Dataverse shortcuts", state: "ready" },
+    {
+      id: "journeys-events",
+      name: "Journeys event tables",
+      state: "notConfigured",
+      action: "run-fabric-bootstrap"
+    }
+  ]
+};
+
 test("needsShortcutProvisioning only reacts to the remedial action the API offers", () => {
   assert.equal(engine.needsShortcutProvisioning(SHORTCUTS_MISSING), true);
   assert.equal(engine.needsShortcutProvisioning(SHORTCUTS_READY), false);
@@ -4099,6 +4197,33 @@ test("needsShortcutProvisioning only reacts to the remedial action the API offer
     false
   );
   assert.equal(engine.PROVISION_SHORTCUTS_ACTION, "provision-shortcuts");
+});
+
+test("missingRequiredJourneysEvents treats a reported non-ready event component as blocking", () => {
+  assert.equal(engine.missingRequiredJourneysEvents(JOURNEYS_EVENTS_MISSING), true);
+  assert.equal(
+    engine.missingRequiredJourneysEvents({
+      components: [{ id: "journeys-events", state: "ready" }]
+    }),
+    false
+  );
+  assert.equal(engine.missingRequiredJourneysEvents({ components: [] }), false);
+});
+
+test("verification fails when required Journeys event tables are absent", async () => {
+  const dataverse = dataverseHarness({ responses: [JOURNEYS_EVENTS_MISSING] });
+  const { orchestrator } = directOrchestrator({ dataverse });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "verify");
+  assert.match(
+    result.results.find((entry) => entry.id === "verify").message,
+    /Required Customer Insights - Journeys event tables are missing/
+  );
+  assert.equal(result.manual.length, 1);
+  assert.match(result.manual[0], /Customer Insights Serving Bootstrap/);
 });
 
 test("shortcut provisioning retries while Dataverse is exposing its Fabric table", async () => {
@@ -4295,6 +4420,41 @@ test("the Fabric client resolves a 202 through the operations endpoint", async (
   const item = await client.fabricResult(accepted);
   assert.equal(item.id, "notebook-9");
   assert.ok(requests.some((entry) => /operations\/op-9\/result/.test(entry.url)));
+});
+
+test("the Fabric client starts and waits for a notebook job instance", async () => {
+  const requests = [];
+  const location =
+    "https://api.fabric.microsoft.com/v1/workspaces/w/items/n/jobs/instances/job-1";
+  const client = engine.createDirectClient({
+    fetch: async (url, init) => {
+      requests.push({ url, method: init.method });
+      if (init.method === "POST") {
+        return {
+          ok: true,
+          status: 202,
+          headers: {
+            get: (name) => (String(name).toLowerCase() === "location" ? location : null)
+          },
+          text: async () => ""
+        };
+      }
+      return jsonResponse(200, { status: "Completed" });
+    },
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  const result = await client.runNotebookJob("w", "n");
+
+  assert.equal(result.status, "Completed");
+  assert.deepEqual(requests, [
+    {
+      url: "https://api.fabric.microsoft.com/v1/workspaces/w/items/n/jobs/instances?jobType=Execute",
+      method: "POST"
+    },
+    { url: location, method: "GET" }
+  ]);
 });
 
 test("the Fabric client surfaces a failed long running operation", async () => {

@@ -463,8 +463,8 @@ solution is already imported, because it is what carries the setup page.
 | Fabric serving lakehouse | **Full** | Reused or created. |
 | Fabric SQL analytics endpoint | **Detect only** | Read from the lakehouse; provisioning is asynchronous and server-side. |
 | Fabric workspace role for the managed identity | **Full** | `POST workspaces/{id}/roleAssignments` (Contributor). |
-| Fabric bootstrap notebook + daily schedule | **Full** | Created or definition-updated; an existing schedule is preserved. The Setup Center publishes it from the definition shipped in the solution, so no build machine is involved. |
-| Fabric Dataverse mirror lakehouse | **Detect only** | Created by the Dataverse "Link to Microsoft Fabric" feature. Setup verifies that the primary `contact` source table is present before it deploys dependent resources. |
+| Fabric bootstrap notebook + daily schedule | **Full** | Created or definition-updated; an existing schedule is preserved. The Setup Center publishes it from the definition shipped in the solution, immediately runs it to register the exported event folders, and waits for completion, so no build machine is involved. |
+| Fabric Dataverse mirror lakehouse | **Detect only** | Created by the Dataverse "Link to Microsoft Fabric" feature. Setup verifies that the primary `contact` source table is present before it deploys dependent resources and never mistakes the separate serving Lakehouse for this source. |
 | Fabric Dataverse cloud connection | **Detect only** | Requires an interactive OAuth consent in the Fabric portal. |
 | Dataverse managed solution import | **Full** | `ImportSolutionAsync` for a fresh install, `StageAndUpgradeAsync` for an upgrade. |
 | Dataverse environment variable values | **Full** | Created or patched through the Web API. |
@@ -550,7 +550,10 @@ Dataverse environment variable value.
 Open **Customer Insights - Journeys > Settings > Overview > Segment Preview**.
 The Setup Center checks Dataverse, Azure, managed identity, Fabric SQL, Dataverse
 shortcuts, and Journeys event tables, and can install missing Dataverse shortcuts
-idempotently.
+idempotently. Journeys event tables are required for behavioral and
+`Interaction(...)` queries. If they are absent, verification fails until the
+Customer Insights - Journeys export is enabled and the serving bootstrap notebook
+has registered the exported Delta folders.
 
 From a shell:
 

@@ -673,7 +673,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.35">v1.1.0.35</span>
+          <span class="app-version" aria-label="Version 1.1.0.36">v1.1.0.36</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -931,9 +931,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.35"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.35"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.35"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.36"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.36"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.36"></script>
 
   <script>
     (() => {
@@ -972,7 +972,7 @@
         "configure-dataverse": "View configuration guidance",
         "configure-azure": "View Azure guidance",
         "configure-permissions": "View permission guidance",
-        "run-fabric-bootstrap": "View Fabric guidance"
+        "run-fabric-bootstrap": "Complete required Fabric setup"
       };
       const guidance = {
         "configure-dataverse":
@@ -982,7 +982,7 @@
         "configure-permissions":
           "Grant the Web App Managed Identity access to the Fabric workspace and permission to use the configured Dataverse cloud connection.",
         "run-fabric-bootstrap":
-          "Run the supplied Fabric bootstrap notebook against the Serving Lakehouse, then refresh this status page."
+          "Behavioral and Interaction queries require the Journeys event tables. Enable the Customer Insights - Journeys export to Fabric, confirm that its Delta event folders are available under 'Files/Customer Insights Journeys' in the Serving Lakehouse, run the supplied 'Customer Insights Serving Bootstrap' notebook, then refresh this status page."
       };
       const icons = {
         check: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 12 4 4L19 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -1818,7 +1818,10 @@
         header.append(name, badge);
         const message = document.createElement("p");
         message.className = "message";
-        message.textContent = component.message;
+        message.textContent =
+          component.id === "journeys-events" && component.state !== "ready"
+            ? "Required for behavioral and Interaction queries. " + component.message
+            : component.message;
         main.append(header, message);
         if (component.detail) {
           const details = document.createElement("details");

@@ -162,13 +162,13 @@ PowerShell orchestrator so progress can be correlated across all three.
 | 1 | `preflight` | Preflight | Pure validation, always runs, never delegated. |
 | 2 | `consent` | Preflight | Interactive sign-in. In broker mode this creates and authorizes the session (§4.1). |
 | 3 | `secret` | Preflight | Reuses the existing Web App API key when present; otherwise the browser generates one **before** any delegation so it can be handed to the service. |
-| 4 | `fabric-discovery` | Fabric | Workspace + serving lakehouse. |
-| 5 | `fabric-notebook` | Fabric | Serving bootstrap notebook. The notebook definition ships inside the solution (`segment-preview-payload.js`); the browser substitutes the resolved ids and calls the Fabric item-definition API directly. |
+| 4 | `fabric-discovery` | Fabric | Workspace + serving lakehouse + the separate Dataverse Link-to-Fabric source lakehouse. The serving lakehouse is explicitly excluded from source discovery, even when it already contains Dataverse shortcuts from an earlier run. |
+| 5 | `fabric-notebook` | Fabric | Serving bootstrap notebook. The notebook definition ships inside the solution (`segment-preview-payload.js`); the browser substitutes the resolved ids, calls the Fabric item-definition API directly, creates or updates the schedule, and immediately starts and monitors one execution. |
 | 6 | `azure-infra` | Azure | ARM deployment of the compiled template. Also passes the pinned API package URL and SHA-256 so the deployment copies the package into customer-owned storage (§6.3). The step fails before it touches Azure when no verified package is configured. |
 | 7 | `fabric-permissions` | Fabric | Grants the Web App managed identity access. |
 | 8 | `azure-app` | Azure | Verifies the package settings the deployment applied (blob name, no shared access signature, digest, managed-identity read), restarts the Web App, polls `/api/health`, and then polls the authenticated `/api/setup/key-check` endpoint until the active worker accepts the deployed key. |
 | 9 | `dataverse-config` | Dataverse | Writes `klth_FabricBehavioralApiUrl` + `klth_FabricBehavioralApiKey`. Never delegated — the browser owns the Dataverse session. |
-| 10 | `verify` | Verify | Calls `klth_ManageSegmentPreviewSetup` with `klth_action = status`, and when the result still offers the idempotent `provision-shortcuts` action it invokes that too and re-reads the status. |
+| 10 | `verify` | Verify | Calls `klth_ManageSegmentPreviewSetup` with `klth_action = status`, and when the result still offers the idempotent `provision-shortcuts` action it invokes that too and re-reads the status. Journeys event tables are mandatory because behavioral and `Interaction(...)` queries depend on them. Verification fails with the required export/bootstrap actions instead of reporting installation success while they are absent. |
 
 In `manual` mode the plan contains only `preflight` and `verify`, so pressing the
 button on an unconfigured tenant is harmless and cannot rotate the API key.

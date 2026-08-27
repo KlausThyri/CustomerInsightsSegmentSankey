@@ -120,9 +120,15 @@ if ($Release) {
     # The Setup Center refuses to deploy a package it cannot verify, so shipping
     # a payload without the URL and digest would leave the API step manual.
     $payloadText = Get-Content -LiteralPath $payloadWebResource -Raw
-    $start = $payloadText.LastIndexOf('return ')
+    $returnMarker = [Environment]::NewLine + '  return {'
+    $start = $payloadText.LastIndexOf($returnMarker)
     $end = $payloadText.LastIndexOf('};') + 1
-    $payloadJson = $payloadText.Substring($start + 'return '.Length, $end - $start - 'return '.Length) | ConvertFrom-Json
+    if ($start -lt 0 -or $end -le $start) {
+        throw 'The setup payload does not contain the expected generated return object.'
+    }
+    $payloadJson = $payloadText.Substring(
+        $start + $returnMarker.Length - 1,
+        $end - $start - $returnMarker.Length + 1) | ConvertFrom-Json
     if (-not $payloadJson.api.packageUrl -or $payloadJson.api.packageUrl -notmatch '^https://') {
         throw "The setup payload carries no API package URL. Publish the release asset, then run 'pwsh -File deployment/Update-SetupPayloadWebResource.ps1 -ApiPackageUrl <url> -ApiPackagePath <zip>'."
     }

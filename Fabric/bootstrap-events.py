@@ -26,6 +26,11 @@ from pyspark.sql import functions as F
 import requests
 
 EVENT_SOURCE_ROOT = "Files/Customer Insights Journeys"
+EVENT_SOURCE_CANDIDATES = [
+    f"{EVENT_SOURCE_ROOT}/Files/Customer%20Insights%20Journeys",
+    f"{EVENT_SOURCE_ROOT}/Files/Customer Insights Journeys",
+    EVENT_SOURCE_ROOT,
+]
 EVENT_SCHEMA = "journeys"
 DATAVERSE_SCHEMA = "dataverse"
 WORKSPACE_ID = "<fabric-workspace-id>"
@@ -61,22 +66,60 @@ headers = {
     "Authorization": f"Bearer {fabric_token}",
     "Content-Type": "application/json",
 }
+DIAGNOSTIC_PATH = "Files/_segment_preview/bootstrap-status.txt"
+mssparkutils.fs.mkdirs("Files/_segment_preview")
 
+
+def write_diagnostic(message):
+    mssparkutils.fs.put(
+        DIAGNOSTIC_PATH,
+        f"{datetime.now(timezone.utc).isoformat()} {message}",
+        True,
+    )
+
+
+write_diagnostic("Starting Journeys event folder discovery")
+
+def find_event_folders():
+    inspected = []
+    for source_root in EVENT_SOURCE_CANDIDATES:
+        try:
+            items = mssparkutils.fs.ls(source_root)
+        except Exception as error:
+            inspected.append(f"{source_root}: {error}")
+            continue
+
+        event_folders = []
+        for item in items:
+            if not item.isDir:
+                continue
+            event_name = item.name.rstrip("/")
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", event_name):
+                continue
+            try:
+                mssparkutils.fs.ls(f"{source_root}/{event_name}/_delta_log")
+                event_folders.append((event_name, source_root))
+            except Exception:
+                continue
+        if event_folders:
+            return event_folders
+        inspected.append(f"{source_root}: no Delta event folders")
+
+    raise RuntimeError(
+        "No Customer Insights - Journeys Delta event folders were found. "
+        "Enable the Journeys export to Fabric and verify its shortcut. Inspected: "
+        + "; ".join(inspected)
+    )
+
+
+event_folders = find_event_folders()
+write_diagnostic(
+    f"Discovered {len(event_folders)} Journeys Delta event folders under "
+    f"{event_folders[0][1]}"
+)
 event_results = []
-for item in mssparkutils.fs.ls(EVENT_SOURCE_ROOT):
-    if not item.isDir:
-        continue
-
-    event_name = item.name.rstrip("/")
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", event_name):
-        event_results.append(
-            (event_name, None, "rejected", "Unsafe event folder name")
-        )
-        continue
-
-    delta_log = f"{EVENT_SOURCE_ROOT}/{event_name}/_delta_log"
+for event_name, source_root in event_folders:
     try:
-        mssparkutils.fs.ls(delta_log)
         response = requests.post(
             SHORTCUT_API,
             headers=headers,
@@ -87,7 +130,7 @@ for item in mssparkutils.fs.ls(EVENT_SOURCE_ROOT):
                     "oneLake": {
                         "workspaceId": WORKSPACE_ID,
                         "itemId": SERVING_LAKEHOUSE_ID,
-                        "path": f"{EVENT_SOURCE_ROOT}/{event_name}",
+                        "path": f"{source_root}/{event_name}",
                     }
                 },
             },
@@ -106,6 +149,9 @@ event_registry = spark.createDataFrame(
 event_registry.write.mode("overwrite").option(
     "overwriteSchema", "true"
 ).saveAsTable(f"{EVENT_SCHEMA}._event_registry")
+write_diagnostic(
+    f"Registered {len(event_results)} Journeys event table shortcuts"
+)
 
 dataverse_results = []
 if not HAS_DATAVERSE_MIRROR:
@@ -183,6 +229,9 @@ dataverse_registry = spark.createDataFrame(
 dataverse_registry.write.mode("overwrite").option(
     "overwriteSchema", "true"
 ).saveAsTable(f"{DATAVERSE_SCHEMA}._shortcut_registry")
+write_diagnostic(
+    f"Processed {len(dataverse_results)} Dataverse table shortcuts"
+)
 
 event_failures = event_registry.filter("status = 'failed'").count()
 dataverse_failures = dataverse_registry.filter("status = 'failed'").count()
@@ -193,6 +242,7 @@ if event_failures or dataverse_failures:
         f"{event_failures} Journeys event folder(s) and "
         f"{dataverse_failures} Dataverse shortcut(s) could not be registered"
     )
+write_diagnostic("Bootstrap completed successfully")
 
 # METADATA ********************
 
