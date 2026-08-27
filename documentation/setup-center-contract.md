@@ -392,10 +392,8 @@ internal identifiers.
     "notebookId": "...",
     "apiBaseUrl": "https://.../api/",
     "principalId": "...",
-    "packageUrl": "https://...",
     "packageVersion": "1.1.0.0",
-    "packageSha256": "<64 hex>",
-    "packageBlobUrl": "https://<customer storage>/segment-preview-api/api-....zip"
+    "packageSha256": "<64 hex>"
   }
 }
 ```
@@ -406,6 +404,15 @@ internal identifiers.
 plus the first 16 hex characters) is persisted, so the resume record can be read
 by anyone with Dataverse access without leaking the credential. **No session
 token is ever written to Dataverse.**
+
+The value is serialized as compact JSON and must stay within the Dataverse
+environment-variable limit of 2,000 characters. Default target values are omitted,
+and facts already present in the target (for example workspace and Lakehouse IDs)
+are not duplicated. The orchestrator reconstructs those facts from the target when
+resuming. Temporary source and customer-storage package URLs are not persisted
+because they are only needed during the Azure deployment step. If a customized
+configuration still exceeds the limit, Setup reports its measured size before
+sending the value to Dataverse.
 
 ### 5.1 Facts and convergence
 

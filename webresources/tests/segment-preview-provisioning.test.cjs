@@ -403,6 +403,45 @@ test("configuration round-trips through parse and serialize", () => {
   assert.equal(engine.mergeConfiguration(restored.target).location, "westeurope");
 });
 
+test("serializeConfiguration stays within the Dataverse environment-variable limit", () => {
+  const target = engine.applyAutomaticTarget({
+    subscriptionId: "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6",
+    resourceGroup: "D365Demo",
+    fabricWorkspaceId: "11111111-1111-1111-1111-111111111111",
+    fabricWorkspaceName: "D365Demo Segment Preview",
+    fabricCapacityId: "22222222-2222-2222-2222-222222222222",
+    fabricServingLakehouseId: "33333333-3333-3333-3333-333333333333",
+    fabricServingLakehouseName: "SegmentPreviewServing",
+    fabricDataverseLakehouseId: "44444444-4444-4444-4444-444444444444",
+    fabricDataverseConnectionId: "55555555-5555-5555-5555-555555555555",
+    fabricDataverseDeltaFolder: "Tables/dbo_contact"
+  });
+  const facts = {
+    workspaceId: target.fabricWorkspaceId,
+    workspaceName: target.fabricWorkspaceName,
+    servingLakehouseId: target.fabricServingLakehouseId,
+    servingLakehouseName: target.fabricServingLakehouseName,
+    dataverseLakehouseId: target.fabricDataverseLakehouseId,
+    dataverseConnectionId: target.fabricDataverseConnectionId,
+    dataverseDeltaFolder: target.fabricDataverseDeltaFolder,
+    fabricSqlServer: "long-workspace-name.datawarehouse.fabric.microsoft.com",
+    fabricSqlDatabase: "66666666-6666-6666-6666-666666666666",
+    notebookId: "77777777-7777-7777-7777-777777777777",
+    apiBaseUrl: "https://segment-preview-6f6c1f2e-hec7nq.azurewebsites.net",
+    principalId: "88888888-8888-8888-8888-888888888888",
+    packageVersion: "1.1.0.24",
+    packageSha256: "a".repeat(64)
+  };
+  const state = Object.fromEntries(engine.STEPS.map((step) => [step.id, true]));
+
+  const serialized = engine.serializeConfiguration(target, state, facts);
+  const parsed = JSON.parse(serialized);
+
+  assert.ok(serialized.length <= engine.MAX_CONFIGURATION_LENGTH);
+  assert.equal(parsed.facts.workspaceId, undefined);
+  assert.equal(parsed.facts.packageVersion, "1.1.0.24");
+});
+
 
 // -------------------------------------------------------------- plan/consent
 
@@ -3965,7 +4004,15 @@ test("a resumed run without the Fabric facts fails loudly instead of deploying b
   const direct = directHarness({ appSettings: { BEHAVIORAL_API_KEY: "earlier-run-key" } });
   const { orchestrator } = directOrchestrator({
     direct,
-    settings: { completed: { secret: true, "fabric-discovery": true, "fabric-notebook": true }, facts: {} }
+    settings: {
+      completed: { secret: true, "fabric-discovery": true, "fabric-notebook": true },
+      facts: {},
+      target: engine.mergeConfiguration({
+        subscriptionId: VALID_TARGET.subscriptionId,
+        resourceGroup: VALID_TARGET.resourceGroup,
+        webAppName: VALID_TARGET.webAppName
+      })
+    }
   });
   const result = await orchestrator.run();
   assert.equal(result.ok, false);

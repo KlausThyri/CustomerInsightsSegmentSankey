@@ -924,6 +924,20 @@
     "packageBlobUrl"
   ];
 
+  var TRANSIENT_FACT_KEYS = ["packageUrl", "packageBlobUrl"];
+
+  var FACT_TARGET_KEYS = {
+    workspaceId: "fabricWorkspaceId",
+    workspaceName: "fabricWorkspaceName",
+    servingLakehouseId: "fabricServingLakehouseId",
+    servingLakehouseName: "fabricServingLakehouseName",
+    dataverseConnectionId: "fabricDataverseConnectionId",
+    dataverseLakehouseId: "fabricDataverseLakehouseId",
+    dataverseDeltaFolder: "fabricDataverseDeltaFolder"
+  };
+
+  var MAX_CONFIGURATION_LENGTH = 2000;
+
   /** Never write these to Dataverse, whatever a caller hands over. */
   var SECRET_KEYS = ["apiKey", "behavioralApiKey", "sasToken", "accountKey", "accessToken"];
 
@@ -1018,14 +1032,36 @@
       facts: {}
     };
     TARGET_KEYS.forEach(function (key) {
-      if (!isBlank(target && target[key])) payload.target[key] = String(target[key]).trim();
+      if (isBlank(target && target[key])) return;
+      var value = String(target[key]).trim();
+      if (
+        Object.prototype.hasOwnProperty.call(TARGET_DEFAULTS, key) &&
+        String(TARGET_DEFAULTS[key]) === value
+      ) {
+        return;
+      }
+      payload.target[key] = value;
     });
     delete payload.target.behavioralApiKey;
     var source = stripSecrets(facts || {});
     FACT_KEYS.forEach(function (key) {
-      if (!isBlank(source[key])) payload.facts[key] = String(source[key]);
+      if (isBlank(source[key])) return;
+      if (TRANSIENT_FACT_KEYS.indexOf(key) > -1) return;
+      var targetKey = FACT_TARGET_KEYS[key];
+      if (targetKey && String(target && target[targetKey] || "") === String(source[key])) return;
+      payload.facts[key] = String(source[key]);
     });
-    return JSON.stringify(payload, null, 2);
+    var serialized = JSON.stringify(payload);
+    if (serialized.length > MAX_CONFIGURATION_LENGTH) {
+      throw new Error(
+        "The Setup resume configuration is " +
+          serialized.length +
+          " characters, exceeding the Dataverse limit of " +
+          MAX_CONFIGURATION_LENGTH +
+          ". Shorten the configured resource names or paths and try again."
+      );
+    }
+    return serialized;
   }
 
   function validateTarget(target, options) {
@@ -2881,6 +2917,12 @@
     var payload = settings.payload || null;
     var completed = settings.completed || {};
     var facts = stripSecrets(settings.facts || {});
+    Object.keys(FACT_TARGET_KEYS).forEach(function (factKey) {
+      var targetKey = FACT_TARGET_KEYS[factKey];
+      if (isBlank(facts[factKey]) && !isBlank(target[targetKey])) {
+        facts[factKey] = target[targetKey];
+      }
+    });
     var timer = settings.timer;
 
     var context = {
@@ -2919,7 +2961,6 @@
       if (!isBlank(facts.notebookId)) context.notebookId = facts.notebookId;
       if (!isBlank(facts.apiBaseUrl)) context.apiBaseUrl = facts.apiBaseUrl;
       if (!isBlank(facts.principalId)) context.principalId = facts.principalId;
-      if (!isBlank(facts.packageBlobUrl)) context.packageBlobUrl = facts.packageBlobUrl;
     })();
 
     /**
@@ -4041,6 +4082,7 @@
 
   return {
     CONTRACT_VERSION: CONTRACT_VERSION,
+    MAX_CONFIGURATION_LENGTH: MAX_CONFIGURATION_LENGTH,
     BROKER_MESSAGE_TYPE: BROKER_MESSAGE_TYPE,
     BROKER_SESSION_KEY: BROKER_SESSION_KEY,
     ENV: ENV,
