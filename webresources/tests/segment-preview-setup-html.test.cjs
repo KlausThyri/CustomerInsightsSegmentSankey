@@ -87,6 +87,16 @@ test("successful updates navigate to a cache-busted Setup URL", () => {
   assert.doesNotMatch(html, /window\.parent\.location\.reload\(\)/);
 });
 
+test("an interrupted import response is verified against the installed solution", () => {
+  assert.match(html, /async function importSolutionAndConfirm\(update, bytes\)/);
+  assert.match(html, /solution = await installedSolution\(\)/);
+  assert.match(
+    html,
+    /engine\.compareSolutionVersions\(\s*solution\.version,\s*update\.latestVersion\s*\) < 0/
+  );
+  assert.match(html, /await importSolutionAndConfirm\(update, bytes\)/);
+});
+
 test("missing Dataverse source tables are retried for two minutes", () => {
   assert.match(html, /engine\.provisionShortcutsWithRetry\(execute/);
   assert.match(html, /Setup will retry automatically/);

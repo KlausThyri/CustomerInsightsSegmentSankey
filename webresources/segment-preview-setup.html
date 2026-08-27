@@ -647,7 +647,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.31">v1.1.0.31</span>
+          <span class="app-version" aria-label="Version 1.1.0.32">v1.1.0.32</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -881,9 +881,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.31"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.31"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.31"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.32"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.32"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.32"></script>
 
   <script>
     (() => {
@@ -1245,6 +1245,36 @@
         });
       }
 
+      async function importSolutionAndConfirm(update, bytes) {
+        try {
+          await dataverseRequest("ImportSolution", {
+            method: "POST",
+            body: {
+              CustomizationFile: bytesToBase64(bytes),
+              OverwriteUnmanagedCustomizations: !update.managed,
+              PublishWorkflows: true,
+              SkipProductUpdateDependencies: false,
+              ImportJobId: importJobId()
+            }
+          });
+        } catch (importError) {
+          let solution;
+          try {
+            solution = await installedSolution();
+          } catch {
+            throw importError;
+          }
+          if (
+            engine.compareSolutionVersions(
+              solution.version,
+              update.latestVersion
+            ) < 0
+          ) {
+            throw importError;
+          }
+        }
+      }
+
       async function installAvailableUpdate() {
         const update = state.availableUpdate;
         if (!update || state.installingUpdate) return;
@@ -1293,16 +1323,7 @@
             "Keep this page open while Dataverse imports and publishes the solution.",
             update
           );
-          await dataverseRequest("ImportSolution", {
-            method: "POST",
-            body: {
-              CustomizationFile: bytesToBase64(bytes),
-              OverwriteUnmanagedCustomizations: !update.managed,
-              PublishWorkflows: true,
-              SkipProductUpdateDependencies: false,
-              ImportJobId: importJobId()
-            }
-          });
+          await importSolutionAndConfirm(update, bytes);
           await publishOwnedWebResources();
           state.availableUpdate = null;
           renderUpdateState(
