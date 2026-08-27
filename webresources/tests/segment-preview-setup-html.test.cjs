@@ -483,6 +483,8 @@ test("the setup page never refers the administrator to a local installer", () =>
 test("the setup center explains how to add required Journeys data to Fabric", () => {
   assert.match(html, /id="journeysExportGuidance"/);
   assert.match(html, /Get data → New shortcut/);
+  assert.match(html, /Important: Choose Files, not Tables\./);
+  assert.match(html, /Shortcuts added\s*[\s\S]*under <strong>Tables<\/strong> cannot be detected/);
   assert.match(html, /Customer Insights Journeys/);
   assert.match(html, /System Administrator/);
   assert.match(html, /Files\/Customer Insights Journeys/);

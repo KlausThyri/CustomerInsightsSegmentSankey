@@ -321,6 +321,14 @@
       background: var(--cp-surface-soft);
       line-height: 1.5;
     }
+    .important-choice {
+      margin: 16px 0;
+      border: 2px solid var(--cp-warning);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: var(--cp-surface-soft);
+      line-height: 1.5;
+    }
     .mode-banner {
       display: flex;
       gap: 12px;
@@ -686,7 +694,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.37">v1.1.0.37</span>
+          <span class="app-version" aria-label="Version 1.1.0.38">v1.1.0.38</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -930,6 +938,13 @@
         Complete this one-time Microsoft Fabric setup, then Segment Preview will
         create and maintain the queryable event tables automatically.
       </p>
+      <div class="important-choice" role="note">
+        <strong>Important: Choose Files, not Tables.</strong>
+        Segment Preview reads the interaction data from
+        <strong>Files/Customer Insights Journeys</strong> and creates the
+        queryable <strong>journeys</strong> SQL tables itself. Shortcuts added
+        under <strong>Tables</strong> cannot be detected by this setup.
+      </div>
       <p>
         Use workspace <strong id="journeysWorkspaceName">the configured workspace</strong>
         and Serving Lakehouse
@@ -961,8 +976,10 @@
           select the regular <strong>CDS2</strong> Dataverse tables for this step.
         </li>
         <li>
-          Create the shortcuts in the Lakehouse <strong>Files</strong> area and
-          keep the default Customer Insights Journeys destination hierarchy.
+          When Fabric asks whether to add the shortcuts under
+          <strong>Files</strong> or <strong>Tables</strong>, explicitly choose
+          <strong>Files</strong>. Keep the default Customer Insights Journeys
+          destination hierarchy.
         </li>
         <li>
           Return to this Setup page and select <strong>Install everything</strong>.
@@ -1010,9 +1027,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.37"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.37"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.37"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.38"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.38"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.38"></script>
 
   <script>
     (() => {

@@ -730,6 +730,9 @@ a persistent in-page guide. It identifies the selected workspace and Serving
 Lakehouse, walks the administrator through **Get data → New shortcut →
 Dataverse**, requires a System Administrator connection, distinguishes the
 **Customer Insights Journeys** folder from the regular CDS2 source, and links to
-the official Microsoft instructions. After the shortcut exists, another
+the official Microsoft instructions. It prominently requires **Files**, not
+**Tables**, because the bootstrap discovers interaction Delta data below
+`Files/Customer Insights Journeys` and creates the queryable SQL tables itself.
+After the shortcut exists, another
 **Install everything** run automatically executes and monitors the bootstrap
 notebook and verifies the resulting `journeys` tables.
