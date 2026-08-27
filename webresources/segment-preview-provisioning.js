@@ -3564,15 +3564,6 @@
           throw new Error(missingTableMessage);
         }
 
-        var requestedConnectionId = target.fabricDataverseConnectionId;
-        if (
-          isGuid(requestedConnectionId) &&
-          requestedConnectionId.toLowerCase() !== source.connectionId.toLowerCase()
-        ) {
-          throw new Error(
-            "The configured Fabric Dataverse connection does not match the connection used by the Link to Microsoft Fabric Lakehouse. Start over so Setup can discover the linked connection again."
-          );
-        }
         var selectedConnection = connections.find(function (connection) {
           return connection.id.toLowerCase() === source.connectionId.toLowerCase();
         });

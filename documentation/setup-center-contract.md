@@ -492,6 +492,8 @@ discovery also checks the Serving Lakehouse as a fallback and accepts it only
 when a root `Tables/contact` shortcut carries matching Dataverse target
 metadata (`environmentDomain`, `connectionId`, and `deltaLakeFolder`). This
 supports existing combined Lakehouses without creating duplicate resources.
+The validated shortcut `connectionId` replaces a stale retained connection id
+and is written back to Advanced options.
 When the link
 or its primary `contact` table is not visible yet, Setup polls the Fabric source
 for up to two minutes so a newly created Microsoft synchronization can complete.

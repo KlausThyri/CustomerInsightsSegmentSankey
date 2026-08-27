@@ -509,7 +509,9 @@ any Fabric component, it checks the stored id first and the existing resource
 collection second. **Start over** restarts the provisioning steps but
 retains the selected target and discovered resource identities, ensuring the
 fresh run checks and updates the existing deployment instead of creating a
-parallel one.
+parallel one. For a Dataverse source, the connection id stored in the validated
+shortcut metadata is authoritative; Setup replaces a stale saved connection id
+and refreshes **Advanced options** instead of requiring another Start over.
 
 Ambiguous discovery is fail-safe: if multiple resources match by name or
 Dataverse environment and no stored id identifies one of them, Setup reports

@@ -3969,6 +3969,42 @@ test("automatic discovery uses the connection referenced by the Dataverse shortc
   );
 });
 
+test("automatic discovery replaces a stale saved connection with the shortcut connection", async () => {
+  const sourceConnectionId = "22222222-aaaa-bbbb-cccc-222222222222";
+  const staleConnectionId = "11111111-aaaa-bbbb-cccc-111111111111";
+  const direct = directHarness({
+    sourceConnectionId,
+    dataverseConnections: [
+      {
+        id: sourceConnectionId,
+        name: "Linked Dataverse",
+        connectivityType: "ShareableCloud",
+        shareable: true,
+        credentialType: "OAuth2"
+      }
+    ]
+  });
+  const target = engine.mergeConfiguration(
+    Object.assign({}, VALID_TARGET, {
+      fabricDataverseConnectionId: staleConnectionId
+    })
+  );
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: { target }
+  });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  assert.equal(result.context.target.fabricDataverseConnectionId, sourceConnectionId);
+  assert.equal(result.facts.dataverseConnectionId, sourceConnectionId);
+  const assignment = direct.calls.find(
+    (call) => call.kind === "ensureConnectionRoleAssignment"
+  );
+  assert.equal(assignment.connectionId, sourceConnectionId);
+});
+
 test("automatic discovery explains when only PersonalCloud connections exist", async () => {
   const direct = directHarness({
     sourceConnectionId: "11111111-aaaa-bbbb-cccc-111111111111",
