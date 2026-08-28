@@ -3545,6 +3545,149 @@ test("an upgraded resumed run replaces an incompatible serving Lakehouse and rer
     assert.equal(lakehouseLists.length, 2);
   });
 
+  test("an incompatible SegmentPreviewServing is preserved and a deterministic schema fallback is created", async () => {
+    const incompatibleServingLakehouseId = "99999999-aaaa-bbbb-cccc-dddddddddddd";
+    const fallbackServingLakehouseId = "88888888-aaaa-bbbb-cccc-dddddddddddd";
+    const direct = directHarness({
+      lakehouses: [
+        {
+          id: incompatibleServingLakehouseId,
+          displayName: "SegmentPreviewServing"
+        },
+        { id: DATAVERSE_LAKEHOUSE_ID, displayName: "Dataverse_orga" }
+      ],
+      nonSchemaLakehouseIds: [incompatibleServingLakehouseId],
+      createdServingLakehouseId: fallbackServingLakehouseId
+    });
+    const target = engine.mergeConfiguration(
+      Object.assign({}, VALID_TARGET, {
+        fabricServingLakehouseId: incompatibleServingLakehouseId,
+        fabricServingLakehouseName: "SegmentPreviewServing",
+        fabricDataverseLakehouseId: DATAVERSE_LAKEHOUSE_ID
+      })
+    );
+    const { orchestrator } = directOrchestrator({
+      direct,
+      settings: { target }
+    });
+
+    const result = await orchestrator.run();
+
+    assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+    assert.equal(result.context.target.fabricServingLakehouseId, fallbackServingLakehouseId);
+    assert.equal(
+      result.context.target.fabricServingLakehouseName,
+      "SegmentPreviewServingSchema"
+    );
+    const createCalls = direct.calls.filter(
+      (call) =>
+        call.kind === "fabric" &&
+        call.method === "POST" &&
+        /\/lakehouses$/.test(call.path)
+    );
+    assert.equal(createCalls.length, 1);
+    assert.equal(createCalls[0].body.displayName, "SegmentPreviewServingSchema");
+    assert.equal(createCalls[0].body.creationPayload.enableSchemas, true);
+  });
+
+  test("an existing schema-enabled fallback Lakehouse is reused idempotently", async () => {
+    const incompatibleServingLakehouseId = "99999999-aaaa-bbbb-cccc-dddddddddddd";
+    const fallbackServingLakehouseId = "88888888-aaaa-bbbb-cccc-dddddddddddd";
+    const direct = directHarness({
+      lakehouses: [
+        {
+          id: incompatibleServingLakehouseId,
+          displayName: "SegmentPreviewServing"
+        },
+        {
+          id: fallbackServingLakehouseId,
+          displayName: "SegmentPreviewServingSchema"
+        },
+        { id: DATAVERSE_LAKEHOUSE_ID, displayName: "Dataverse_orga" }
+      ],
+      nonSchemaLakehouseIds: [incompatibleServingLakehouseId]
+    });
+    const target = engine.mergeConfiguration(
+      Object.assign({}, VALID_TARGET, {
+        fabricServingLakehouseId: incompatibleServingLakehouseId,
+        fabricServingLakehouseName: "SegmentPreviewServing",
+        fabricDataverseLakehouseId: DATAVERSE_LAKEHOUSE_ID
+      })
+    );
+    const { orchestrator } = directOrchestrator({
+      direct,
+      settings: { target }
+    });
+
+    const result = await orchestrator.run();
+
+    assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+    assert.equal(result.context.target.fabricServingLakehouseId, fallbackServingLakehouseId);
+    assert.equal(
+      direct.calls.some(
+        (call) =>
+          call.kind === "fabric" &&
+          call.method === "POST" &&
+          /\/lakehouses$/.test(call.path)
+      ),
+      false
+    );
+  });
+
+  test("a serving Lakehouse change durably invalidates dependents when the notebook then fails", async () => {
+    const incompatibleServingLakehouseId = "99999999-aaaa-bbbb-cccc-dddddddddddd";
+    const fallbackServingLakehouseId = "88888888-aaaa-bbbb-cccc-dddddddddddd";
+    const direct = directHarness({
+      lakehouses: [
+        {
+          id: incompatibleServingLakehouseId,
+          displayName: "SegmentPreviewServing"
+        },
+        {
+          id: fallbackServingLakehouseId,
+          displayName: "SegmentPreviewServingSchema"
+        },
+        { id: DATAVERSE_LAKEHOUSE_ID, displayName: "Dataverse_orga" }
+      ],
+      nonSchemaLakehouseIds: [incompatibleServingLakehouseId],
+      notebookRunFails: "Notebook bootstrap failed"
+    });
+    const target = engine.mergeConfiguration(
+      Object.assign({}, VALID_TARGET, {
+        fabricServingLakehouseId: incompatibleServingLakehouseId,
+        fabricServingLakehouseName: "SegmentPreviewServing",
+        fabricDataverseLakehouseId: DATAVERSE_LAKEHOUSE_ID
+      })
+    );
+    const completed = {
+      "azure-infra": true,
+      "fabric-permissions": true,
+      "fabric-connection-permissions": true,
+      "azure-app": true,
+      "dataverse-config": true,
+      verify: true
+    };
+    const { orchestrator } = directOrchestrator({
+      direct,
+      settings: {
+        target,
+        completed,
+        facts: {
+          servingLakehouseId: incompatibleServingLakehouseId
+        }
+      }
+    });
+
+    const result = await orchestrator.run();
+
+    assert.equal(result.ok, false);
+    assert.equal(result.failedStep, "fabric-notebook");
+    assert.equal(result.facts.servingLakehouseId, fallbackServingLakehouseId);
+    Object.keys(completed).forEach((stepId) => {
+      assert.equal(result.completed[stepId], undefined, `${stepId} must rerun after retry`);
+    });
+  });
+
   const result = await orchestrator.run();
 
   assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));

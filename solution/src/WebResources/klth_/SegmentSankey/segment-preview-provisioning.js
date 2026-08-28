@@ -906,6 +906,7 @@
   var TARGET_DEFAULTS = {
     location: "westeurope",
     fabricServingLakehouseName: "SegmentPreviewServing",
+    fabricServingLakehouseFallbackName: "SegmentPreviewServingSchema",
     businessUnitScopingEnabled: false,
     requiredDataverseTables: DEFAULT_REQUIRED_TABLES
   };
@@ -3187,6 +3188,12 @@
       });
     }
 
+    function invalidateCompleted(stepIds) {
+      stepIds.forEach(function (id) {
+        delete completed[id];
+      });
+    }
+
     var desiredPackage = resolveApiPackage(payload, settings.apiPackageUrl);
     if (
       mode === "direct" &&
@@ -3485,85 +3492,114 @@
           return sameIdentifier(item.id, requestedServingId);
         })[0];
         var details = null;
-        if (serving) {
-          details = await direct.fabric(
+        async function inspectServing(candidate) {
+          if (!candidate) return { item: null, details: null, incompatible: false };
+          var candidateDetails = await direct.fabric(
             "GET",
-            "workspaces/" + workspace.id + "/lakehouses/" + serving.id
+            "workspaces/" + workspace.id + "/lakehouses/" + candidate.id
           );
-          if (!details.body.properties || !details.body.properties.defaultSchema) {
-            serving = null;
-            details = null;
-          }
+          return {
+            item:
+              candidateDetails.body.properties &&
+              candidateDetails.body.properties.defaultSchema
+                ? candidate
+                : null,
+            details: candidateDetails,
+            incompatible:
+              !candidateDetails.body.properties ||
+              !candidateDetails.body.properties.defaultSchema
+          };
         }
-        if (!serving) {
-          serving = uniqueNamedResource(
-            lakehouses,
-            TARGET_DEFAULTS.fabricServingLakehouseName,
-            "Fabric Lakehouse"
+        async function inspectNamedServing(items, displayName) {
+          return inspectServing(
+            uniqueNamedResource(items, displayName, "Fabric Lakehouse")
           );
-          if (serving) {
-            details = await direct.fabric(
-              "GET",
-              "workspaces/" + workspace.id + "/lakehouses/" + serving.id
-            );
-            if (!details.body.properties || !details.body.properties.defaultSchema) {
-              serving = null;
-              details = null;
-            }
-          }
         }
-        if (!serving) {
+        async function createOrRecoverServing(displayName) {
           try {
-            var newLakehouse = await direct.fabric("POST", "workspaces/" + workspace.id + "/lakehouses", {
-              displayName: TARGET_DEFAULTS.fabricServingLakehouseName,
-              description: "Serving lakehouse for the Customer Insights Segment Preview.",
-              creationPayload: {
-                enableSchemas: true
+            var createdLakehouse = await direct.fabric(
+              "POST",
+              "workspaces/" + workspace.id + "/lakehouses",
+              {
+                displayName: displayName,
+                description: "Serving lakehouse for the Customer Insights Segment Preview.",
+                creationPayload: {
+                  enableSchemas: true
+                }
               }
-            });
-            serving = newLakehouse.body;
+            );
+            return { item: createdLakehouse.body, details: null, incompatible: false };
           } catch (error) {
             if (!/already.*(?:in use|exists)|(?:in use|exists).*already/i.test(String(error && error.message))) {
               throw error;
             }
-            for (var refresh = 0; refresh < 12 && !serving; refresh++) {
+            for (var refresh = 0; refresh < 12; refresh++) {
               lakehouses = await direct.fabricCollection(
                 "workspaces/" + workspace.id + "/lakehouses"
               );
-              var existingServing = uniqueNamedResource(
-                lakehouses,
-                TARGET_DEFAULTS.fabricServingLakehouseName,
-                "Fabric Lakehouse"
-              );
-              if (existingServing) {
-                var existingDetails = await direct.fabric(
-                  "GET",
-                  "workspaces/" + workspace.id + "/lakehouses/" + existingServing.id
-                );
-                if (
-                  existingDetails.body.properties &&
-                  existingDetails.body.properties.defaultSchema
-                ) {
-                  serving = existingServing;
-                  details = existingDetails;
-                  break;
-                }
-                throw new Error(
-                  "A Fabric item named '" +
-                    TARGET_DEFAULTS.fabricServingLakehouseName +
-                    "' already exists, but it is not a schema-enabled Lakehouse. Rename that item or select a schema-enabled Serving Lakehouse in Advanced options."
-                );
-              }
+              var recovered = await inspectNamedServing(lakehouses, displayName);
+              if (recovered.item || recovered.incompatible) return recovered;
               if (refresh < 11) await delay(5000, timer);
             }
-            if (!serving) {
-              throw new Error(
-                "Fabric reports that '" +
-                  TARGET_DEFAULTS.fabricServingLakehouseName +
-                  "' already exists, but it did not become visible to Setup after one minute. Wait for Fabric synchronization and run installation again."
-              );
-            }
+            throw new Error(
+              "Fabric reports that '" +
+                displayName +
+                "' already exists, but it did not become visible to Setup after one minute. Wait for Fabric synchronization and run installation again."
+            );
           }
+        }
+        if (serving) {
+          var requestedServing = await inspectServing(serving);
+          serving = requestedServing.item;
+          details = serving ? requestedServing.details : null;
+        }
+        var primaryServing = { item: null, details: null, incompatible: false };
+        if (!serving) {
+          primaryServing = await inspectNamedServing(
+            lakehouses,
+            TARGET_DEFAULTS.fabricServingLakehouseName
+          );
+          serving = primaryServing.item;
+          details = serving ? primaryServing.details : null;
+        }
+        if (!serving) {
+          var fallbackServing = await inspectNamedServing(
+            lakehouses,
+            TARGET_DEFAULTS.fabricServingLakehouseFallbackName
+          );
+          serving = fallbackServing.item;
+          details = serving ? fallbackServing.details : null;
+          if (!serving && fallbackServing.incompatible) {
+            throw new Error(
+              "The reserved fallback Lakehouse '" +
+                TARGET_DEFAULTS.fabricServingLakehouseFallbackName +
+                "' already exists but is not schema-enabled. Select a schema-enabled Serving Lakehouse in Advanced options."
+            );
+          }
+        }
+        if (!serving) {
+          var servingNameToCreate = primaryServing.incompatible
+            ? TARGET_DEFAULTS.fabricServingLakehouseFallbackName
+            : TARGET_DEFAULTS.fabricServingLakehouseName;
+          var provisionedServing = await createOrRecoverServing(servingNameToCreate);
+          if (
+            provisionedServing.incompatible &&
+            servingNameToCreate === TARGET_DEFAULTS.fabricServingLakehouseName
+          ) {
+            servingNameToCreate = TARGET_DEFAULTS.fabricServingLakehouseFallbackName;
+            provisionedServing = await createOrRecoverServing(
+              servingNameToCreate
+            );
+          }
+          if (provisionedServing.incompatible) {
+            throw new Error(
+              "The reserved Serving Lakehouse '" +
+                servingNameToCreate +
+                "' exists but is not schema-enabled. Select a schema-enabled Serving Lakehouse in Advanced options."
+            );
+          }
+          serving = provisionedServing.item;
+          details = provisionedServing.details;
         }
         context.serving = serving;
         var previousServingLakehouseId =
@@ -3580,15 +3616,17 @@
           isGuid(previousServingLakehouseId) &&
           !sameIdentifier(previousServingLakehouseId, serving.id)
         ) {
+          var servingDependents = [
+            "azure-infra",
+            "fabric-permissions",
+            "fabric-connection-permissions",
+            "azure-app",
+            "dataverse-config",
+            "verify"
+          ];
+          invalidateCompleted(servingDependents);
           forceRerun(
-            [
-              "azure-infra",
-              "fabric-permissions",
-              "fabric-connection-permissions",
-              "azure-app",
-              "dataverse-config",
-              "verify"
-            ],
+            servingDependents,
             "The compatible Serving Lakehouse changed, so every dependent configuration step runs again."
           );
         }

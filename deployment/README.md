@@ -476,6 +476,8 @@ step is forced to run again rather than trusting stale completion state.
 If Fabric reports `SegmentPreviewServing` as already in use during creation,
 Setup refreshes discovery for up to one minute and reuses the existing
 schema-enabled Lakehouse instead of issuing another create request.
+If the existing Lakehouse is not schema-enabled, Setup leaves it untouched and
+uses the deterministic schema-enabled fallback `SegmentPreviewServingSchema`.
 | Fabric Dataverse cloud connection | **Detect only** | Requires an interactive OAuth consent in the Fabric portal. |
 | Dataverse managed solution import | **Full** | `ImportSolutionAsync` for a fresh install, `StageAndUpgradeAsync` for an upgrade. |
 | Dataverse environment variable values | **Full** | Created or patched through the Web API. |

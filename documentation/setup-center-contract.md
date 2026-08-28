@@ -504,6 +504,9 @@ permissions, API deployment, and Dataverse configuration to run again.
 Fabric item creation is also race-safe: if creation reports that
 `SegmentPreviewServing` is already in use, Setup refreshes Lakehouse discovery
 for up to one minute and reuses the schema-enabled item once Fabric exposes it.
+If that name belongs to a permanently non-schema-enabled Lakehouse, Setup
+preserves it and idempotently reuses or creates the schema-enabled fallback
+`SegmentPreviewServingSchema`.
 The validated shortcut `connectionId` replaces a stale retained connection id
 and is written back to Advanced options.
 The bootstrap creates the query-facing `Tables/dataverse/*` aliases as direct
