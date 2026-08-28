@@ -82,8 +82,35 @@ def write_diagnostic(message):
 write_diagnostic("Starting Journeys event folder discovery")
 
 
-def list_serving_shortcut_names(parent_path):
-    names = set()
+CREATABLE_TARGET_ARMS = (
+    "oneLake",
+    "amazonS3",
+    "adlsGen2",
+    "googleCloudStorage",
+    "s3Compatible",
+    "dataverse",
+    "azureBlobStorage",
+    "oneDriveSharePoint",
+)
+
+
+def creatable_shortcut_target(target):
+    if not isinstance(target, dict):
+        return None
+    populated_arms = [
+        arm
+        for arm in CREATABLE_TARGET_ARMS
+        if isinstance(target.get(arm), dict) and target.get(arm)
+    ]
+    if len(populated_arms) != 1:
+        return None
+    arm = populated_arms[0]
+    return {arm: target[arm]}
+
+
+def list_serving_shortcuts(parent_path):
+    shortcuts = {}
+    unsupported = []
     request_url = SHORTCUTS_API
     request_params = {"parentPath": parent_path}
     try:
@@ -96,25 +123,37 @@ def list_serving_shortcut_names(parent_path):
             )
             response.raise_for_status()
             page = response.json()
-            names.update(
-                item.get("name")
-                for item in page.get("value", [])
-                if item.get("name")
-                and str(item.get("path", "")).strip("/").lower()
-                == parent_path.strip("/").lower()
-            )
+            for item in page.get("value", []):
+                name = item.get("name")
+                exact_parent = (
+                    str(item.get("path", "")).strip("/").lower()
+                    == parent_path.strip("/").lower()
+                )
+                if not name or not exact_parent:
+                    continue
+                create_target = creatable_shortcut_target(item.get("target"))
+                if create_target:
+                    shortcuts[name] = create_target
+                else:
+                    unsupported.append(name)
             request_url = page.get("continuationUri")
             request_params = None
             if not request_url:
                 break
-        return names, None
+        if not shortcuts and unsupported:
+            return {}, (
+                "Serving shortcuts under "
+                f"{parent_path} do not expose a supported writable target: "
+                + ", ".join(sorted(unsupported))
+            )
+        return shortcuts, None
     except Exception as error:
-        return set(), f"Could not list Serving shortcuts under {parent_path}: {error}"
+        return {}, f"Could not list Serving shortcuts under {parent_path}: {error}"
 
 
 def find_event_folders():
     inspected = []
-    root_shortcut_names, root_shortcut_error = list_serving_shortcut_names("Files")
+    root_shortcuts, root_shortcut_error = list_serving_shortcuts("Files")
     for source_root in EVENT_SOURCE_CANDIDATES:
         if source_root == "Files" and root_shortcut_error:
             inspected.append(root_shortcut_error)
@@ -130,13 +169,21 @@ def find_event_folders():
             if not item.isDir:
                 continue
             event_name = item.name.rstrip("/")
-            if source_root == "Files" and event_name not in root_shortcut_names:
+            if source_root == "Files" and event_name not in root_shortcuts:
                 continue
             if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", event_name):
                 continue
             try:
                 mssparkutils.fs.ls(f"{source_root}/{event_name}/_delta_log")
-                event_folders.append((event_name, source_root))
+                event_folders.append(
+                    (
+                        event_name,
+                        source_root,
+                        root_shortcuts[event_name]
+                        if source_root == "Files"
+                        else None,
+                    )
+                )
             except Exception:
                 continue
         if event_folders:
@@ -161,7 +208,7 @@ else:
         f"{event_folders[0][1]}"
     )
 
-for event_name, source_root in event_folders:
+for event_name, source_root, source_target in event_folders:
     try:
         response = requests.post(
             SHORTCUT_API,
@@ -169,7 +216,8 @@ for event_name, source_root in event_folders:
             json={
                 "path": f"Tables/{EVENT_SCHEMA}",
                 "name": event_name,
-                "target": {
+                "target": source_target
+                or {
                     "oneLake": {
                         "workspaceId": WORKSPACE_ID,
                         "itemId": SERVING_LAKEHOUSE_ID,

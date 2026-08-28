@@ -517,6 +517,8 @@ existing resources.
 The Serving bootstrap accepts Customer Insights - Journeys Delta event folders
 both under `Files/Customer Insights Journeys/<EventName>` and directly under
 `Files/<EventName>`, then exposes them through `Tables/journeys`.
+For direct-root Fabric shortcuts, the bootstrap copies the original shortcut
+target instead of creating an unsupported shortcut-to-shortcut chain.
 The validated shortcut `connectionId` replaces a stale retained connection id
 and is written back to Advanced options.
 The bootstrap creates the query-facing `Tables/dataverse/*` aliases as direct

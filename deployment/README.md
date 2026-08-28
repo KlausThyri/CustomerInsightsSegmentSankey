@@ -489,6 +489,9 @@ The bootstrap discovers Journeys Delta event folders in both supported Fabric
 layouts: nested below `Files/Customer Insights Journeys` or directly below the
 Serving Lakehouse `Files` root. Both layouts produce the query-facing
 `Tables/journeys` shortcuts.
+For root-level shortcuts, the original Fabric target is reused directly under
+`Tables/journeys`; the bootstrap does not chain a new shortcut through the
+existing `Files` shortcut.
 | Fabric Dataverse cloud connection | **Detect only** | Requires an interactive OAuth consent in the Fabric portal. |
 | Dataverse managed solution import | **Full** | `ImportSolutionAsync` for a fresh install, `StageAndUpgradeAsync` for an upgrade. |
 | Dataverse environment variable values | **Full** | Created or patched through the Web API. |
