@@ -485,6 +485,9 @@ If Azure reports that the named Resource Manager deployment is already active,
 Setup resumes polling it. Deployments still active after 30 minutes are treated
 as stale: only the deployment operation is canceled, then the incremental
 template is safely restarted without deleting the existing resources.
+The initial notebook execution forces a fresh Fabric token before it starts.
+For JWT tokens, Setup verifies the effective `Item.Execute.All` scope; unrelated
+Fabric 401/403 responses preserve their original error code and message.
 The bootstrap discovers Journeys Delta event folders in both supported Fabric
 layouts: nested below `Files/Customer Insights Journeys` or directly below the
 Serving Lakehouse `Files` root. Both layouts produce the query-facing

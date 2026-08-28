@@ -3188,6 +3188,7 @@ function directHarness(options = {}) {
     },
     async runNotebookJob(workspaceId, notebookId) {
       calls.push({ kind: "runNotebookJob", workspaceId, notebookId });
+      if (options.notebookRunError) throw options.notebookRunError;
       if (options.notebookRunFails) throw new Error(options.notebookRunFails);
       return { status: "Completed" };
     },
@@ -3924,6 +3925,28 @@ test("a failed initial notebook run stops installation", async () => {
   assert.equal(result.ok, false);
   assert.equal(result.failedStep, "fabric-notebook");
   assert.match(result.results.find((entry) => entry.id === "fabric-notebook").message, /Missing export/);
+});
+
+test("a Fabric notebook rejection preserves the real error code and message", async () => {
+  const rejection = new Error("HTTP 403");
+  rejection.status = 403;
+  rejection.body = {
+    errorCode: "InsufficientPrivileges",
+    message: "The user cannot execute this notebook."
+  };
+  const direct = directHarness({ notebookRunError: rejection });
+  const { orchestrator } = directOrchestrator({ direct });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "fabric-notebook");
+  const message = result.results.find(
+    (entry) => entry.id === "fabric-notebook"
+  ).message;
+  assert.match(message, /InsufficientPrivileges/);
+  assert.match(message, /cannot execute this notebook/);
+  assert.doesNotMatch(message, /Add the delegated Power BI Service permission/);
 });
 
 test("an existing notebook is updated in place instead of duplicated", async () => {
@@ -5405,6 +5428,7 @@ test("the Fabric client resolves a 202 through the operations endpoint", async (
 
 test("the Fabric client starts and waits for a notebook job instance", async () => {
   const requests = [];
+  const tokenRequests = [];
   const location =
     "https://api.fabric.microsoft.com/v1/workspaces/w/items/n/jobs/instances/job-1";
   const client = engine.createDirectClient({
@@ -5422,13 +5446,20 @@ test("the Fabric client starts and waits for a notebook job instance", async () 
       }
       return jsonResponse(200, { status: "Completed" });
     },
-    getToken: async () => "token",
+    getToken: async (scope, options) => {
+      tokenRequests.push({ scope, options });
+      return "token";
+    },
     timer: immediateTimer
   });
 
   const result = await client.runNotebookJob("w", "n");
 
   assert.equal(result.status, "Completed");
+  assert.deepEqual(tokenRequests[0], {
+    scope: engine.FABRIC_SCOPE,
+    options: { forceRefresh: true }
+  });
   assert.deepEqual(requests, [
     {
       url: "https://api.fabric.microsoft.com/v1/workspaces/w/items/n/jobs/instances?jobType=Execute",
@@ -5436,6 +5467,30 @@ test("the Fabric client starts and waits for a notebook job instance", async () 
     },
     { url: location, method: "GET" }
   ]);
+});
+
+test("the Fabric client refuses a refreshed token without Item.Execute.All", async () => {
+  const token = [
+    Buffer.from("{}").toString("base64url"),
+    Buffer.from(JSON.stringify({ scp: "Item.ReadWrite.All Workspace.ReadWrite.All" }))
+      .toString("base64url"),
+    "signature"
+  ].join(".");
+  let fetchCalled = false;
+  const client = engine.createDirectClient({
+    fetch: async () => {
+      fetchCalled = true;
+      return jsonResponse(500, {});
+    },
+    getToken: async () => token,
+    timer: immediateTimer
+  });
+
+  await assert.rejects(
+    () => client.runNotebookJob("w", "n"),
+    /does not contain Item\.Execute\.All/
+  );
+  assert.equal(fetchCalled, false);
 });
 
 test("the Fabric client surfaces a failed long running operation", async () => {

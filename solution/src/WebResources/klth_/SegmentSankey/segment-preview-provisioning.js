@@ -1771,10 +1771,11 @@
      * later resource is obtained from the rotating refresh token, so the
      * administrator sees a single sign-in prompt for the whole run.
      */
-    async function getToken(scope) {
+    async function getToken(scope, options) {
       var wanted = Array.isArray(scope) ? scope[0] : scope;
       var cached = cache[cacheKey(wanted)];
-      if (cached && cached.expiresAt > now()) return cached.accessToken;
+      var forceRefresh = options && options.forceRefresh === true;
+      if (!forceRefresh && cached && cached.expiresAt > now()) return cached.accessToken;
       if (refreshToken) {
         try {
           return await refresh(wanted);
@@ -1824,11 +1825,15 @@
       return account;
     }
 
-    async function getToken(scope) {
+    async function getToken(scope, options) {
       var scopes = Array.isArray(scope) ? scope : [scope];
       var current = await ensureAccount(scopes);
       try {
-        var silent = await instance.acquireTokenSilent({ scopes: scopes, account: current });
+        var silent = await instance.acquireTokenSilent({
+          scopes: scopes,
+          account: current,
+          forceRefresh: !!(options && options.forceRefresh)
+        });
         return silent.accessToken;
       } catch (error) {
         var interactive = await instance.acquireTokenPopup({ scopes: scopes, account: current });
@@ -2877,6 +2882,33 @@
     }
 
     async function runNotebookJob(workspaceId, notebookId) {
+      var executionToken = await getToken(
+        settings.fabricScope || FABRIC_SCOPE,
+        { forceRefresh: true }
+      );
+      try {
+        var tokenPart = String(executionToken || "").split(".")[1];
+        if (tokenPart) {
+          var tokenPayload = tokenPart.replace(/-/g, "+").replace(/_/g, "/");
+          while (tokenPayload.length % 4) tokenPayload += "=";
+          var tokenClaims = JSON.parse(atob(tokenPayload));
+          var tokenScopes = String(tokenClaims.scp || "")
+            .toLowerCase()
+            .split(/\s+/);
+          if (
+            tokenScopes[0] &&
+            tokenScopes.indexOf("item.execute.all") === -1
+          ) {
+            var missingScopeError = new Error(
+              "The current Fabric token does not contain Item.Execute.All. Grant admin consent for that delegated Power BI Service permission, then use Start over to sign in again."
+            );
+            missingScopeError.code = "FabricTokenMissingItemExecute";
+            throw missingScopeError;
+          }
+        }
+      } catch (error) {
+        if (error && error.code === "FabricTokenMissingItemExecute") throw error;
+      }
       var instancePath =
         "workspaces/" +
         encodeURIComponent(workspaceId) +
@@ -3922,13 +3954,34 @@
         try {
           await direct.runNotebookJob(context.workspace.id, notebookId);
         } catch (error) {
-          if (/insufficient scopes|does not have sufficient scopes|HTTP 401|HTTP 403/i.test(
-            String(error && error.message)
-          )) {
+          if (
+            error &&
+            error.code === "FabricTokenMissingItemExecute"
+          ) {
             var executionPermissionMessage =
-              "Fabric rejected the initial bootstrap notebook run. Add the delegated Power BI Service permission Item.Execute.All, grant admin consent, and confirm that your user can run notebooks in this workspace.";
+              error.message;
             addManual(executionPermissionMessage);
             throw new Error(executionPermissionMessage);
+          }
+          if (error && (error.status === 401 || error.status === 403)) {
+            var fabricErrorCode =
+              error.body &&
+              (
+                error.body.errorCode ||
+                (error.body.error && error.body.error.code)
+              );
+            var fabricErrorMessage =
+              (error.body && error.body.message) ||
+              error.message ||
+              String(error);
+            var executionRejectionMessage =
+              "Fabric rejected the initial bootstrap notebook run" +
+              (fabricErrorCode ? " (" + fabricErrorCode + ")" : "") +
+              ". " +
+              String(fabricErrorMessage) +
+              " Confirm that the Fabric capacity is active and that your user can run notebooks in this workspace.";
+            addManual(executionRejectionMessage);
+            throw new Error(executionRejectionMessage);
           }
           throw error;
         }

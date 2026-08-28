@@ -514,6 +514,11 @@ An active same-name Azure Resource Manager deployment is resumed instead of
 rejected. If it has remained active for more than 30 minutes, Setup cancels only
 that stale deployment operation and reruns the incremental template against the
 existing resources.
+Immediately before starting the bootstrap notebook, Setup forces a fresh Fabric
+access token and verifies that a JWT token contains `Item.Execute.All`. This
+allows newly granted admin consent to take effect without waiting for the old
+token to expire. Other 401/403 responses retain the original Fabric error code
+and message instead of being mislabeled as a missing permission.
 The Serving bootstrap accepts Customer Insights - Journeys Delta event folders
 both under `Files/Customer Insights Journeys/<EventName>` and directly under
 `Files/<EventName>`, then exposes them through `Tables/journeys`.
