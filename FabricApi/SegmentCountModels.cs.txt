@@ -85,6 +85,16 @@ public sealed class SegmentRelationshipHop
     public string RelatedAttribute { get; set; } = string.Empty;
 
     public bool IsOptional { get; set; }
+
+    public string IntersectEntity { get; set; } = string.Empty;
+
+    public string SourceIntersectAttribute { get; set; } = string.Empty;
+
+    public string RelatedIntersectAttribute { get; set; } = string.Empty;
+
+    public string SourcePrimaryAttribute { get; set; } = string.Empty;
+
+    public string RelatedPrimaryAttribute { get; set; } = string.Empty;
 }
 
 public sealed class SegmentCondition

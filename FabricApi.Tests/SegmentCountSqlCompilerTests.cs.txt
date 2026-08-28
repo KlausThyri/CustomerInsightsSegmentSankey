@@ -339,6 +339,63 @@ public sealed class SegmentCountSqlCompilerTests
     }
 
     [Fact]
+    public void Compile_ManyToManyRelationship_JoinsThroughIntersectTable()
+    {
+        var listId = Guid.Parse("1a3e8f2d-4156-4bf8-a846-ef15dbbc8fb4");
+        var profile = new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Contacts",
+            BaseDetail = "PROFILE(contact)",
+            Steps =
+            [
+                new SegmentFilterStep
+                {
+                    Kind = "relationship",
+                    Label = "Marketing list",
+                    Detail = "listcontact_association",
+                    IsOptional = true,
+                    Condition = QualifiedPredicate(
+                        "list_1",
+                        "listid",
+                        "==",
+                        Json("\"" + listId + "\"")),
+                    Relationships =
+                    [
+                        new SegmentRelationshipHop
+                        {
+                            Alias = "list_1",
+                            RelatedEntity = "list",
+                            SourcePrimaryAttribute = "contactid",
+                            RelatedPrimaryAttribute = "listid",
+                            IntersectEntity = "listmember",
+                            SourceIntersectAttribute = "entityid",
+                            RelatedIntersectAttribute = "listid",
+                            IsOptional = true
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var result = Compile(
+            Request(profile),
+            Table("dataverse", "contact", "contactid", "statecode"),
+            Table("dataverse", "listmember", "entityid", "listid"),
+            Table("dataverse", "list", "listid"));
+
+        Assert.Contains("FROM [dataverse].[listmember] AS j", result.Sql);
+        Assert.Contains(
+            "INNER JOIN [dataverse].[list] AS r ON r.[listid] = j.[listid]",
+            result.Sql);
+        Assert.Contains("WHERE j.[entityid] = p.[contactid]", result.Sql);
+        Assert.Contains("r.[listid] = @p1", result.Sql);
+        Assert.Equal(listId, result.Parameters[1].Value);
+        Assert.Equal(3, result.SourceTables.Count);
+    }
+
+    [Fact]
     public void Compile_ProfilePrimaryId_ResolvesFabricIdAndAlwaysFiltersActiveRows()
     {
         var request = Request(new SegmentOperand

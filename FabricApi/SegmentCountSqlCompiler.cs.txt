@@ -513,15 +513,60 @@ internal sealed class SegmentCountSqlCompiler
                     }
                 ];
             var relatedTables = new List<EventTableDescriptor>();
+            var intersectTables = new List<EventTableDescriptor?>();
             var sourceKeys = new List<string>();
             var relatedKeys = new List<string>();
+            var sourceIntersectKeys = new List<string?>();
+            var relatedIntersectKeys = new List<string?>();
             var sourceTable = profileTable;
             foreach (var relationship in relationships)
             {
                 var relatedTable = catalog.ResolveDataverse(relationship.RelatedEntity);
                 AddSource(relatedTable);
-                sourceKeys.Add(ResolveColumn(sourceTable, relationship.SourceAttribute));
-                relatedKeys.Add(ResolveColumn(relatedTable, relationship.RelatedAttribute));
+                var hasIntersect = !string.IsNullOrWhiteSpace(relationship.IntersectEntity);
+                if (hasIntersect !=
+                        (!string.IsNullOrWhiteSpace(relationship.SourceIntersectAttribute) &&
+                         !string.IsNullOrWhiteSpace(relationship.RelatedIntersectAttribute)))
+                {
+                    throw new SegmentQueryException(
+                        "invalid_relationship",
+                        "An N:N relationship requires its intersect entity and both intersect attributes.");
+                }
+
+                if (hasIntersect)
+                {
+                    sourceKeys.Add(
+                        ResolveColumn(
+                            sourceTable,
+                            relationship.SourcePrimaryAttribute));
+                    relatedKeys.Add(
+                        ResolveColumn(
+                            relatedTable,
+                            relationship.RelatedPrimaryAttribute));
+                    var intersectTable =
+                        catalog.ResolveDataverse(relationship.IntersectEntity);
+                    AddSource(intersectTable);
+                    intersectTables.Add(intersectTable);
+                    sourceIntersectKeys.Add(
+                        ResolveColumn(
+                            intersectTable,
+                            relationship.SourceIntersectAttribute));
+                    relatedIntersectKeys.Add(
+                        ResolveColumn(
+                            intersectTable,
+                            relationship.RelatedIntersectAttribute));
+                }
+                else
+                {
+                    sourceKeys.Add(
+                        ResolveColumn(sourceTable, relationship.SourceAttribute));
+                    relatedKeys.Add(
+                        ResolveColumn(relatedTable, relationship.RelatedAttribute));
+                    intersectTables.Add(null);
+                    sourceIntersectKeys.Add(null);
+                    relatedIntersectKeys.Add(null);
+                }
+
                 relatedTables.Add(relatedTable);
                 sourceTable = relatedTable;
             }
@@ -566,33 +611,100 @@ internal sealed class SegmentCountSqlCompiler
                 conditionScopes,
                 depth + 1);
             var relationshipSql = new StringBuilder();
-            relationshipSql.Append("FROM ")
-                .Append(Qualified(relatedTables[0]))
-                .Append(" AS ")
-                .Append(aliases[0])
-                .AppendLine();
+            var junctionAliases = Enumerable.Range(1, relationships.Count)
+                .Select(index => relationships.Count == 1 ? "j" : "j" + index)
+                .ToList();
+            string correlation;
+            if (intersectTables[0] != null)
+            {
+                relationshipSql.Append("FROM ")
+                    .Append(Qualified(intersectTables[0]!))
+                    .Append(" AS ")
+                    .Append(junctionAliases[0])
+                    .AppendLine()
+                    .Append("INNER JOIN ")
+                    .Append(Qualified(relatedTables[0]))
+                    .Append(" AS ")
+                    .Append(aliases[0])
+                    .Append(" ON ")
+                    .Append(aliases[0])
+                    .Append('.')
+                    .Append(Quote(relatedKeys[0]))
+                    .Append(" = ")
+                    .Append(junctionAliases[0])
+                    .Append('.')
+                    .Append(Quote(relatedIntersectKeys[0]!))
+                    .AppendLine();
+                correlation =
+                    junctionAliases[0] + "." + Quote(sourceIntersectKeys[0]!) +
+                    " = p." + Quote(sourceKeys[0]);
+            }
+            else
+            {
+                relationshipSql.Append("FROM ")
+                    .Append(Qualified(relatedTables[0]))
+                    .Append(" AS ")
+                    .Append(aliases[0])
+                    .AppendLine();
+                correlation =
+                    aliases[0] + "." + Quote(relatedKeys[0]) +
+                    " = p." + Quote(sourceKeys[0]);
+            }
+
             for (var index = 1; index < relationships.Count; index++)
             {
-                relationshipSql.Append("INNER JOIN ")
-                    .Append(Qualified(relatedTables[index]))
-                    .Append(" AS ")
-                    .Append(aliases[index])
-                    .Append(" ON ")
-                    .Append(aliases[index])
-                    .Append('.')
-                    .Append(Quote(relatedKeys[index]))
-                    .Append(" = ")
-                    .Append(aliases[index - 1])
-                    .Append('.')
-                    .Append(Quote(sourceKeys[index]))
-                    .AppendLine();
+                if (intersectTables[index] != null)
+                {
+                    relationshipSql.Append("INNER JOIN ")
+                        .Append(Qualified(intersectTables[index]!))
+                        .Append(" AS ")
+                        .Append(junctionAliases[index])
+                        .Append(" ON ")
+                        .Append(junctionAliases[index])
+                        .Append('.')
+                        .Append(Quote(sourceIntersectKeys[index]!))
+                        .Append(" = ")
+                        .Append(aliases[index - 1])
+                        .Append('.')
+                        .Append(Quote(sourceKeys[index]))
+                        .AppendLine()
+                        .Append("INNER JOIN ")
+                        .Append(Qualified(relatedTables[index]))
+                        .Append(" AS ")
+                        .Append(aliases[index])
+                        .Append(" ON ")
+                        .Append(aliases[index])
+                        .Append('.')
+                        .Append(Quote(relatedKeys[index]))
+                        .Append(" = ")
+                        .Append(junctionAliases[index])
+                        .Append('.')
+                        .Append(Quote(relatedIntersectKeys[index]!))
+                        .AppendLine();
+                }
+                else
+                {
+                    relationshipSql.Append("INNER JOIN ")
+                        .Append(Qualified(relatedTables[index]))
+                        .Append(" AS ")
+                        .Append(aliases[index])
+                        .Append(" ON ")
+                        .Append(aliases[index])
+                        .Append('.')
+                        .Append(Quote(relatedKeys[index]))
+                        .Append(" = ")
+                        .Append(aliases[index - 1])
+                        .Append('.')
+                        .Append(Quote(sourceKeys[index]))
+                        .AppendLine();
+                }
             }
 
             var isOptional = relationships[0].IsOptional;
             var exists = $"""
                 SELECT 1
                 {relationshipSql.ToString().TrimEnd()}
-                WHERE {aliases[0]}.{Quote(relatedKeys[0])} = p.{Quote(sourceKeys[0])}
+                WHERE {correlation}
                   AND {(rootNot && !isOptional ? "NOT (" + condition + ")" : condition)}
                 """;
             var relationshipPredicate =

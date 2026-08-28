@@ -197,6 +197,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
         private const int StaticPageSize = 5000;
         private readonly IOrganizationService service;
         private readonly Dictionary<string, FabricRelationshipResolution> relationshipCache;
+        private readonly Dictionary<string, string> primaryIdCache;
 
         public FabricSegmentRequestBuilder(IOrganizationService service)
         {
@@ -204,6 +205,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             relationshipCache =
                 new Dictionary<string, FabricRelationshipResolution>(
                     StringComparer.OrdinalIgnoreCase);
+            primaryIdCache =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
 
         public FabricSegmentCountApiRequest Build(
@@ -397,6 +400,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     profile.EntityName,
                     relationship.Relationship);
                 var firstRelationship = relationships[0];
+                var supportsLegacyRelationship =
+                    relationships.Count == 1 &&
+                    string.IsNullOrWhiteSpace(firstRelationship.IntersectEntity);
                 ConditionNode accumulated = null;
                 foreach (var condition in FlattenAnd(relationship.Condition))
                 {
@@ -409,9 +415,15 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         Label = "Relationship filter " + relationship.RelationshipSchema,
                         Detail = accumulated.Describe(),
                         Condition = ConvertCondition(accumulated, false),
-                        RelatedEntity = firstRelationship.RelatedEntity,
-                        ProfileAttribute = firstRelationship.SourceAttribute,
-                        RelatedAttribute = firstRelationship.RelatedAttribute,
+                        RelatedEntity = supportsLegacyRelationship
+                            ? firstRelationship.RelatedEntity
+                            : null,
+                        ProfileAttribute = supportsLegacyRelationship
+                            ? firstRelationship.SourceAttribute
+                            : null,
+                        RelatedAttribute = supportsLegacyRelationship
+                            ? firstRelationship.RelatedAttribute
+                            : null,
                         IsOptional = relationship.IsOptional,
                         Relationships = relationships
                     });
@@ -437,8 +449,21 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 {
                     Alias = current.Alias,
                     RelatedEntity = resolved.RelatedEntity,
-                    SourceAttribute = resolved.ProfileAttribute,
-                    RelatedAttribute = resolved.RelatedAttribute,
+                    SourceAttribute = string.IsNullOrWhiteSpace(resolved.IntersectEntity)
+                        ? resolved.ProfileAttribute
+                        : null,
+                    RelatedAttribute = string.IsNullOrWhiteSpace(resolved.IntersectEntity)
+                        ? resolved.RelatedAttribute
+                        : null,
+                    SourcePrimaryAttribute = string.IsNullOrWhiteSpace(resolved.IntersectEntity)
+                        ? null
+                        : resolved.ProfileAttribute,
+                    RelatedPrimaryAttribute = string.IsNullOrWhiteSpace(resolved.IntersectEntity)
+                        ? null
+                        : resolved.RelatedAttribute,
+                    IntersectEntity = resolved.IntersectEntity,
+                    SourceIntersectAttribute = resolved.SourceIntersectAttribute,
+                    RelatedIntersectAttribute = resolved.RelatedIntersectAttribute,
                     IsOptional = current.IsOptional
                 });
                 currentEntity = resolved.RelatedEntity;
@@ -527,33 +552,74 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 });
             var relationship =
                 response.RelationshipMetadata as OneToManyRelationshipMetadata;
-            if (relationship == null)
+            FabricRelationshipResolution resolved;
+            if (relationship != null)
+            {
+                if (string.Equals(
+                    relationship.ReferencedEntity,
+                    profileEntity,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    resolved = new FabricRelationshipResolution(
+                        relationship.ReferencingEntity,
+                        relationship.ReferencedAttribute,
+                        relationship.ReferencingAttribute);
+                }
+                else if (string.Equals(
+                    relationship.ReferencingEntity,
+                    profileEntity,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    resolved = new FabricRelationshipResolution(
+                        relationship.ReferencedEntity,
+                        relationship.ReferencingAttribute,
+                        relationship.ReferencedAttribute);
+                }
+                else
+                {
+                    throw new InvalidPluginExecutionException(
+                        "The relationship '" + relationshipSchema +
+                        "' does not belong to the PROFILE entity " + profileEntity + ".");
+                }
+
+                relationshipCache.Add(cacheKey, resolved);
+                return resolved;
+            }
+
+            var manyToMany =
+                response.RelationshipMetadata as ManyToManyRelationshipMetadata;
+            if (manyToMany == null)
             {
                 throw new InvalidPluginExecutionException(
                     "The relationship '" + relationshipSchema +
-                    "' is not a supported 1:N relationship.");
+                    "' is not a supported 1:N or N:N relationship.");
             }
 
-            FabricRelationshipResolution resolved;
             if (string.Equals(
-                relationship.ReferencedEntity,
+                manyToMany.Entity1LogicalName,
                 profileEntity,
                 StringComparison.OrdinalIgnoreCase))
             {
                 resolved = new FabricRelationshipResolution(
-                    relationship.ReferencingEntity,
-                    relationship.ReferencedAttribute,
-                    relationship.ReferencingAttribute);
+                    manyToMany.Entity2LogicalName,
+                    ResolvePrimaryId(manyToMany.Entity1LogicalName),
+                    ResolvePrimaryId(manyToMany.Entity2LogicalName),
+                    manyToMany.IntersectEntityName,
+                    manyToMany.Entity1IntersectAttribute,
+                    manyToMany.Entity2IntersectAttribute);
             }
             else if (string.Equals(
-                relationship.ReferencingEntity,
+                manyToMany.Entity2LogicalName,
                 profileEntity,
                 StringComparison.OrdinalIgnoreCase))
             {
                 resolved = new FabricRelationshipResolution(
-                    relationship.ReferencedEntity,
-                    relationship.ReferencingAttribute,
-                    relationship.ReferencedAttribute);
+                    manyToMany.Entity1LogicalName,
+                    ResolvePrimaryId(manyToMany.Entity2LogicalName),
+                    ResolvePrimaryId(manyToMany.Entity1LogicalName),
+                    manyToMany.IntersectEntityName,
+                    manyToMany.Entity2IntersectAttribute,
+                    manyToMany.Entity1IntersectAttribute);
             }
             else
             {
@@ -564,6 +630,33 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
             relationshipCache.Add(cacheKey, resolved);
             return resolved;
+        }
+
+        private string ResolvePrimaryId(string entityName)
+        {
+            string primaryId;
+            if (primaryIdCache.TryGetValue(entityName, out primaryId))
+            {
+                return primaryId;
+            }
+
+            var response = (RetrieveEntityResponse)service.Execute(
+                new RetrieveEntityRequest
+                {
+                    LogicalName = entityName,
+                    EntityFilters = EntityFilters.Entity,
+                    RetrieveAsIfPublished = true
+                });
+            primaryId = response.EntityMetadata.PrimaryIdAttribute;
+            if (string.IsNullOrWhiteSpace(primaryId))
+            {
+                throw new InvalidPluginExecutionException(
+                    "The primary ID attribute for entity '" + entityName +
+                    "' could not be determined.");
+            }
+
+            primaryIdCache.Add(entityName, primaryId);
+            return primaryId;
         }
 
         private static FabricSegmentConditionRequest ConvertCondition(
@@ -840,11 +933,17 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             public FabricRelationshipResolution(
                 string relatedEntity,
                 string profileAttribute,
-                string relatedAttribute)
+                string relatedAttribute,
+                string intersectEntity = null,
+                string sourceIntersectAttribute = null,
+                string relatedIntersectAttribute = null)
             {
                 RelatedEntity = relatedEntity;
                 ProfileAttribute = profileAttribute;
                 RelatedAttribute = relatedAttribute;
+                IntersectEntity = intersectEntity;
+                SourceIntersectAttribute = sourceIntersectAttribute;
+                RelatedIntersectAttribute = relatedIntersectAttribute;
             }
 
             public string RelatedEntity { get; private set; }
@@ -852,6 +951,12 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             public string ProfileAttribute { get; private set; }
 
             public string RelatedAttribute { get; private set; }
+
+            public string IntersectEntity { get; private set; }
+
+            public string SourceIntersectAttribute { get; private set; }
+
+            public string RelatedIntersectAttribute { get; private set; }
         }
     }
 
@@ -979,14 +1084,29 @@ namespace CustomerInsightsSegmentSankey.CustomApi
         [DataMember(Name = "relatedEntity", Order = 2)]
         public string RelatedEntity { get; set; }
 
-        [DataMember(Name = "sourceAttribute", Order = 3)]
+        [DataMember(Name = "sourceAttribute", Order = 3, EmitDefaultValue = false)]
         public string SourceAttribute { get; set; }
 
-        [DataMember(Name = "relatedAttribute", Order = 4)]
+        [DataMember(Name = "relatedAttribute", Order = 4, EmitDefaultValue = false)]
         public string RelatedAttribute { get; set; }
 
         [DataMember(Name = "isOptional", Order = 5)]
         public bool IsOptional { get; set; }
+
+        [DataMember(Name = "intersectEntity", Order = 6, EmitDefaultValue = false)]
+        public string IntersectEntity { get; set; }
+
+        [DataMember(Name = "sourceIntersectAttribute", Order = 7, EmitDefaultValue = false)]
+        public string SourceIntersectAttribute { get; set; }
+
+        [DataMember(Name = "relatedIntersectAttribute", Order = 8, EmitDefaultValue = false)]
+        public string RelatedIntersectAttribute { get; set; }
+
+        [DataMember(Name = "sourcePrimaryAttribute", Order = 9, EmitDefaultValue = false)]
+        public string SourcePrimaryAttribute { get; set; }
+
+        [DataMember(Name = "relatedPrimaryAttribute", Order = 10, EmitDefaultValue = false)]
+        public string RelatedPrimaryAttribute { get; set; }
     }
 
     [DataContract]

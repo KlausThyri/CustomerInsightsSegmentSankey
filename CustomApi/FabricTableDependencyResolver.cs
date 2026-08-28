@@ -274,19 +274,47 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     RetrieveAsIfPublished = true
                 });
             var relationship = response.RelationshipMetadata as OneToManyRelationshipMetadata;
-            if (relationship == null)
+            if (relationship != null)
+            {
+                if (!string.Equals(
+                        relationship.ReferencedEntity,
+                        profileEntity,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(
+                        relationship.ReferencingEntity,
+                        profileEntity,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidPluginExecutionException(
+                        "The relationship '" + relationshipSchema +
+                        "' does not belong to the PROFILE entity " + profileEntity + ".");
+                }
+
+                tables.Add(relationship.ReferencedEntity);
+                tables.Add(relationship.ReferencingEntity);
+                return string.Equals(
+                    relationship.ReferencedEntity,
+                    profileEntity,
+                    StringComparison.OrdinalIgnoreCase)
+                    ? relationship.ReferencingEntity
+                    : relationship.ReferencedEntity;
+            }
+
+            var manyToMany =
+                response.RelationshipMetadata as ManyToManyRelationshipMetadata;
+            if (manyToMany == null)
             {
                 throw new InvalidPluginExecutionException(
                     "The relationship '" + relationshipSchema +
-                    "' is not a supported 1:N relationship.");
+                    "' is not a supported 1:N or N:N relationship.");
             }
 
             if (!string.Equals(
-                    relationship.ReferencedEntity,
+                    manyToMany.Entity1LogicalName,
                     profileEntity,
                     StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(
-                    relationship.ReferencingEntity,
+                    manyToMany.Entity2LogicalName,
                     profileEntity,
                     StringComparison.OrdinalIgnoreCase))
             {
@@ -295,14 +323,15 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     "' does not belong to the PROFILE entity " + profileEntity + ".");
             }
 
-            tables.Add(relationship.ReferencedEntity);
-            tables.Add(relationship.ReferencingEntity);
+            tables.Add(manyToMany.Entity1LogicalName);
+            tables.Add(manyToMany.Entity2LogicalName);
+            tables.Add(manyToMany.IntersectEntityName);
             return string.Equals(
-                relationship.ReferencedEntity,
+                manyToMany.Entity1LogicalName,
                 profileEntity,
                 StringComparison.OrdinalIgnoreCase)
-                ? relationship.ReferencingEntity
-                : relationship.ReferencedEntity;
+                ? manyToMany.Entity2LogicalName
+                : manyToMany.Entity1LogicalName;
         }
 
         private static bool ContainsConsentToken(ConditionNode condition)

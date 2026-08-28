@@ -186,6 +186,9 @@ The preview evaluates the complete segment in the shared Fabric serving lakehous
   typed AST to the secured ASP.NET Core API.
 - Relationship parsing supports simple and recursively nested `RELATE` and
   `RELATEOPTIONAL` paths, including Customer Insights Data measure paths.
+- Dataverse 1:N and N:N relationships are resolved from metadata; N:N filters
+  join through the registered intersect table instead of comparing unrelated
+  entity primary keys.
 - `/api/segment-counts` compiles profile, relationship, consent, and
   `Interaction(...)` filters, including `UNION`, `INTERSECT`, and `EXCEPT`,
   into parameterized Fabric SQL CTEs.
