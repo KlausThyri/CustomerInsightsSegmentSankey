@@ -70,6 +70,21 @@ public sealed class SegmentFilterStep
     public string RelatedAttribute { get; set; } = string.Empty;
 
     public bool IsOptional { get; set; }
+
+    public List<SegmentRelationshipHop> Relationships { get; set; } = [];
+}
+
+public sealed class SegmentRelationshipHop
+{
+    public string Alias { get; set; } = string.Empty;
+
+    public string RelatedEntity { get; set; } = string.Empty;
+
+    public string SourceAttribute { get; set; } = string.Empty;
+
+    public string RelatedAttribute { get; set; } = string.Empty;
+
+    public bool IsOptional { get; set; }
 }
 
 public sealed class SegmentCondition
@@ -77,6 +92,8 @@ public sealed class SegmentCondition
     public string Kind { get; set; } = string.Empty;
 
     public string? Field { get; set; }
+
+    public string? Qualifier { get; set; }
 
     public string? Operator { get; set; }
 

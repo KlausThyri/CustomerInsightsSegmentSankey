@@ -169,7 +169,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     {
                         AddRelationshipTables(
                             profile.EntityName,
-                            relationship.RelationshipSchema,
+                            relationship.Relationship,
                             tables);
                         if (ContainsConsentToken(relationship.Condition))
                         {
@@ -247,6 +247,23 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         private void AddRelationshipTables(
             string profileEntity,
+            RelationshipPath relationshipPath,
+            ISet<string> tables)
+        {
+            var currentEntity = profileEntity;
+            var current = relationshipPath;
+            while (current != null)
+            {
+                currentEntity = AddRelationshipTables(
+                    currentEntity,
+                    current.RelationshipSchema,
+                    tables);
+                current = current.Nested;
+            }
+        }
+
+        private string AddRelationshipTables(
+            string profileEntity,
             string relationshipSchema,
             ISet<string> tables)
         {
@@ -280,6 +297,12 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
             tables.Add(relationship.ReferencedEntity);
             tables.Add(relationship.ReferencingEntity);
+            return string.Equals(
+                relationship.ReferencedEntity,
+                profileEntity,
+                StringComparison.OrdinalIgnoreCase)
+                ? relationship.ReferencingEntity
+                : relationship.ReferencedEntity;
         }
 
         private static bool ContainsConsentToken(ConditionNode condition)

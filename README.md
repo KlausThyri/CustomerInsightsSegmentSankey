@@ -184,8 +184,8 @@ The preview evaluates the complete segment in the shared Fabric serving lakehous
 - The Dataverse plugin reads and validates the draft MQL, resolves
   relationships, segment references, and static member groups, and sends a
   typed AST to the secured ASP.NET Core API.
-- Relationship parsing accepts both simple and qualified aliases in the
-  two-argument forms emitted by Journeys segment editors.
+- Relationship parsing supports simple and recursively nested `RELATE` and
+  `RELATEOPTIONAL` paths, including Customer Insights Data measure paths.
 - `/api/segment-counts` compiles profile, relationship, consent, and
   `Interaction(...)` filters, including `UNION`, `INTERSECT`, and `EXCEPT`,
   into parameterized Fabric SQL CTEs.

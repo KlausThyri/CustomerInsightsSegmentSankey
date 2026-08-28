@@ -26,13 +26,50 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
         }
 
         [Fact]
-        public void Parse_RelateOptional_RejectsAdditionalArguments()
+        public void Parse_RelateOptional_AcceptsNestedCustomerInsightsMeasurePaths()
+        {
+            const string mql =
+                "PROFILE(contact) " +
+                ".RELATEOPTIONAL(msdynci_customerprofile_contact, msdynci_loyalitypoints_1, " +
+                "RELATEOPTIONAL(msdynci_customerprofile_loyalitypoints, msdynci_loyalitypoints_1__1)) " +
+                ".FILTER(msdynci_loyalitypoints_1__1.msdynci_sumofpoints >= 100) " +
+                "INTERSECT PROFILE(contact) " +
+                ".RELATEOPTIONAL(msdynci_customerprofile_contact, msdynci_webvisitslast7days_1, " +
+                "RELATEOPTIONAL(msdynci_customerprofile_webvisitslast7days, msdynci_webvisitslast7days_1__1)) " +
+                ".FILTER(msdynci_webvisitslast7days_1__1.msdynci_calculation1 >= 5)";
+
+            var query = Parse(mql);
+            var firstOperand = ReadProperty<object>(query, "FirstOperand");
+            var steps = ReadProperty<IEnumerable>(firstOperand, "FilterSteps");
+            var enumerator = steps.GetEnumerator();
+            Assert.True(enumerator.MoveNext());
+            var relationshipStep = enumerator.Current;
+            var outer = ReadProperty<object>(relationshipStep, "Relationship");
+            var nested = ReadProperty<object>(outer, "Nested");
+
+            Assert.Equal(
+                "msdynci_customerprofile_contact",
+                ReadProperty<string>(outer, "RelationshipSchema"));
+            Assert.Equal(
+                "msdynci_customerprofile_loyalitypoints",
+                ReadProperty<string>(nested, "RelationshipSchema"));
+            Assert.Equal(
+                "msdynci_loyalitypoints_1__1",
+                ReadProperty<string>(nested, "Alias"));
+            Assert.True(ReadProperty<bool>(nested, "IsOptional"));
+            Assert.Single(ReadProperty<IEnumerable>(query, "SetOperations"));
+        }
+
+        [Fact]
+        public void Parse_RelateOptional_RejectsScalarThirdArgument()
         {
             var exception = Assert.Throws<TargetInvocationException>(
                 () => Parse(
                     "PROFILE(contact).RELATEOPTIONAL(contact_customer_accounts, account_1, extra).FILTER(account_1.name CONTAINS 'Depot')"));
 
-            Assert.Contains("Expected ')' after RELATEOPTIONAL", exception.InnerException.Message);
+            Assert.Contains(
+                "Expected nested RELATE(...) or RELATEOPTIONAL(...)",
+                exception.InnerException.Message);
         }
 
         private static object ParseRelationship(string mql)

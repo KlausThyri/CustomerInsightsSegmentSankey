@@ -1,6 +1,7 @@
 #if FABRIC_API
 using System.Data;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 
@@ -499,21 +500,103 @@ internal sealed class SegmentCountSqlCompiler
                     "A relationship filter step requires a condition.");
             }
 
-            var relatedTable = catalog.ResolveDataverse(step.RelatedEntity);
-            AddSource(relatedTable);
-            var profileKey = ResolveColumn(profileTable, step.ProfileAttribute);
-            var relatedKey = ResolveColumn(relatedTable, step.RelatedAttribute);
+            var relationships = step.Relationships is { Count: > 0 }
+                ? step.Relationships
+                :
+                [
+                    new SegmentRelationshipHop
+                    {
+                        RelatedEntity = step.RelatedEntity,
+                        SourceAttribute = step.ProfileAttribute,
+                        RelatedAttribute = step.RelatedAttribute,
+                        IsOptional = step.IsOptional
+                    }
+                ];
+            var relatedTables = new List<EventTableDescriptor>();
+            var sourceKeys = new List<string>();
+            var relatedKeys = new List<string>();
+            var sourceTable = profileTable;
+            foreach (var relationship in relationships)
+            {
+                var relatedTable = catalog.ResolveDataverse(relationship.RelatedEntity);
+                AddSource(relatedTable);
+                sourceKeys.Add(ResolveColumn(sourceTable, relationship.SourceAttribute));
+                relatedKeys.Add(ResolveColumn(relatedTable, relationship.RelatedAttribute));
+                relatedTables.Add(relatedTable);
+                sourceTable = relatedTable;
+            }
+
             var rootNot = IsRootNot(step.Condition);
+            if (rootNot &&
+                relationships.Any(
+                    relationship =>
+                        relationship.IsOptional != relationships[0].IsOptional))
+            {
+                throw new SegmentQueryException(
+                    "unsupported_relationship",
+                    "A negated nested relationship path cannot mix RELATE and RELATEOPTIONAL.");
+            }
+
             var conditionNode = rootNot ? step.Condition.Children![0] : step.Condition;
-            var condition = CompileCondition(conditionNode, relatedTable, "r", depth + 1);
+            var aliases = Enumerable.Range(1, relationships.Count)
+                .Select(index => relationships.Count == 1 ? "r" : "r" + index)
+                .ToList();
+            var conditionScopes = new Dictionary<string, RelationshipConditionScope>(
+                StringComparer.OrdinalIgnoreCase);
+            for (var index = 0; index < relationships.Count; index++)
+            {
+                if (!string.IsNullOrWhiteSpace(relationships[index].Alias) &&
+                    !RegisterRelationshipAlias(
+                        conditionScopes,
+                        relationships[index].Alias,
+                        new RelationshipConditionScope(
+                            relatedTables[index],
+                            aliases[index])))
+                {
+                    throw new SegmentQueryException(
+                        "invalid_relationship",
+                        $"Relationship alias '{relationships[index].Alias}' is duplicated.");
+                }
+            }
+
+            var condition = CompileRelationshipCondition(
+                conditionNode,
+                relatedTables[^1],
+                aliases[^1],
+                conditionScopes,
+                depth + 1);
+            var relationshipSql = new StringBuilder();
+            relationshipSql.Append("FROM ")
+                .Append(Qualified(relatedTables[0]))
+                .Append(" AS ")
+                .Append(aliases[0])
+                .AppendLine();
+            for (var index = 1; index < relationships.Count; index++)
+            {
+                relationshipSql.Append("INNER JOIN ")
+                    .Append(Qualified(relatedTables[index]))
+                    .Append(" AS ")
+                    .Append(aliases[index])
+                    .Append(" ON ")
+                    .Append(aliases[index])
+                    .Append('.')
+                    .Append(Quote(relatedKeys[index]))
+                    .Append(" = ")
+                    .Append(aliases[index - 1])
+                    .Append('.')
+                    .Append(Quote(sourceKeys[index]))
+                    .AppendLine();
+            }
+
+            var isOptional = relationships[0].IsOptional;
             var exists = $"""
                 SELECT 1
-                FROM {Qualified(relatedTable)} AS r
-                WHERE r.{Quote(relatedKey)} = p.{Quote(profileKey)}
-                  AND {(rootNot && !step.IsOptional ? "NOT (" + condition + ")" : condition)}
+                {relationshipSql.ToString().TrimEnd()}
+                WHERE {aliases[0]}.{Quote(relatedKeys[0])} = p.{Quote(sourceKeys[0])}
+                  AND {(rootNot && !isOptional ? "NOT (" + condition + ")" : condition)}
                 """;
             var relationshipPredicate =
-                rootNot && step.IsOptional
+                rootNot && isOptional
                     ? "NOT EXISTS (" + exists + ")"
                     : "EXISTS (" + exists + ")";
             return $"""
@@ -669,6 +752,77 @@ internal sealed class SegmentCountSqlCompiler
                 condition,
                 field => alias + "." + Quote(ResolveColumn(table, field)),
                 child => CompileCondition(child, table, alias, depth + 1));
+        }
+
+        private string CompileRelationshipCondition(
+            SegmentCondition condition,
+            EventTableDescriptor defaultTable,
+            string defaultAlias,
+            IReadOnlyDictionary<string, RelationshipConditionScope> scopes,
+            int depth)
+        {
+            EnsureDepth(depth);
+            if (string.Equals(condition.Kind, "consent", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new SegmentQueryException(
+                    "invalid_consent",
+                    "Consent conditions are not supported inside relationship filters.");
+            }
+
+            return CompileConditionCore(
+                condition,
+                field =>
+                {
+                    var table = defaultTable;
+                    var alias = defaultAlias;
+                    if (!string.IsNullOrWhiteSpace(condition.Qualifier))
+                    {
+                        if (!scopes.TryGetValue(condition.Qualifier, out var scope))
+                        {
+                            throw new SegmentQueryException(
+                                "invalid_identifier",
+                                $"Relationship alias '{condition.Qualifier}' is not present in the relationship path.");
+                        }
+
+                        table = scope.Table;
+                        alias = scope.Alias;
+                    }
+
+                    return alias + "." + Quote(ResolveColumn(table, field));
+                },
+                child => CompileRelationshipCondition(
+                    child,
+                    defaultTable,
+                    defaultAlias,
+                    scopes,
+                    depth + 1));
+        }
+
+        private static bool RegisterRelationshipAlias(
+            IDictionary<string, RelationshipConditionScope> scopes,
+            string relationshipAlias,
+            RelationshipConditionScope scope)
+        {
+            var separator = relationshipAlias.LastIndexOf('.');
+            var keys = separator < 0
+                ? new[] { relationshipAlias }
+                : new[]
+                {
+                    relationshipAlias,
+                    relationshipAlias.Substring(separator + 1)
+                };
+            foreach (var key in keys)
+            {
+                if (scopes.TryGetValue(key, out var existing) &&
+                    existing != scope)
+                {
+                    return false;
+                }
+
+                scopes[key] = scope;
+            }
+
+            return true;
         }
 
         private string CompileConsentCondition(
@@ -1080,6 +1234,10 @@ internal sealed class SegmentCountSqlCompiler
             .Replace("_", "\\_", StringComparison.Ordinal)
             .Replace("[", "\\[", StringComparison.Ordinal);
     }
+
+    private sealed record RelationshipConditionScope(
+        EventTableDescriptor Table,
+        string Alias);
 
     private sealed record OperandResult(string Cte, string ProfileEntity);
 }

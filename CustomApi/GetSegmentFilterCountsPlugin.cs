@@ -425,24 +425,53 @@ namespace CustomerInsightsSegmentSankey.CustomApi
     internal sealed class RelationshipFilterStep : MqlFilterStep
     {
         public RelationshipFilterStep(
-            string relationshipSchema,
-            string alias,
+            RelationshipPath relationship,
             ConditionNode condition,
             bool isOptional)
         {
-            RelationshipSchema = relationshipSchema;
-            Alias = alias;
+            Relationship = relationship;
             Condition = condition;
             IsOptional = isOptional;
+        }
+
+        public RelationshipPath Relationship { get; private set; }
+
+        public string RelationshipSchema
+        {
+            get { return Relationship.RelationshipSchema; }
+        }
+
+        public string Alias
+        {
+            get { return Relationship.Alias; }
+        }
+
+        public ConditionNode Condition { get; private set; }
+
+        public bool IsOptional { get; private set; }
+    }
+
+    internal sealed class RelationshipPath
+    {
+        public RelationshipPath(
+            string relationshipSchema,
+            string alias,
+            bool isOptional,
+            RelationshipPath nested)
+        {
+            RelationshipSchema = relationshipSchema;
+            Alias = alias;
+            IsOptional = isOptional;
+            Nested = nested;
         }
 
         public string RelationshipSchema { get; private set; }
 
         public string Alias { get; private set; }
 
-        public ConditionNode Condition { get; private set; }
-
         public bool IsOptional { get; private set; }
+
+        public RelationshipPath Nested { get; private set; }
     }
 
     internal abstract class ConditionNode
@@ -671,20 +700,12 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
                 if (IsWord("RELATE") || IsWord("RELATEOPTIONAL"))
                 {
-                    var isOptional = IsWord("RELATEOPTIONAL");
-                    var operatorName = isOptional ? "RELATEOPTIONAL" : "RELATE";
-                    tokenizer.Read();
-                    Expect(MqlTokenKind.LeftParenthesis, "'(' after " + operatorName);
-                    var relationship = ReadName("relationship schema");
-                    Expect(MqlTokenKind.Comma, "',' after relationship schema");
-                    var alias = ReadQualifiedName("relationship alias");
-                    Expect(MqlTokenKind.RightParenthesis, "')' after " + operatorName);
-                    Expect(MqlTokenKind.Dot, "'.FILTER' after " + operatorName);
+                    var relationship = ParseRelationshipPath();
+                    Expect(MqlTokenKind.Dot, "'.FILTER' after relationship path");
                     steps.Add(new RelationshipFilterStep(
                         relationship,
-                        alias,
                         ParseFilter(),
-                        isOptional));
+                        relationship.IsOptional));
                     continue;
                 }
 
@@ -692,6 +713,36 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             }
 
             return new ProfileOperand(entityName, steps);
+        }
+
+        private RelationshipPath ParseRelationshipPath()
+        {
+            var isOptional = IsWord("RELATEOPTIONAL");
+            var operatorName = isOptional ? "RELATEOPTIONAL" : "RELATE";
+            ExpectWord(operatorName);
+            Expect(MqlTokenKind.LeftParenthesis, "'(' after " + operatorName);
+            var relationship = ReadName("relationship schema");
+            Expect(MqlTokenKind.Comma, "',' after relationship schema");
+            var alias = ReadQualifiedName("relationship alias");
+            RelationshipPath nested = null;
+            if (tokenizer.Peek().Kind == MqlTokenKind.Comma)
+            {
+                tokenizer.Read();
+                if (!IsWord("RELATE") && !IsWord("RELATEOPTIONAL"))
+                {
+                    throw Error(
+                        "Expected nested RELATE(...) or RELATEOPTIONAL(...) relationship path.");
+                }
+
+                nested = ParseRelationshipPath();
+            }
+
+            Expect(MqlTokenKind.RightParenthesis, "')' after " + operatorName);
+            return new RelationshipPath(
+                relationship,
+                alias,
+                isOptional,
+                nested);
         }
 
         private SegmentReferenceOperand ParseSegmentReference()

@@ -248,6 +248,97 @@ public sealed class SegmentCountSqlCompilerTests
     }
 
     [Fact]
+    public void Compile_NestedRelationshipPath_JoinsEveryHopAndFiltersInnermostTable()
+    {
+        var profile = new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Contacts",
+            BaseDetail = "PROFILE(contact)",
+            Steps =
+            [
+                new SegmentFilterStep
+                {
+                    Kind = "relationship",
+                    Label = "Loyalty points",
+                    Detail = "Nested Customer Insights measure",
+                    IsOptional = true,
+                    Condition = new SegmentCondition
+                    {
+                        Kind = "and",
+                        Children =
+                        [
+                            QualifiedPredicate(
+                                "msdynci_loyalitypoints_1",
+                                "statecode",
+                                "==",
+                                Json("0")),
+                            QualifiedPredicate(
+                                "msdynci_loyalitypoints_1__1",
+                                "msdynci_sumofpoints",
+                                ">=",
+                                Json("100"))
+                        ]
+                    },
+                    Relationships =
+                    [
+                        new SegmentRelationshipHop
+                        {
+                            Alias = "CustomerProfile.msdynci_loyalitypoints_1",
+                            RelatedEntity = "msdynci_customerprofile",
+                            SourceAttribute = "msdynci_customerprofileid",
+                            RelatedAttribute = "msdynci_customerprofileid",
+                            IsOptional = true
+                        },
+                        new SegmentRelationshipHop
+                        {
+                            Alias = "msdynci_loyalitypoints_1__1",
+                            RelatedEntity = "msdynci_loyalitypoints",
+                            SourceAttribute = "msdynci_customerprofileid",
+                            RelatedAttribute = "msdynci_customerprofileid",
+                            IsOptional = true
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var result = Compile(
+            Request(profile),
+            Table(
+                "dataverse",
+                "contact",
+                "contactid",
+                "statecode",
+                "msdynci_customerprofileid"),
+            Table(
+                "dataverse",
+                "msdynci_customerprofile",
+                "msdynci_customerprofileid",
+                "statecode"),
+            Table(
+                "dataverse",
+                "msdynci_loyalitypoints",
+                "msdynci_customerprofileid",
+                "msdynci_sumofpoints"));
+
+        Assert.Contains(
+            "FROM [dataverse].[msdynci_customerprofile] AS r1",
+            result.Sql);
+        Assert.Contains(
+            "INNER JOIN [dataverse].[msdynci_loyalitypoints] AS r2 ON " +
+            "r2.[msdynci_customerprofileid] = r1.[msdynci_customerprofileid]",
+            result.Sql);
+        Assert.Contains(
+            "WHERE r1.[msdynci_customerprofileid] = p.[msdynci_customerprofileid]",
+            result.Sql);
+        Assert.Contains("r1.[statecode] = @p1", result.Sql);
+        Assert.Contains("r2.[msdynci_sumofpoints] >= @p2", result.Sql);
+        Assert.Equal(3, result.SourceTables.Count);
+    }
+
+    [Fact]
     public void Compile_ProfilePrimaryId_ResolvesFabricIdAndAlwaysFiltersActiveRows()
     {
         var request = Request(new SegmentOperand
@@ -565,6 +656,17 @@ public sealed class SegmentCountSqlCompilerTests
             Operator = operation,
             Value = value
         };
+    }
+
+    private static SegmentCondition QualifiedPredicate(
+        string qualifier,
+        string field,
+        string operation,
+        JsonElement value)
+    {
+        var condition = Predicate(field, operation, value);
+        condition.Qualifier = qualifier;
+        return condition;
     }
 
     private static JsonElement Json(string json)

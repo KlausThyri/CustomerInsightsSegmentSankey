@@ -393,9 +393,10 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         "The segment definition contains an unknown profile filter.");
                 }
 
-                var resolved = ResolveRelationship(
+                var relationships = ResolveRelationshipPath(
                     profile.EntityName,
-                    relationship.RelationshipSchema);
+                    relationship.Relationship);
+                var firstRelationship = relationships[0];
                 ConditionNode accumulated = null;
                 foreach (var condition in FlattenAnd(relationship.Condition))
                 {
@@ -408,12 +409,40 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         Label = "Relationship filter " + relationship.RelationshipSchema,
                         Detail = accumulated.Describe(),
                         Condition = ConvertCondition(accumulated, false),
-                        RelatedEntity = resolved.RelatedEntity,
-                        ProfileAttribute = resolved.ProfileAttribute,
-                        RelatedAttribute = resolved.RelatedAttribute,
-                        IsOptional = relationship.IsOptional
+                        RelatedEntity = firstRelationship.RelatedEntity,
+                        ProfileAttribute = firstRelationship.SourceAttribute,
+                        RelatedAttribute = firstRelationship.RelatedAttribute,
+                        IsOptional = relationship.IsOptional,
+                        Relationships = relationships
                     });
                 }
+            }
+
+            return result;
+        }
+
+        private List<FabricRelationshipHopRequest> ResolveRelationshipPath(
+            string profileEntity,
+            RelationshipPath relationshipPath)
+        {
+            var result = new List<FabricRelationshipHopRequest>();
+            var currentEntity = profileEntity;
+            var current = relationshipPath;
+            while (current != null)
+            {
+                var resolved = ResolveRelationship(
+                    currentEntity,
+                    current.RelationshipSchema);
+                result.Add(new FabricRelationshipHopRequest
+                {
+                    Alias = current.Alias,
+                    RelatedEntity = resolved.RelatedEntity,
+                    SourceAttribute = resolved.ProfileAttribute,
+                    RelatedAttribute = resolved.RelatedAttribute,
+                    IsOptional = current.IsOptional
+                });
+                currentEntity = resolved.RelatedEntity;
+                current = current.Nested;
             }
 
             return result;
@@ -610,6 +639,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             {
                 Kind = "predicate",
                 Field = predicate.Field.Name,
+                Qualifier = predicate.Field.Qualifier,
                 Operator = ResolveOperator(predicate.Operator)
             };
             if (predicate.Operator == PredicateOperator.In)
@@ -935,6 +965,28 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "isOptional", Order = 8)]
         public bool IsOptional { get; set; }
+
+        [DataMember(Name = "relationships", Order = 9, EmitDefaultValue = false)]
+        public List<FabricRelationshipHopRequest> Relationships { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class FabricRelationshipHopRequest
+    {
+        [DataMember(Name = "alias", Order = 1)]
+        public string Alias { get; set; }
+
+        [DataMember(Name = "relatedEntity", Order = 2)]
+        public string RelatedEntity { get; set; }
+
+        [DataMember(Name = "sourceAttribute", Order = 3)]
+        public string SourceAttribute { get; set; }
+
+        [DataMember(Name = "relatedAttribute", Order = 4)]
+        public string RelatedAttribute { get; set; }
+
+        [DataMember(Name = "isOptional", Order = 5)]
+        public bool IsOptional { get; set; }
     }
 
     [DataContract]
@@ -946,28 +998,31 @@ namespace CustomerInsightsSegmentSankey.CustomApi
         [DataMember(Name = "field", Order = 2, EmitDefaultValue = false)]
         public string Field { get; set; }
 
-        [DataMember(Name = "operator", Order = 3, EmitDefaultValue = false)]
+        [DataMember(Name = "qualifier", Order = 3, EmitDefaultValue = false)]
+        public string Qualifier { get; set; }
+
+        [DataMember(Name = "operator", Order = 4, EmitDefaultValue = false)]
         public string Operator { get; set; }
 
-        [DataMember(Name = "value", Order = 4, EmitDefaultValue = false)]
+        [DataMember(Name = "value", Order = 5, EmitDefaultValue = false)]
         public object Value { get; set; }
 
-        [DataMember(Name = "values", Order = 5, EmitDefaultValue = false)]
+        [DataMember(Name = "values", Order = 6, EmitDefaultValue = false)]
         public List<object> Values { get; set; }
 
-        [DataMember(Name = "children", Order = 6, EmitDefaultValue = false)]
+        [DataMember(Name = "children", Order = 7, EmitDefaultValue = false)]
         public List<FabricSegmentConditionRequest> Children { get; set; }
 
-        [DataMember(Name = "profileEmailField", Order = 7, EmitDefaultValue = false)]
+        [DataMember(Name = "profileEmailField", Order = 8, EmitDefaultValue = false)]
         public string ProfileEmailField { get; set; }
 
-        [DataMember(Name = "purposeId", Order = 8, EmitDefaultValue = false)]
+        [DataMember(Name = "purposeId", Order = 9, EmitDefaultValue = false)]
         public Guid? PurposeId { get; set; }
 
-        [DataMember(Name = "topicId", Order = 9, EmitDefaultValue = false)]
+        [DataMember(Name = "topicId", Order = 10, EmitDefaultValue = false)]
         public Guid? TopicId { get; set; }
 
-        [DataMember(Name = "channel", Order = 10, EmitDefaultValue = false)]
+        [DataMember(Name = "channel", Order = 11, EmitDefaultValue = false)]
         public string Channel { get; set; }
     }
 
