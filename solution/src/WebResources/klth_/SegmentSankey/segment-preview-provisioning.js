@@ -4366,7 +4366,7 @@
           var journeysMessage =
             "Required Customer Insights - Journeys event tables are missing from the Serving Lakehouse. " +
             "Enable the Customer Insights - Journeys export to Fabric, confirm that its Delta event folders are available under " +
-            "'Files/Customer Insights Journeys', run the 'Customer Insights Serving Bootstrap' notebook, and retry verification.";
+            "'Files/Customer Insights Journeys' or directly under 'Files', run the 'Customer Insights Serving Bootstrap' notebook, and retry verification.";
           addManual(journeysMessage);
           throw new Error(journeysMessage);
         }

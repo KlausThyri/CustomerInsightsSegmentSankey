@@ -745,6 +745,17 @@ Describe 'Browser-only notebook and API deployment' {
         $source | Should -Match '"tableName"\s*:\s*table_name'
     }
 
+    It 'discovers Journeys Delta folders directly under the serving Files root' {
+        $source = Get-Content -LiteralPath (Join-Path $script:BrowserRoot 'Fabric\bootstrap-events.py') -Raw
+        $source | Should -Match 'EVENT_SOURCE_CANDIDATES\s*=\s*\[[\s\S]*"Files"'
+        $source | Should -Match 'list_serving_shortcut_names\("Files"\)'
+        $source | Should -Match 'item\.get\("path",\s*""\)'
+        $source | Should -Match 'request_url\s*=\s*page\.get\("continuationUri"\)'
+        $source | Should -Match 'source_root == "Files" and event_name not in root_shortcut_names'
+        $source | Should -Match 'mssparkutils\.fs\.ls\(f"\{source_root\}/\{event_name\}/_delta_log"\)'
+        $source | Should -Match '"path":\s*f"\{source_root\}/\{event_name\}"'
+    }
+
     It 'does not depend on Spark SQL registry tables to provision shortcuts' {
         $source = Get-Content -LiteralPath (Join-Path $script:BrowserRoot 'Fabric\bootstrap-events.py') -Raw
         $source | Should -Not -Match 'spark\.sql'

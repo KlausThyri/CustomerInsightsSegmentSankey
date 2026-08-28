@@ -514,6 +514,9 @@ An active same-name Azure Resource Manager deployment is resumed instead of
 rejected. If it has remained active for more than 30 minutes, Setup cancels only
 that stale deployment operation and reruns the incremental template against the
 existing resources.
+The Serving bootstrap accepts Customer Insights - Journeys Delta event folders
+both under `Files/Customer Insights Journeys/<EventName>` and directly under
+`Files/<EventName>`, then exposes them through `Tables/journeys`.
 The validated shortcut `connectionId` replaces a stale retained connection id
 and is written back to Advanced options.
 The bootstrap creates the query-facing `Tables/dataverse/*` aliases as direct
@@ -768,7 +771,8 @@ Dataverse**, requires a System Administrator connection, distinguishes the
 **Customer Insights Journeys** folder from the regular CDS2 source, and links to
 the official Microsoft instructions. It prominently requires **Files**, not
 **Tables**, because the bootstrap discovers interaction Delta data below
-`Files/Customer Insights Journeys` and creates the queryable SQL tables itself.
+`Files/Customer Insights Journeys` or from registered shortcuts directly below
+the Serving Lakehouse `Files` root and creates the queryable SQL tables itself.
 After the shortcut exists, another
 **Install everything** run automatically executes and monitors the bootstrap
 notebook and verifies the resulting `journeys` tables.

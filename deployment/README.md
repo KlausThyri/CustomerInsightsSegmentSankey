@@ -485,6 +485,10 @@ If Azure reports that the named Resource Manager deployment is already active,
 Setup resumes polling it. Deployments still active after 30 minutes are treated
 as stale: only the deployment operation is canceled, then the incremental
 template is safely restarted without deleting the existing resources.
+The bootstrap discovers Journeys Delta event folders in both supported Fabric
+layouts: nested below `Files/Customer Insights Journeys` or directly below the
+Serving Lakehouse `Files` root. Both layouts produce the query-facing
+`Tables/journeys` shortcuts.
 | Fabric Dataverse cloud connection | **Detect only** | Requires an interactive OAuth consent in the Fabric portal. |
 | Dataverse managed solution import | **Full** | `ImportSolutionAsync` for a fresh install, `StageAndUpgradeAsync` for an upgrade. |
 | Dataverse environment variable values | **Full** | Created or patched through the Web API. |
@@ -513,7 +517,7 @@ information in its **Preview** view before any change is made.
 | Fabric tenant setting **Service principals can use Fabric APIs** | Fabric tenant admin | Admin-portal-only setting; there is no public write API. |
 | Fabric capacity purchase or resume | Capacity admin | Commercial decision. Once a capacity exists, the workspace creation is automated. |
 | Fabric cloud connection to Dataverse | Workspace admin | The connection is created through an interactive OAuth dialog. Both paths discover an existing one and report clear instructions when none exists. |
-| Dataverse **Link to Microsoft Fabric** and the Journeys export to Fabric | Power Platform / CI-J admin | No documented public API. Setup distinguishes Dataverse table shortcuts from the Journeys Files shortcut. Dataverse tables may come from a separate source Lakehouse or already exist at the Serving Lakehouse root; Journeys interactions remain under `Files/Customer Insights Journeys`. |
+| Dataverse **Link to Microsoft Fabric** and the Journeys export to Fabric | Power Platform / CI-J admin | No documented public API. Setup distinguishes Dataverse table shortcuts from Journeys Files shortcuts. Dataverse tables may come from a separate source Lakehouse or already exist at the Serving Lakehouse root; Journeys interactions may be nested under `Files/Customer Insights Journeys` or exposed as registered shortcuts directly below the Serving Lakehouse `Files` root. |
 | Dataverse System Administrator role | Dataverse admin | Required to import a managed solution and to write environment variable values. |
 
 Everything else in the deployment is automated. Neither path claims

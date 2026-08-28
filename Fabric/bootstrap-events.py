@@ -29,17 +29,18 @@ EVENT_SOURCE_CANDIDATES = [
     f"{EVENT_SOURCE_ROOT}/Files/Customer%20Insights%20Journeys",
     f"{EVENT_SOURCE_ROOT}/Files/Customer Insights Journeys",
     EVENT_SOURCE_ROOT,
+    "Files",
 ]
 EVENT_SCHEMA = "journeys"
 DATAVERSE_SCHEMA = "dataverse"
 WORKSPACE_ID = "<fabric-workspace-id>"
 SERVING_LAKEHOUSE_ID = "<serving-lakehouse-id>"
 DATAVERSE_LAKEHOUSE_ID = "<dataverse-mirror-lakehouse-id>"
-SHORTCUT_API = (
+SHORTCUTS_API = (
     f"https://api.fabric.microsoft.com/v1/workspaces/{WORKSPACE_ID}"
     f"/items/{SERVING_LAKEHOUSE_ID}/shortcuts"
-    "?shortcutConflictPolicy=CreateOrOverwrite"
 )
+SHORTCUT_API = SHORTCUTS_API + "?shortcutConflictPolicy=CreateOrOverwrite"
 DATAVERSE_SHORTCUTS_API = (
     f"https://api.fabric.microsoft.com/v1/workspaces/{WORKSPACE_ID}"
     f"/items/{DATAVERSE_LAKEHOUSE_ID}/shortcuts?parentPath=Tables"
@@ -80,9 +81,44 @@ def write_diagnostic(message):
 
 write_diagnostic("Starting Journeys event folder discovery")
 
+
+def list_serving_shortcut_names(parent_path):
+    names = set()
+    request_url = SHORTCUTS_API
+    request_params = {"parentPath": parent_path}
+    try:
+        while True:
+            response = requests.get(
+                request_url,
+                headers=headers,
+                params=request_params,
+                timeout=60,
+            )
+            response.raise_for_status()
+            page = response.json()
+            names.update(
+                item.get("name")
+                for item in page.get("value", [])
+                if item.get("name")
+                and str(item.get("path", "")).strip("/").lower()
+                == parent_path.strip("/").lower()
+            )
+            request_url = page.get("continuationUri")
+            request_params = None
+            if not request_url:
+                break
+        return names, None
+    except Exception as error:
+        return set(), f"Could not list Serving shortcuts under {parent_path}: {error}"
+
+
 def find_event_folders():
     inspected = []
+    root_shortcut_names, root_shortcut_error = list_serving_shortcut_names("Files")
     for source_root in EVENT_SOURCE_CANDIDATES:
+        if source_root == "Files" and root_shortcut_error:
+            inspected.append(root_shortcut_error)
+            continue
         try:
             items = mssparkutils.fs.ls(source_root)
         except Exception as error:
@@ -94,6 +130,8 @@ def find_event_folders():
             if not item.isDir:
                 continue
             event_name = item.name.rstrip("/")
+            if source_root == "Files" and event_name not in root_shortcut_names:
+                continue
             if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", event_name):
                 continue
             try:
