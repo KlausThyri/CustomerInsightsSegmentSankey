@@ -3440,6 +3440,71 @@ test("a non-schema Dataverse Link Lakehouse is kept as source but replaced as se
   assert.ok(source.includes(`DATAVERSE_LAKEHOUSE_ID = "${DATAVERSE_LAKEHOUSE_ID}"`));
 });
 
+test("an upgraded resumed run replaces an incompatible serving Lakehouse and reruns dependents", async () => {
+  const createdServingLakehouseId = "99999999-aaaa-bbbb-cccc-dddddddddddd";
+  const direct = directHarness({
+    lakehouses: [
+      {
+        id: DATAVERSE_LAKEHOUSE_ID,
+        displayName: "dataverse_contoso_cds2_workspace"
+      }
+    ],
+    nonSchemaLakehouseIds: [DATAVERSE_LAKEHOUSE_ID],
+    createdServingLakehouseId
+  });
+  const completed = Object.fromEntries(
+    engine.STEPS.map((step) => [step.id, true])
+  );
+  const target = engine.mergeConfiguration(
+    Object.assign({}, VALID_TARGET, {
+      fabricServingLakehouseId: DATAVERSE_LAKEHOUSE_ID,
+      fabricServingLakehouseName: "dataverse_contoso_cds2_workspace",
+      fabricDataverseLakehouseId: DATAVERSE_LAKEHOUSE_ID
+    })
+  );
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: {
+      target,
+      completed,
+      facts: {
+        workspaceId: VALID_TARGET.fabricWorkspaceId,
+        servingLakehouseId: DATAVERSE_LAKEHOUSE_ID,
+        dataverseLakehouseId: DATAVERSE_LAKEHOUSE_ID,
+        dataverseConnectionId: VALID_TARGET.fabricDataverseConnectionId,
+        dataverseDeltaFolder: DATAVERSE_DELTA_FOLDER,
+        apiBaseUrl: "https://segment-preview-api.azurewebsites.net/api/",
+        principalId: "dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb"
+      }
+    }
+  });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  assert.equal(
+    result.results.find((step) => step.id === "fabric-discovery").status,
+    "succeeded"
+  );
+  assert.equal(
+    result.results.find((step) => step.id === "fabric-notebook").status,
+    "succeeded"
+  );
+  for (const stepId of [
+    "azure-infra",
+    "fabric-permissions",
+    "fabric-connection-permissions",
+    "azure-app",
+    "dataverse-config"
+  ]) {
+    assert.equal(
+      result.results.find((step) => step.id === stepId).status,
+      "succeeded",
+      `${stepId} must rerun after the Serving Lakehouse changes`
+    );
+  }
+});
+
 test("a failed initial notebook run stops installation", async () => {
   const direct = directHarness({
     notebookRunFails: "The Fabric bootstrap notebook finished with state 'Missing export'."
@@ -4567,7 +4632,7 @@ test("a resumed run that cannot recover the key redeploys every step that stores
   assert.match(secret.message, /new one was generated/i);
   assert.equal(result.results.find((entry) => entry.id === "azure-infra").status, "succeeded");
   assert.equal(result.results.find((entry) => entry.id === "dataverse-config").status, "succeeded");
-  assert.equal(result.results.find((entry) => entry.id === "fabric-notebook").status, "resumed");
+  assert.equal(result.results.find((entry) => entry.id === "fabric-notebook").status, "succeeded");
   const deploy = direct.calls.find((call) => call.kind === "deployTemplate");
   assert.ok(deploy, "the infrastructure must be redeployed with the new key");
   assert.ok(dataverse.written[engine.ENV.apiKey], "the new key must reach Dataverse");
@@ -4594,27 +4659,26 @@ test("dataverse-config never reports success when it wrote nothing", async () =>
   assert.equal(dataverse.written[engine.ENV.apiKey], undefined);
 });
 
-test("a resumed run without the Fabric facts fails loudly instead of deploying blanks", async () => {
+test("a resumed run without Fabric facts rediscovers the configured target before Azure", async () => {
   const direct = directHarness({ appSettings: { BEHAVIORAL_API_KEY: "earlier-run-key" } });
   const { orchestrator } = directOrchestrator({
     direct,
     settings: {
       completed: { secret: true, "fabric-discovery": true, "fabric-notebook": true },
       facts: {},
-      target: engine.mergeConfiguration({
-        subscriptionId: VALID_TARGET.subscriptionId,
-        resourceGroup: VALID_TARGET.resourceGroup,
-        webAppName: VALID_TARGET.webAppName
-      })
+      target: engine.mergeConfiguration(VALID_TARGET)
     }
   });
   const result = await orchestrator.run();
-  assert.equal(result.ok, false);
-  assert.equal(result.failedStep, "azure-infra");
-  assert.equal(direct.calls.some((call) => call.kind === "deployTemplate"), false);
-  const step = result.results.find((entry) => entry.id === "azure-infra");
-  assert.match(step.message, /Fabric workspace id/);
-  assert.match(step.message, /Start over/);
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  const step = result.results.find((entry) => entry.id === "fabric-discovery");
+  assert.equal(step.status, "succeeded");
+  const deployment = direct.calls.find((call) => call.kind === "deployTemplate");
+  assert.ok(deployment);
+  assert.equal(
+    deployment.parameters.fabricServingLakehouseId,
+    VALID_TARGET.fabricServingLakehouseId
+  );
 });
 
 test("fabric-permissions fails loudly when the managed identity is unknown", async () => {

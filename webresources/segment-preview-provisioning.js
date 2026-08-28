@@ -716,7 +716,14 @@
    * key an earlier run stored or generates a new one, because every later step
    * needs the key in memory.
    */
-  var ALWAYS_RUN = ["preflight", "consent", "secret", "verify"];
+  var ALWAYS_RUN = [
+    "preflight",
+    "consent",
+    "secret",
+    "fabric-discovery",
+    "fabric-notebook",
+    "verify"
+  ];
 
   /** Remedial action the setup Custom API offers for the Fabric shortcuts. */
   var PROVISION_SHORTCUTS_ACTION = "provision-shortcuts";
@@ -3516,6 +3523,8 @@
           serving = newLakehouse.body;
         }
         context.serving = serving;
+        var previousServingLakehouseId =
+          target.fabricServingLakehouseId || facts.servingLakehouseId;
         target.fabricWorkspaceId = workspace.id;
         target.fabricWorkspaceName = workspace.displayName || target.fabricWorkspaceName;
         target.fabricServingLakehouseId = serving.id;
@@ -3524,6 +3533,22 @@
         facts.workspaceName = workspace.displayName || target.fabricWorkspaceName;
         facts.servingLakehouseId = serving.id;
         facts.servingLakehouseName = serving.displayName || target.fabricServingLakehouseName;
+        if (
+          isGuid(previousServingLakehouseId) &&
+          !sameIdentifier(previousServingLakehouseId, serving.id)
+        ) {
+          forceRerun(
+            [
+              "azure-infra",
+              "fabric-permissions",
+              "fabric-connection-permissions",
+              "azure-app",
+              "dataverse-config",
+              "verify"
+            ],
+            "The compatible Serving Lakehouse changed, so every dependent configuration step runs again."
+          );
+        }
 
         if (!details) {
           details = await direct.fabric(

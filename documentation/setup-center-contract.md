@@ -496,6 +496,11 @@ properties include `defaultSchema`. Existing Lakehouses without this property
 cannot be converted to schema support, so Setup reuses or creates the separate
 schema-enabled `SegmentPreviewServing` Lakehouse with
 `creationPayload.enableSchemas: true`.
+Fabric discovery and bootstrap are always re-run idempotently when the
+administrator presses **Install everything**, even if an earlier solution
+version recorded them as complete. When discovery changes the Serving
+Lakehouse id, Setup also forces Azure settings, Fabric permissions, connection
+permissions, API deployment, and Dataverse configuration to run again.
 The validated shortcut `connectionId` replaces a stale retained connection id
 and is written back to Advanced options.
 The bootstrap creates the query-facing `Tables/dataverse/*` aliases as direct

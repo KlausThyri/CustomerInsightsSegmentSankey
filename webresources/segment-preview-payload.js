@@ -24,7 +24,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
   return {
-    "contentVersion": "1.1.0.44",
+    "contentVersion": "1.1.0.45",
     "notebook": {
       "displayName": "Customer Insights Serving Bootstrap",
       "description": "Registers Journeys event folders and selected Dataverse mirror tables in one serving Lakehouse.",

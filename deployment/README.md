@@ -468,6 +468,11 @@ solution is already imported, because it is what carries the setup page.
 | Fabric Serving Lakehouse | **Create or reuse** | Setup requires REST property `defaultSchema`. It reuses a compatible Lakehouse; otherwise it creates `SegmentPreviewServing` with `creationPayload.enableSchemas: true`, because Fabric cannot convert an existing non-schema Lakehouse in place. |
 | Query-facing Dataverse shortcuts | **Create or reuse** | The bootstrap creates `Tables/dataverse/*` directly from the validated Dataverse target metadata in the schema-enabled Serving Lakehouse. |
 | Bootstrap validation | **Verify** | Shortcut provisioning does not require Spark SQL registry tables. The final API status check remains mandatory and stops installation with component-specific guidance if any Dataverse or Journeys table is still unavailable. |
+
+Fabric discovery and notebook bootstrap are deliberately rechecked on every
+**Install everything** run. If a newer Setup version replaces an incompatible
+Serving Lakehouse, every dependent Azure, Fabric, and Dataverse configuration
+step is forced to run again rather than trusting stale completion state.
 | Fabric Dataverse cloud connection | **Detect only** | Requires an interactive OAuth consent in the Fabric portal. |
 | Dataverse managed solution import | **Full** | `ImportSolutionAsync` for a fresh install, `StageAndUpgradeAsync` for an upgrade. |
 | Dataverse environment variable values | **Full** | Created or patched through the Web API. |
