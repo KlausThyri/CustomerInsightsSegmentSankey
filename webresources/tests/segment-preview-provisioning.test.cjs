@@ -2952,14 +2952,30 @@ function directHarness(options = {}) {
         throw new Error("The caller does not have sufficient scopes to perform this operation");
       }
       if (method === "GET" && /\/lakehouses\/[^/]+$/.test(path)) {
+        const lakehouseId = path.match(/\/lakehouses\/([^/]+)$/)[1];
+        const nonSchemaLakehouseIds = options.nonSchemaLakehouseIds || [];
         return {
           body: {
             properties: {
               sqlEndpointProperties: {
                 id: "sqldb",
                 connectionString: "contoso.datawarehouse.fabric.microsoft.com"
-              }
+              },
+              defaultSchema:
+                options.servingSchemaEnabled === false ||
+                nonSchemaLakehouseIds.includes(lakehouseId)
+                  ? null
+                  : "dbo"
             }
+          }
+        };
+      }
+      if (method === "POST" && /\/lakehouses$/.test(path)) {
+        return {
+          status: 201,
+          body: {
+            id: options.createdServingLakehouseId || VALID_TARGET.fabricServingLakehouseId,
+            displayName: body.displayName
           }
         };
       }
@@ -3361,6 +3377,67 @@ test("the direct run publishes the notebook through the Fabric definition API", 
   assert.equal(step.status, "succeeded");
   assert.match(step.message, /published and scheduled/);
   assert.match(step.message, /Initial run completed/);
+});
+
+test("a non-schema Dataverse Link Lakehouse is kept as source but replaced as serving", async () => {
+  const createdServingLakehouseId = "99999999-aaaa-bbbb-cccc-dddddddddddd";
+  const direct = directHarness({
+    lakehouses: [
+      {
+        id: DATAVERSE_LAKEHOUSE_ID,
+        displayName: "dataverse_contoso_cds2_workspace"
+      }
+    ],
+    nonSchemaLakehouseIds: [DATAVERSE_LAKEHOUSE_ID],
+    createdServingLakehouseId
+  });
+  const target = engine.mergeConfiguration(
+    Object.assign({}, VALID_TARGET, {
+      fabricServingLakehouseId: DATAVERSE_LAKEHOUSE_ID,
+      fabricServingLakehouseName: "dataverse_contoso_cds2_workspace",
+      fabricDataverseLakehouseId: DATAVERSE_LAKEHOUSE_ID
+    })
+  );
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: { target }
+  });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  assert.equal(
+    result.context.target.fabricServingLakehouseId,
+    createdServingLakehouseId
+  );
+  assert.equal(
+    result.context.target.fabricDataverseLakehouseId,
+    DATAVERSE_LAKEHOUSE_ID
+  );
+  const create = direct.calls.find(
+    (call) =>
+      call.kind === "fabric" &&
+      call.method === "POST" &&
+      /\/lakehouses$/.test(call.path)
+  );
+  assert.deepEqual(create.body, {
+    displayName: "SegmentPreviewServing",
+    description: "Serving lakehouse for the Customer Insights Segment Preview.",
+    creationPayload: {
+      enableSchemas: true
+    }
+  });
+  const notebook = direct.calls.find(
+    (call) => call.kind === "fabric" && /\/notebooks$/.test(call.path)
+  );
+  const notebookPart = notebook.body.definition.parts.find(
+    (part) => part.path === "notebook-content.ipynb"
+  );
+  const source = JSON.parse(
+    Buffer.from(notebookPart.payload, "base64").toString("utf8")
+  ).cells.flatMap((cell) => cell.source || []).join("");
+  assert.ok(source.includes(`SERVING_LAKEHOUSE_ID = "${createdServingLakehouseId}"`));
+  assert.ok(source.includes(`DATAVERSE_LAKEHOUSE_ID = "${DATAVERSE_LAKEHOUSE_ID}"`));
 });
 
 test("a failed initial notebook run stops installation", async () => {

@@ -3477,17 +3477,41 @@
         var serving = lakehouses.filter(function (item) {
           return sameIdentifier(item.id, requestedServingId);
         })[0];
+        var details = null;
+        if (serving) {
+          details = await direct.fabric(
+            "GET",
+            "workspaces/" + workspace.id + "/lakehouses/" + serving.id
+          );
+          if (!details.body.properties || !details.body.properties.defaultSchema) {
+            serving = null;
+            details = null;
+          }
+        }
         if (!serving) {
           serving = uniqueNamedResource(
             lakehouses,
-            target.fabricServingLakehouseName,
+            TARGET_DEFAULTS.fabricServingLakehouseName,
             "Fabric Lakehouse"
           );
+          if (serving) {
+            details = await direct.fabric(
+              "GET",
+              "workspaces/" + workspace.id + "/lakehouses/" + serving.id
+            );
+            if (!details.body.properties || !details.body.properties.defaultSchema) {
+              serving = null;
+              details = null;
+            }
+          }
         }
         if (!serving) {
           var newLakehouse = await direct.fabric("POST", "workspaces/" + workspace.id + "/lakehouses", {
-            displayName: target.fabricServingLakehouseName,
-            description: "Serving lakehouse for the Customer Insights Segment Preview."
+            displayName: TARGET_DEFAULTS.fabricServingLakehouseName,
+            description: "Serving lakehouse for the Customer Insights Segment Preview.",
+            creationPayload: {
+              enableSchemas: true
+            }
           });
           serving = newLakehouse.body;
         }
@@ -3501,10 +3525,12 @@
         facts.servingLakehouseId = serving.id;
         facts.servingLakehouseName = serving.displayName || target.fabricServingLakehouseName;
 
-        var details = await direct.fabric(
-          "GET",
-          "workspaces/" + workspace.id + "/lakehouses/" + serving.id
-        );
+        if (!details) {
+          details = await direct.fabric(
+            "GET",
+            "workspaces/" + workspace.id + "/lakehouses/" + serving.id
+          );
+        }
         var endpoint =
           details.body && details.body.properties && details.body.properties.sqlEndpointProperties;
         if (!endpoint || !endpoint.connectionString) {

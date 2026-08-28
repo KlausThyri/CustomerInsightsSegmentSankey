@@ -488,16 +488,18 @@ No delegated OneLake write permission is used for them. `OneLake.Read.All` is
 required only to discover the existing Link to Microsoft Fabric shortcut source.
 Discovery reads all Dataverse shortcuts in that source Lakehouse. A separate
 Microsoft-created Link-to-Fabric Lakehouse is preferred. If it is absent,
-discovery also checks the Serving Lakehouse as a fallback and accepts it only
-when a root `Tables/contact` shortcut carries matching Dataverse target
-metadata (`environmentDomain`, `connectionId`, and `deltaLakeFolder`). This
-supports existing combined Lakehouses without creating duplicate resources.
+discovery also checks the selected Lakehouse for matching root
+`Tables/contact` shortcut metadata (`environmentDomain`, `connectionId`, and
+`deltaLakeFolder`). A Microsoft-created Dataverse Link Lakehouse is retained as
+the source, but it is not accepted as the Serving Lakehouse unless its REST
+properties include `defaultSchema`. Existing Lakehouses without this property
+cannot be converted to schema support, so Setup reuses or creates the separate
+schema-enabled `SegmentPreviewServing` Lakehouse with
+`creationPayload.enableSchemas: true`.
 The validated shortcut `connectionId` replaces a stale retained connection id
 and is written back to Advanced options.
 The bootstrap creates the query-facing `Tables/dataverse/*` aliases as direct
-Dataverse shortcuts using this validated target metadata. It does not create a
-OneLake shortcut back into the same Lakehouse, so separate and co-located source
-layouts follow the same idempotent path.
+Dataverse shortcuts using this validated target metadata.
 Shortcut creation itself is REST-based and does not depend on Spark SQL
 databases or registry tables. Individual shortcut failures are retained in the
 notebook diagnostic, while the mandatory final API verification remains the
