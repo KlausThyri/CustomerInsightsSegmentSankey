@@ -2389,6 +2389,169 @@ test("direct client fails fast on a failed ARM deployment", async () => {
   );
 });
 
+test("direct client resumes an active same-name ARM deployment", async () => {
+  let gets = 0;
+  let puts = 0;
+  const progress = [];
+  const fetchImpl = createFetchMock([
+    { repeat: true,
+      match: (request) => request.method === "PUT",
+      respond: () => {
+        puts++;
+        return puts === 1
+          ? jsonResponse(409, {
+              error: {
+                code: "DeploymentActiveAndUneditable",
+                message: "The previous deployment is still active."
+              }
+            })
+          : jsonResponse(200, {});
+      }
+    },
+    {
+      repeat: true,
+      match: (request) =>
+        request.method === "GET" &&
+        !request.url.endsWith("/operations?api-version=2022-09-01"),
+      respond: () => {
+        gets++;
+        return gets < 2
+          ? jsonResponse(200, { properties: { provisioningState: "Running" } })
+          : jsonResponse(200, {
+              properties: {
+                provisioningState: "Succeeded",
+                outputs: {
+                  webAppUrl: { value: "https://existing.azurewebsites.net/api/" }
+                }
+              }
+            });
+      }
+    },
+    {
+      repeat: true,
+      match: (request) =>
+        request.method === "GET" &&
+        request.url.endsWith("/operations?api-version=2022-09-01"),
+      respond: () => jsonResponse(200, { value: [] })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "t",
+    timer: immediateTimer
+  });
+
+  const outputs = await direct.deployTemplate(
+    "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6",
+    "rg-segment-preview",
+    "segment-preview",
+    embeddedTemplate,
+    { webAppName: "segment-preview-api" },
+    { onProgress: (entry) => progress.push(entry) }
+  );
+
+  assert.equal(
+    outputs.webAppUrl.value,
+    "https://existing.azurewebsites.net/api/"
+  );
+  assert.equal(
+    fetchImpl.calls.filter((call) => call.init.method === "PUT").length,
+    2
+  );
+  assert.match(progress[0].message, /waiting for the existing Azure deployment/);
+});
+
+test("direct client safely restarts an active ARM deployment that is stale", async () => {
+  let putCalls = 0;
+  let getCalls = 0;
+  const fetchImpl = createFetchMock([
+    {
+      repeat: true,
+      match: (request) => request.method === "PUT",
+      respond: () => {
+        putCalls++;
+        return putCalls === 1
+          ? jsonResponse(409, {
+              error: {
+                code: "DeploymentActiveAndUneditable",
+                message: "The previous deployment is still active."
+              }
+            })
+          : jsonResponse(200, {});
+      }
+    },
+    {
+      match: (request) =>
+        request.method === "POST" &&
+        request.url.includes("/deployments/segment-preview/cancel?"),
+      respond: () => jsonResponse(202, {})
+    },
+    {
+      repeat: true,
+      match: (request) =>
+        request.method === "GET" &&
+        !request.url.endsWith("/operations?api-version=2022-09-01"),
+      respond: () => {
+        getCalls++;
+        if (getCalls === 1) {
+          return jsonResponse(200, {
+            properties: {
+              provisioningState: "Running",
+              timestamp: new Date(Date.now() - 31 * 60 * 1000).toISOString()
+            }
+          });
+        }
+        if (getCalls === 2) {
+          return jsonResponse(200, {
+            properties: {
+              provisioningState: "Canceled",
+              timestamp: new Date().toISOString()
+            }
+          });
+        }
+        return jsonResponse(200, {
+          properties: {
+            provisioningState: "Succeeded",
+            outputs: {
+              webAppUrl: { value: "https://restarted.azurewebsites.net/api/" }
+            }
+          }
+        });
+      }
+    },
+    {
+      repeat: true,
+      match: (request) =>
+        request.method === "GET" &&
+        request.url.endsWith("/operations?api-version=2022-09-01"),
+      respond: () => jsonResponse(200, { value: [] })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "t",
+    timer: immediateTimer
+  });
+
+  const outputs = await direct.deployTemplate(
+    "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6",
+    "rg-segment-preview",
+    "segment-preview",
+    embeddedTemplate,
+    { webAppName: "segment-preview-api" }
+  );
+
+  assert.equal(
+    outputs.webAppUrl.value,
+    "https://restarted.azurewebsites.net/api/"
+  );
+  assert.equal(putCalls, 2);
+  assert.equal(
+    fetchImpl.calls.filter((call) => call.init.method === "POST").length,
+    1
+  );
+});
+
 
 // ------------------------------------------------------------ token provider
 

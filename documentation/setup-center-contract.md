@@ -510,6 +510,10 @@ preserves it and idempotently reuses or creates the schema-enabled fallback
 After selecting or creating the Serving Lakehouse, Setup waits up to five
 minutes for its SQL analytics endpoint and continues the same installation run
 as soon as the endpoint becomes available.
+An active same-name Azure Resource Manager deployment is resumed instead of
+rejected. If it has remained active for more than 30 minutes, Setup cancels only
+that stale deployment operation and reruns the incremental template against the
+existing resources.
 The validated shortcut `connectionId` replaces a stale retained connection id
 and is written back to Advanced options.
 The bootstrap creates the query-facing `Tables/dataverse/*` aliases as direct

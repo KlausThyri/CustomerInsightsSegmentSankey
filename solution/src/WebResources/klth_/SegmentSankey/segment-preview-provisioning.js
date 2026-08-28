@@ -2691,9 +2691,26 @@
         encodeURIComponent(resourceGroup) +
         "/providers/Microsoft.Resources/deployments/" +
         encodeURIComponent(deploymentName);
-      await arm("PUT", path, {
-        properties: { mode: "Incremental", template: template, parameters: wrapped }
-      });
+      var resumedExistingDeployment = false;
+      var staleCancellationRequested = false;
+      try {
+        await arm("PUT", path, {
+          properties: { mode: "Incremental", template: template, parameters: wrapped }
+        });
+      } catch (error) {
+        var errorCode =
+          error &&
+          error.body &&
+          error.body.error &&
+          error.body.error.code;
+        var activeDeployment =
+          String(errorCode || "").toLowerCase() === "deploymentactiveanduneditable" ||
+          /deployment.+(?:active and uneditable|another operation|previous deployment)/i.test(
+            String(error && error.message)
+          );
+        if (!activeDeployment) throw error;
+        resumedExistingDeployment = true;
+      }
 
       function deploymentSubsteps(payload) {
         var labels = {
@@ -2751,9 +2768,26 @@
           });
       }
 
-      for (var poll = 0; poll < 240; poll++) {
+      var pollLimit = resumedExistingDeployment ? 600 : 240;
+      for (var poll = 0; poll < pollLimit; poll++) {
         var snapshot = await arm("GET", path);
-        var state = snapshot.body && snapshot.body.properties && snapshot.body.properties.provisioningState;
+        var deploymentProperties = snapshot.body && snapshot.body.properties;
+        var state = deploymentProperties && deploymentProperties.provisioningState;
+        var deploymentTimestamp = deploymentProperties && Date.parse(deploymentProperties.timestamp);
+        if (
+          resumedExistingDeployment &&
+          !staleCancellationRequested &&
+          isFinite(deploymentTimestamp) &&
+          Date.now() - deploymentTimestamp > 30 * 60 * 1000 &&
+          !/^(succeeded|failed|canceled)$/i.test(String(state || ""))
+        ) {
+          try {
+            await arm("POST", path + "/cancel");
+            staleCancellationRequested = true;
+          } catch (cancelError) {
+            if (cancelError.status !== 409) throw cancelError;
+          }
+        }
         var operations = await arm("GET", path + "/operations", undefined, "2022-09-01");
         var substeps = deploymentSubsteps(operations.body);
         if (callbacks.onProgress) {
@@ -2763,7 +2797,9 @@
             message:
               state === "Succeeded"
                 ? "Azure infrastructure deployment completed."
-                : "Azure is provisioning the infrastructure. Elapsed time: " +
+                : (resumedExistingDeployment
+                   ? "Setup is waiting for the existing Azure deployment. Elapsed time: "
+                   : "Azure is provisioning the infrastructure. Elapsed time: ") +
                   Math.floor((poll * 5) / 60) +
                   ":" +
                   String((poll * 5) % 60).padStart(2, "0"),
@@ -2779,9 +2815,29 @@
           });
         }
         if (state === "Succeeded") {
+          if (resumedExistingDeployment) {
+            await arm("PUT", path, {
+              properties: { mode: "Incremental", template: template, parameters: wrapped }
+            });
+            resumedExistingDeployment = false;
+            staleCancellationRequested = false;
+            pollLimit = 240;
+            poll = -1;
+            continue;
+          }
           return (snapshot.body.properties && snapshot.body.properties.outputs) || {};
         }
         if (state === "Failed" || state === "Canceled") {
+          if (resumedExistingDeployment) {
+            await arm("PUT", path, {
+              properties: { mode: "Incremental", template: template, parameters: wrapped }
+            });
+            resumedExistingDeployment = false;
+            staleCancellationRequested = false;
+            pollLimit = 240;
+            poll = -1;
+            continue;
+          }
           throw new Error("The Azure deployment finished with state '" + state + "'.");
         }
         await delay(5000, timer);

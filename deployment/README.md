@@ -481,6 +481,10 @@ uses the deterministic schema-enabled fallback `SegmentPreviewServingSchema`.
 Setup then polls for up to five minutes for the selected Lakehouse SQL analytics
 endpoint, avoiding a manual installation restart during normal Fabric
 provisioning.
+If Azure reports that the named Resource Manager deployment is already active,
+Setup resumes polling it. Deployments still active after 30 minutes are treated
+as stale: only the deployment operation is canceled, then the incremental
+template is safely restarted without deleting the existing resources.
 | Fabric Dataverse cloud connection | **Detect only** | Requires an interactive OAuth consent in the Fabric portal. |
 | Dataverse managed solution import | **Full** | `ImportSolutionAsync` for a fresh install, `StageAndUpgradeAsync` for an upgrade. |
 | Dataverse environment variable values | **Full** | Created or patched through the Web API. |
