@@ -3513,14 +3513,57 @@
           }
         }
         if (!serving) {
-          var newLakehouse = await direct.fabric("POST", "workspaces/" + workspace.id + "/lakehouses", {
-            displayName: TARGET_DEFAULTS.fabricServingLakehouseName,
-            description: "Serving lakehouse for the Customer Insights Segment Preview.",
-            creationPayload: {
-              enableSchemas: true
+          try {
+            var newLakehouse = await direct.fabric("POST", "workspaces/" + workspace.id + "/lakehouses", {
+              displayName: TARGET_DEFAULTS.fabricServingLakehouseName,
+              description: "Serving lakehouse for the Customer Insights Segment Preview.",
+              creationPayload: {
+                enableSchemas: true
+              }
+            });
+            serving = newLakehouse.body;
+          } catch (error) {
+            if (!/already.*(?:in use|exists)|(?:in use|exists).*already/i.test(String(error && error.message))) {
+              throw error;
             }
-          });
-          serving = newLakehouse.body;
+            for (var refresh = 0; refresh < 12 && !serving; refresh++) {
+              lakehouses = await direct.fabricCollection(
+                "workspaces/" + workspace.id + "/lakehouses"
+              );
+              var existingServing = uniqueNamedResource(
+                lakehouses,
+                TARGET_DEFAULTS.fabricServingLakehouseName,
+                "Fabric Lakehouse"
+              );
+              if (existingServing) {
+                var existingDetails = await direct.fabric(
+                  "GET",
+                  "workspaces/" + workspace.id + "/lakehouses/" + existingServing.id
+                );
+                if (
+                  existingDetails.body.properties &&
+                  existingDetails.body.properties.defaultSchema
+                ) {
+                  serving = existingServing;
+                  details = existingDetails;
+                  break;
+                }
+                throw new Error(
+                  "A Fabric item named '" +
+                    TARGET_DEFAULTS.fabricServingLakehouseName +
+                    "' already exists, but it is not a schema-enabled Lakehouse. Rename that item or select a schema-enabled Serving Lakehouse in Advanced options."
+                );
+              }
+              if (refresh < 11) await delay(5000, timer);
+            }
+            if (!serving) {
+              throw new Error(
+                "Fabric reports that '" +
+                  TARGET_DEFAULTS.fabricServingLakehouseName +
+                  "' already exists, but it did not become visible to Setup after one minute. Wait for Fabric synchronization and run installation again."
+              );
+            }
+          }
         }
         context.serving = serving;
         var previousServingLakehouseId =

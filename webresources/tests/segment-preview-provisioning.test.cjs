@@ -2905,6 +2905,7 @@ const payload = require(path.join(repoRoot, "webresources", "segment-preview-pay
  */
 function directHarness(options = {}) {
   const calls = [];
+  let lakehouseListCall = 0;
   const notebooks = options.notebooks || [];
   const schedules = options.schedules || [];
   const appSettings = Object.assign({}, options.appSettings || {});
@@ -2924,6 +2925,14 @@ function directHarness(options = {}) {
         }];
       }
       if (/\/lakehouses$/.test(path)) {
+        if (options.lakehouseLists) {
+          const selected =
+            options.lakehouseLists[
+              Math.min(lakehouseListCall, options.lakehouseLists.length - 1)
+            ];
+          lakehouseListCall += 1;
+          return selected;
+        }
         return options.lakehouses || [
           {
             id: VALID_TARGET.fabricServingLakehouseId,
@@ -2971,6 +2980,9 @@ function directHarness(options = {}) {
         };
       }
       if (method === "POST" && /\/lakehouses$/.test(path)) {
+        if (options.servingCreateConflict) {
+          throw new Error("Requested 'SegmentPreviewServing' is already in use");
+        }
         return {
           status: 201,
           body: {
@@ -3477,6 +3489,60 @@ test("an upgraded resumed run replaces an incompatible serving Lakehouse and rer
         principalId: "dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb"
       }
     }
+  });
+
+  test("an already-in-use create conflict refreshes and reuses the existing serving Lakehouse", async () => {
+    const existingServingLakehouseId = "99999999-aaaa-bbbb-cccc-dddddddddddd";
+    const sourceLakehouse = {
+      id: DATAVERSE_LAKEHOUSE_ID,
+      displayName: "dataverse_contoso_cds2_workspace"
+    };
+    const direct = directHarness({
+      lakehouseLists: [
+        [sourceLakehouse],
+        [
+          sourceLakehouse,
+          {
+            id: existingServingLakehouseId,
+            displayName: "SegmentPreviewServing"
+          }
+        ]
+      ],
+      nonSchemaLakehouseIds: [DATAVERSE_LAKEHOUSE_ID],
+      servingCreateConflict: true
+    });
+    const target = engine.mergeConfiguration(
+      Object.assign({}, VALID_TARGET, {
+        fabricServingLakehouseId: DATAVERSE_LAKEHOUSE_ID,
+        fabricServingLakehouseName: sourceLakehouse.displayName,
+        fabricDataverseLakehouseId: DATAVERSE_LAKEHOUSE_ID
+      })
+    );
+    const { orchestrator } = directOrchestrator({
+      direct,
+      settings: { target }
+    });
+
+    const result = await orchestrator.run();
+
+    assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+    assert.equal(
+      result.context.target.fabricServingLakehouseId,
+      existingServingLakehouseId
+    );
+    const createCalls = direct.calls.filter(
+      (call) =>
+        call.kind === "fabric" &&
+        call.method === "POST" &&
+        /\/lakehouses$/.test(call.path)
+    );
+    assert.equal(createCalls.length, 1);
+    const lakehouseLists = direct.calls.filter(
+      (call) =>
+        call.kind === "fabricCollection" &&
+        /\/lakehouses$/.test(call.path)
+    );
+    assert.equal(lakehouseLists.length, 2);
   });
 
   const result = await orchestrator.run();

@@ -501,6 +501,9 @@ administrator presses **Install everything**, even if an earlier solution
 version recorded them as complete. When discovery changes the Serving
 Lakehouse id, Setup also forces Azure settings, Fabric permissions, connection
 permissions, API deployment, and Dataverse configuration to run again.
+Fabric item creation is also race-safe: if creation reports that
+`SegmentPreviewServing` is already in use, Setup refreshes Lakehouse discovery
+for up to one minute and reuses the schema-enabled item once Fabric exposes it.
 The validated shortcut `connectionId` replaces a stale retained connection id
 and is written back to Advanced options.
 The bootstrap creates the query-facing `Tables/dataverse/*` aliases as direct
