@@ -507,6 +507,9 @@ for up to one minute and reuses the schema-enabled item once Fabric exposes it.
 If that name belongs to a permanently non-schema-enabled Lakehouse, Setup
 preserves it and idempotently reuses or creates the schema-enabled fallback
 `SegmentPreviewServingSchema`.
+After selecting or creating the Serving Lakehouse, Setup waits up to five
+minutes for its SQL analytics endpoint and continues the same installation run
+as soon as the endpoint becomes available.
 The validated shortcut `connectionId` replaces a stale retained connection id
 and is written back to Advanced options.
 The bootstrap creates the query-facing `Tables/dataverse/*` aliases as direct

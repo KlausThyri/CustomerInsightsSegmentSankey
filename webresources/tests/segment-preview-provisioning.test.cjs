@@ -2906,6 +2906,7 @@ const payload = require(path.join(repoRoot, "webresources", "segment-preview-pay
 function directHarness(options = {}) {
   const calls = [];
   let lakehouseListCall = 0;
+  let lakehouseDetailsCall = 0;
   const notebooks = options.notebooks || [];
   const schedules = options.schedules || [];
   const appSettings = Object.assign({}, options.appSettings || {});
@@ -2963,13 +2964,18 @@ function directHarness(options = {}) {
       if (method === "GET" && /\/lakehouses\/[^/]+$/.test(path)) {
         const lakehouseId = path.match(/\/lakehouses\/([^/]+)$/)[1];
         const nonSchemaLakehouseIds = options.nonSchemaLakehouseIds || [];
+        const endpointReadyAfter = options.endpointReadyAfter || 0;
+        const endpointReady = lakehouseDetailsCall >= endpointReadyAfter;
+        lakehouseDetailsCall += 1;
         return {
           body: {
             properties: {
-              sqlEndpointProperties: {
-                id: "sqldb",
-                connectionString: "contoso.datawarehouse.fabric.microsoft.com"
-              },
+              sqlEndpointProperties: endpointReady
+                ? {
+                    id: "sqldb",
+                    connectionString: "contoso.datawarehouse.fabric.microsoft.com"
+                  }
+                : null,
               defaultSchema:
                 options.servingSchemaEnabled === false ||
                 nonSchemaLakehouseIds.includes(lakehouseId)
@@ -3491,7 +3497,33 @@ test("an upgraded resumed run replaces an incompatible serving Lakehouse and rer
     }
   });
 
-  test("an already-in-use create conflict refreshes and reuses the existing serving Lakehouse", async () => {
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  assert.equal(
+    result.results.find((step) => step.id === "fabric-discovery").status,
+    "succeeded"
+  );
+  assert.equal(
+    result.results.find((step) => step.id === "fabric-notebook").status,
+    "succeeded"
+  );
+  for (const stepId of [
+    "azure-infra",
+    "fabric-permissions",
+    "fabric-connection-permissions",
+    "azure-app",
+    "dataverse-config"
+  ]) {
+    assert.equal(
+      result.results.find((step) => step.id === stepId).status,
+      "succeeded",
+      `${stepId} must rerun after the Serving Lakehouse changes`
+    );
+  }
+});
+
+test("an already-in-use create conflict refreshes and reuses the existing serving Lakehouse", async () => {
     const existingServingLakehouseId = "99999999-aaaa-bbbb-cccc-dddddddddddd";
     const sourceLakehouse = {
       id: DATAVERSE_LAKEHOUSE_ID,
@@ -3688,31 +3720,35 @@ test("an upgraded resumed run replaces an incompatible serving Lakehouse and rer
     });
   });
 
-  const result = await orchestrator.run();
+  test("discovery waits for the Serving SQL endpoint and continues in the same run", async () => {
+    const direct = directHarness({
+      endpointReadyAfter: 3
+    });
+    const { orchestrator } = directOrchestrator({
+      direct
+    });
 
-  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
-  assert.equal(
-    result.results.find((step) => step.id === "fabric-discovery").status,
-    "succeeded"
-  );
-  assert.equal(
-    result.results.find((step) => step.id === "fabric-notebook").status,
-    "succeeded"
-  );
-  for (const stepId of [
-    "azure-infra",
-    "fabric-permissions",
-    "fabric-connection-permissions",
-    "azure-app",
-    "dataverse-config"
-  ]) {
+    const result = await orchestrator.run();
+
+    assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
     assert.equal(
-      result.results.find((step) => step.id === stepId).status,
-      "succeeded",
-      `${stepId} must rerun after the Serving Lakehouse changes`
+      result.context.target.fabricServingLakehouseId,
+      VALID_TARGET.fabricServingLakehouseId
     );
-  }
-});
+    const servingDetailCalls = direct.calls.filter(
+      (call) =>
+        call.kind === "fabric" &&
+        call.method === "GET" &&
+        call.path.endsWith(
+          `/lakehouses/${VALID_TARGET.fabricServingLakehouseId}`
+        )
+    );
+    assert.equal(servingDetailCalls.length, 4);
+    assert.equal(
+      result.results.find((entry) => entry.id === "fabric-discovery").status,
+      "succeeded"
+    );
+  });
 
 test("a failed initial notebook run stops installation", async () => {
   const direct = directHarness({

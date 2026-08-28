@@ -478,6 +478,9 @@ Setup refreshes discovery for up to one minute and reuses the existing
 schema-enabled Lakehouse instead of issuing another create request.
 If the existing Lakehouse is not schema-enabled, Setup leaves it untouched and
 uses the deterministic schema-enabled fallback `SegmentPreviewServingSchema`.
+Setup then polls for up to five minutes for the selected Lakehouse SQL analytics
+endpoint, avoiding a manual installation restart during normal Fabric
+provisioning.
 | Fabric Dataverse cloud connection | **Detect only** | Requires an interactive OAuth consent in the Fabric portal. |
 | Dataverse managed solution import | **Full** | `ImportSolutionAsync` for a fresh install, `StageAndUpgradeAsync` for an upgrade. |
 | Dataverse environment variable values | **Full** | Created or patched through the Web API. |

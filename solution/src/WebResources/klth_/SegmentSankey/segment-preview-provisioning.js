@@ -3631,19 +3631,28 @@
           );
         }
 
-        if (!details) {
-          details = await direct.fabric(
-            "GET",
-            "workspaces/" + workspace.id + "/lakehouses/" + serving.id
-          );
+        var endpoint = null;
+        for (var endpointPoll = 0; endpointPoll < 60; endpointPoll++) {
+          if (!details || endpointPoll > 0) {
+            details = await direct.fabric(
+              "GET",
+              "workspaces/" + workspace.id + "/lakehouses/" + serving.id
+            );
+          }
+          endpoint =
+            details.body &&
+            details.body.properties &&
+            details.body.properties.sqlEndpointProperties;
+          if (endpoint && endpoint.connectionString && endpoint.id) break;
+          if (endpointPoll < 59) await delay(5000, timer);
         }
-        var endpoint =
-          details.body && details.body.properties && details.body.properties.sqlEndpointProperties;
-        if (!endpoint || !endpoint.connectionString) {
+        if (!endpoint || !endpoint.connectionString || !endpoint.id) {
           addManual(
-            "The SQL analytics endpoint of the serving lakehouse is still provisioning. Wait until Fabric reports 'Success' and run the setup again."
+            "The SQL analytics endpoint of the serving lakehouse did not become available after waiting five minutes. Check the Lakehouse in Fabric, then run setup again."
           );
-          throw new Error("The Fabric SQL analytics endpoint is not available yet.");
+          throw new Error(
+            "The Fabric SQL analytics endpoint is still provisioning after five minutes."
+          );
         }
         context.fabricSqlServer = fabricSqlServer(endpoint.connectionString);
         context.fabricSqlDatabase = endpoint.id;
