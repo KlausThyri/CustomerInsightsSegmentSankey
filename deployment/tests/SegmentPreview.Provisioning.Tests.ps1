@@ -753,6 +753,8 @@ Describe 'Browser-only notebook and API deployment' {
         $source | Should -Match 'request_url\s*=\s*page\.get\("continuationUri"\)'
         $source | Should -Match 'source_root == "Files" and event_name not in root_shortcuts'
         $source | Should -Match 'mssparkutils\.fs\.ls\(f"\{source_root\}/\{event_name\}/_delta_log"\)'
+        $source | Should -Match 'def is_journeys_shortcut_target\(target\)'
+        $source | Should -Match 'if source_root == "Files":[\s\S]*event_folders\.append'
         $source | Should -Match '"target":\s*source_target'
         $source | Should -Match 'def creatable_shortcut_target\(target\)'
         $source | Should -Match 'return \{arm:\s*target\[arm\]\}'

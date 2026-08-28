@@ -65,14 +65,18 @@ headers = {
     "Content-Type": "application/json",
 }
 DIAGNOSTIC_PATH = "Files/_segment_preview/bootstrap-status.txt"
+diagnostic_messages = []
 
 
 def write_diagnostic(message):
+    diagnostic_messages.append(
+        f"{datetime.now(timezone.utc).isoformat()} {message}"
+    )
     try:
         mssparkutils.fs.mkdirs("Files/_segment_preview")
         mssparkutils.fs.put(
             DIAGNOSTIC_PATH,
-            f"{datetime.now(timezone.utc).isoformat()} {message}",
+            "\n".join(diagnostic_messages),
             True,
         )
     except Exception as error:
@@ -108,6 +112,14 @@ def creatable_shortcut_target(target):
     return {arm: target[arm]}
 
 
+def is_journeys_shortcut_target(target):
+    target_text = str(target or {}).lower()
+    return (
+        "customer insights journeys" in target_text
+        or "customer%20insights%20journeys" in target_text
+    )
+
+
 def list_serving_shortcuts(parent_path):
     shortcuts = {}
     unsupported = []
@@ -130,6 +142,8 @@ def list_serving_shortcuts(parent_path):
                     == parent_path.strip("/").lower()
                 )
                 if not name or not exact_parent:
+                    continue
+                if not is_journeys_shortcut_target(item.get("target")):
                     continue
                 create_target = creatable_shortcut_target(item.get("target"))
                 if create_target:
@@ -173,15 +187,18 @@ def find_event_folders():
                 continue
             if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", event_name):
                 continue
+            if source_root == "Files":
+                event_folders.append(
+                    (event_name, source_root, root_shortcuts[event_name])
+                )
+                continue
             try:
                 mssparkutils.fs.ls(f"{source_root}/{event_name}/_delta_log")
                 event_folders.append(
                     (
                         event_name,
                         source_root,
-                        root_shortcuts[event_name]
-                        if source_root == "Files"
-                        else None,
+                        None,
                     )
                 )
             except Exception:
@@ -320,10 +337,16 @@ dataverse_failures = sum(
 print("Journeys results:", event_results)
 print("Dataverse results:", dataverse_results)
 if event_failures or dataverse_failures:
+    failure_details = [
+        f"{result[0] or 'discovery'}: {result[3]}"
+        for result in event_results + dataverse_results
+        if result[2] == "failed"
+    ]
     write_diagnostic(
         "Bootstrap completed with incomplete shortcuts: "
         f"{event_failures} Journeys event folder(s) and "
-        f"{dataverse_failures} Dataverse shortcut(s) could not be registered"
+        f"{dataverse_failures} Dataverse shortcut(s) could not be registered. "
+        + " | ".join(failure_details)
     )
 else:
     write_diagnostic("Bootstrap completed successfully")
