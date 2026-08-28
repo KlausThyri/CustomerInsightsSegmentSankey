@@ -48,3 +48,11 @@ $result = Invoke-Pester -Configuration $configuration
 if ($result.FailedCount -gt 0) {
     exit 1
 }
+
+$customApiTestProject = Join-Path (
+    Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+) 'CustomApi.Tests\CustomerInsightsSegmentSankey.CustomApi.Tests.csproj'
+& dotnet test $customApiTestProject -c Release --nologo
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}

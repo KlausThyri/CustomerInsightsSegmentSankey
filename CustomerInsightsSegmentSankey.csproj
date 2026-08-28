@@ -34,7 +34,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="FabricApi\**\*.cs;FabricApi.Tests\**\*.cs;Broker\**\*.cs;Broker.Tests\**\*.cs" />
+    <Compile Remove="CustomApi.Tests\**\*.cs;FabricApi\**\*.cs;FabricApi.Tests\**\*.cs;Broker\**\*.cs;Broker.Tests\**\*.cs" />
   </ItemGroup>
 
   <Import Project="$(PowerAppsTargetsPath)\Microsoft.PowerApps.VisualStudio.Plugin.targets" Condition="Exists('$(PowerAppsTargetsPath)\Microsoft.PowerApps.VisualStudio.Plugin.targets')" />

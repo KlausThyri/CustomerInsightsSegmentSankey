@@ -677,7 +677,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     Expect(MqlTokenKind.LeftParenthesis, "'(' after " + operatorName);
                     var relationship = ReadName("relationship schema");
                     Expect(MqlTokenKind.Comma, "',' after relationship schema");
-                    var alias = ReadName("relationship alias");
+                    var alias = ReadQualifiedName("relationship alias");
                     Expect(MqlTokenKind.RightParenthesis, "')' after " + operatorName);
                     Expect(MqlTokenKind.Dot, "'.FILTER' after " + operatorName);
                     steps.Add(new RelationshipFilterStep(
@@ -1040,6 +1040,18 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             }
 
             return token.Text;
+        }
+
+        private string ReadQualifiedName(string description)
+        {
+            var parts = new List<string> { ReadName(description) };
+            while (tokenizer.Peek().Kind == MqlTokenKind.Dot)
+            {
+                tokenizer.Read();
+                parts.Add(ReadName(description + " after '.'"));
+            }
+
+            return string.Join(".", parts);
         }
 
         private string ReadIdentifier(string description)
