@@ -489,7 +489,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.58">v1.1.0.58</span>
+          <span class="app-version" aria-label="Version 1.1.0.59">v1.1.0.59</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -541,6 +541,7 @@
       const SEGMENT_MONITOR_INTERVAL_MS = 750;
       const AUTOMATIC_RETRY_DELAY_MS = 1500;
       const MAX_AUTOMATIC_RETRIES = 2;
+      const MAX_DEPENDENCY_RETRIES = 6;
       const PANE_IDS = ["klth_segment_preview", "klth_segment_sankey"];
       const ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
       const state = {
@@ -702,6 +703,13 @@
         return error;
       }
 
+      function createDependencyPendingError(message) {
+        const error = createTransientError(message);
+        error.retryRegardlessOfTrigger = true;
+        error.retryLimit = MAX_DEPENDENCY_RETRIES;
+        return error;
+      }
+
       function clearAutomaticRetry() {
         state.retrySegmentId = "";
         state.retryCount = 0;
@@ -828,10 +836,12 @@
         }
         if (!response.ok) {
           const errorBody = await response.json();
-          throw new Error(
-            errorBody?.error?.message ||
-            "The count provider returned HTTP " + response.status + "."
-          );
+          const message = errorBody?.error?.message ||
+            "The count provider returned HTTP " + response.status + ".";
+          if (/did not expose these tables within \d+ seconds/i.test(message)) {
+            throw createDependencyPendingError(message);
+          }
+          throw new Error(message);
         }
 
         const body = await response.json();
@@ -1782,9 +1792,12 @@
             clearAutomaticRetry();
             return false;
           }
-          if (isAutomatic &&
+          const retryLimit = Number.isInteger(error.retryLimit)
+            ? error.retryLimit
+            : MAX_AUTOMATIC_RETRIES;
+          if ((isAutomatic || error.retryRegardlessOfTrigger) &&
             error.retryAutomatically &&
-            state.retryCount < MAX_AUTOMATIC_RETRIES) {
+            state.retryCount < retryLimit) {
             state.retryCount += 1;
             state.retrySegmentId = segmentId;
             state.retryAfter = Date.now() + AUTOMATIC_RETRY_DELAY_MS * state.retryCount;

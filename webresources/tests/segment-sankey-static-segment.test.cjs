@@ -34,3 +34,16 @@ test("static segments receive friendly nontechnical copy", () => {
     "There are no filter steps to display for this static segment."
   ));
 });
+
+test("pending Fabric dependency tables are retried across separate plugin requests", () => {
+  assert.match(html, /const MAX_DEPENDENCY_RETRIES = 6;/);
+  assert.match(
+    html,
+    /did not expose these tables within \\d\+ seconds/
+  );
+  assert.match(html, /error\.retryRegardlessOfTrigger = true;/);
+  assert.match(
+    html,
+    /\(isAutomatic \|\| error\.retryRegardlessOfTrigger\)/
+  );
+});

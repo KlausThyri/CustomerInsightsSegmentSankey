@@ -10,6 +10,8 @@ internal sealed class FabricSegmentCatalog(
     ILogger<FabricSegmentCatalog> logger)
 {
     private static readonly string[] Schemas = ["dataverse", "journeys"];
+    private static readonly TimeSpan DataverseTableWaitTimeout =
+        TimeSpan.FromSeconds(15);
     private readonly SemaphoreSlim refreshLock = new(1, 1);
     private readonly TimeSpan cacheDuration = runtimeOptions.CatalogCacheDuration;
     private volatile FabricSegmentCatalogSnapshot? snapshot;
@@ -48,7 +50,7 @@ internal sealed class FabricSegmentCatalog(
 
         using var waitTimeout =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        waitTimeout.CancelAfter(TimeSpan.FromSeconds(45));
+        waitTimeout.CancelAfter(DataverseTableWaitTimeout);
         var waitToken = waitTimeout.Token;
         var missing = required;
         try
@@ -79,7 +81,7 @@ internal sealed class FabricSegmentCatalog(
             throw new FabricQueryException(
                 "dependency_not_ready",
                 "Fabric accepted the required Dataverse shortcuts, but the SQL endpoint " +
-                "did not expose these tables within 45 seconds: " +
+                $"did not expose these tables within {DataverseTableWaitTimeout.TotalSeconds:0} seconds: " +
                 string.Join(", ", missing) + ". Retry the segment preview.");
         }
     }

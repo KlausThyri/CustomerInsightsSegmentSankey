@@ -143,7 +143,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
         {
             return new HttpClient
             {
-                Timeout = TimeSpan.FromSeconds(100)
+                Timeout = TimeSpan.FromSeconds(60)
             };
         }
     }
