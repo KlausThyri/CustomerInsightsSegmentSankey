@@ -25,6 +25,8 @@ public sealed class FabricDependencyResponse
     public List<string> AddedTables { get; set; } = [];
 
     public List<string> ExistingTables { get; set; } = [];
+
+    public bool CatalogReady { get; set; }
 }
 
 internal sealed record EventTableDescriptor(

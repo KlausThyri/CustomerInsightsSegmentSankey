@@ -90,6 +90,14 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     }
 
                     var result = Deserialize<FabricDependencyApiResponse>(responseBody);
+                    if (!result.CatalogReady)
+                    {
+                        throw new InvalidPluginExecutionException(
+                            "The deployed Fabric API is older than the installed Segment Preview " +
+                            "solution and cannot confirm newly added tables. Open Setup Center and " +
+                            "run Install everything to update the API, then retry the preview.");
+                    }
+
                     return result.AddedTables ?? new List<string>();
                 }
             }
@@ -152,6 +160,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
     {
         [DataMember(Name = "addedTables", Order = 1)]
         public List<string> AddedTables { get; set; }
+
+        [DataMember(Name = "catalogReady", Order = 2)]
+        public bool CatalogReady { get; set; }
     }
 
     [DataContract]

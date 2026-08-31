@@ -1,5 +1,6 @@
 #if FABRIC_API
 using CustomerInsightsSegmentSankey.FabricApi;
+using System.Text.Json;
 using Xunit;
 
 namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
@@ -33,6 +34,21 @@ public sealed class FabricSegmentCatalogTests
             []);
 
         Assert.False(snapshot.ContainsDataverse(table!));
+    }
+
+    [Fact]
+    public void DependencyResponse_SerializesCatalogReadinessConfirmation()
+    {
+        var json = JsonSerializer.Serialize(
+            new FabricDependencyResponse
+            {
+                RequiredTables = ["contact"],
+                ExistingTables = ["contact"],
+                CatalogReady = true
+            },
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.Contains("\"catalogReady\":true", json);
     }
 }
 #endif

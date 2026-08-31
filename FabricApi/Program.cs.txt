@@ -223,6 +223,7 @@ app.MapPost(
             await catalog.WaitForDataverseTablesAsync(
                 result.RequiredTables,
                 cancellationToken);
+            result.CatalogReady = true;
             return Results.Ok(result);
         }
         catch (FabricQueryException exception)

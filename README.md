@@ -191,6 +191,8 @@ The preview evaluates the complete segment in the shared Fabric serving lakehous
   entity primary keys.
 - Runtime dependency provisioning waits for newly added Dataverse shortcuts to
   appear in the SQL catalog before compiling the segment count query.
+- The dependency response confirms catalog readiness, so a Solution/API version
+  mismatch fails with Setup Center upgrade guidance instead of stale-table errors.
 - `/api/segment-counts` compiles profile, relationship, consent, and
   `Interaction(...)` filters, including `UNION`, `INTERSECT`, and `EXCEPT`,
   into parameterized Fabric SQL CTEs.
