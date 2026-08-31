@@ -47,3 +47,12 @@ test("pending Fabric dependency tables are retried across separate plugin reques
     /\(isAutomatic \|\| error\.retryRegardlessOfTrigger\)/
   );
 });
+
+test("pending Fabric dependency tables display accessible progress", () => {
+  assert.match(html, /id="dependency-progress" role="status" aria-live="polite"/);
+  assert.match(html, /aria-label="Fabric table synchronization progress"/);
+  assert.match(html, /function showDependencyProgress\(/);
+  assert.match(html, /Waiting for: /);
+  assert.match(html, /Synchronization attempt /);
+  assert.match(html, /function clearDependencyProgress\(/);
+});

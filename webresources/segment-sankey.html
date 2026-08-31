@@ -177,6 +177,28 @@
     }
     .notice.error { border-left-color: var(--cp-danger); }
     .notice.visible { display: block; }
+    .dependency-progress {
+      display: none;
+      margin-top: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--cp-border);
+      border-radius: .625rem;
+      background: var(--cp-surface);
+    }
+    .dependency-progress.visible { display: block; }
+    .dependency-progress-heading { font-size: 13px; font-weight: 600; }
+    .dependency-progress-detail {
+      margin-top: 3px;
+      color: var(--cp-text-muted);
+      font-size: 12px;
+    }
+    .dependency-progress-bar {
+      display: block;
+      width: 100%;
+      height: 8px;
+      margin-top: 10px;
+      accent-color: var(--cp-accent);
+    }
     .summary {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -489,7 +511,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.59">v1.1.0.59</span>
+          <span class="app-version" aria-label="Version 1.1.0.60">v1.1.0.60</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -505,6 +527,17 @@
     </header>
 
     <div class="notice" id="notice" role="status"></div>
+    <div class="dependency-progress" id="dependency-progress" role="status" aria-live="polite">
+      <div class="dependency-progress-heading">Adding required tables to Fabric</div>
+      <div class="dependency-progress-detail" id="dependency-progress-detail"></div>
+      <progress
+        class="dependency-progress-bar"
+        id="dependency-progress-bar"
+        max="7"
+        value="1"
+        aria-label="Fabric table synchronization progress"
+      ></progress>
+    </div>
 
     <section class="summary" id="summary" aria-label="Zusammenfassung" hidden>
       <div class="metric">
@@ -720,6 +753,28 @@
         const notice = document.getElementById("notice");
         notice.textContent = message || "";
         notice.className = "notice" + (message ? " visible" : "") + (kind ? " " + kind : "");
+      }
+
+      function getPendingTableNames(message) {
+        const match = /seconds:\s*([^.]+)\.\s*Retry the segment preview/i.exec(message || "");
+        return match ? match[1].trim() : "";
+      }
+
+      function showDependencyProgress(message, completedAttempts, retryLimit) {
+        const progress = document.getElementById("dependency-progress");
+        const bar = document.getElementById("dependency-progress-bar");
+        const totalAttempts = retryLimit + 1;
+        const tables = getPendingTableNames(message);
+        bar.max = totalAttempts;
+        bar.value = Math.min(completedAttempts, totalAttempts);
+        document.getElementById("dependency-progress-detail").textContent =
+          (tables ? "Waiting for: " + tables + ". " : "") +
+          "Synchronization attempt " + completedAttempts + " of " + totalAttempts + ".";
+        progress.classList.add("visible");
+      }
+
+      function clearDependencyProgress() {
+        document.getElementById("dependency-progress").classList.remove("visible");
       }
 
       function isStaticSegmentWithoutFilterQuery(error) {
@@ -1777,6 +1832,7 @@
           render(await executeCountAction(segmentId), performance.now() - startedAt);
           state.renderedSegmentId = segmentId;
           clearAutomaticRetry();
+          clearDependencyProgress();
           return true;
         } catch (error) {
           if (isStaticSegmentWithoutFilterQuery(error)) {
@@ -1790,19 +1846,27 @@
             document.getElementById("chart").innerHTML =
               '<div class="empty">There are no filter steps to display for this static segment.</div>';
             clearAutomaticRetry();
+            clearDependencyProgress();
             return false;
           }
           const retryLimit = Number.isInteger(error.retryLimit)
             ? error.retryLimit
             : MAX_AUTOMATIC_RETRIES;
+          let retryScheduled = false;
           if ((isAutomatic || error.retryRegardlessOfTrigger) &&
             error.retryAutomatically &&
             state.retryCount < retryLimit) {
             state.retryCount += 1;
             state.retrySegmentId = segmentId;
             state.retryAfter = Date.now() + AUTOMATIC_RETRY_DELAY_MS * state.retryCount;
+            retryScheduled = true;
           } else {
             clearAutomaticRetry();
+          }
+          if (error.retryRegardlessOfTrigger && retryScheduled) {
+            showDependencyProgress(error.message, state.retryCount, retryLimit);
+          } else {
+            clearDependencyProgress();
           }
           const isTransientError = Boolean(error.retryAutomatically);
           const isBehavioralError = /fabric|behavioral|ereignis|event/i.test(error.message);
