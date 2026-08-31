@@ -202,6 +202,7 @@ app.MapPost(
         HttpRequest request,
         FabricDependencyRequest input,
         FabricDataverseShortcutService service,
+        FabricSegmentCatalog catalog,
         ILogger<Program> logger,
         CancellationToken cancellationToken) =>
     {
@@ -218,7 +219,11 @@ app.MapPost(
 
         try
         {
-            return Results.Ok(await service.EnsureAsync(input, cancellationToken));
+            var result = await service.EnsureAsync(input, cancellationToken);
+            await catalog.WaitForDataverseTablesAsync(
+                result.RequiredTables,
+                cancellationToken);
+            return Results.Ok(result);
         }
         catch (FabricQueryException exception)
         {

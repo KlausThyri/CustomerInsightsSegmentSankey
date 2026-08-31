@@ -30,8 +30,69 @@ internal sealed class FabricSegmentCatalog(
 
     public async Task RefreshAsync(CancellationToken cancellationToken)
     {
+        await RefreshAsync(cancellationToken, false);
+    }
+
+    public async Task WaitForDataverseTablesAsync(
+        IEnumerable<string> requiredTables,
+        CancellationToken cancellationToken)
+    {
+        var required = requiredTables
+            .Where(table => !string.IsNullOrWhiteSpace(table))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (required.Count == 0)
+        {
+            return;
+        }
+
+        using var waitTimeout =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        waitTimeout.CancelAfter(TimeSpan.FromSeconds(45));
+        var waitToken = waitTimeout.Token;
+        var missing = required;
+        try
+        {
+            var current = await GetSnapshotAsync(waitToken);
+            missing = required
+                .Where(table => !current.ContainsDataverse(table))
+                .ToList();
+            while (missing.Count > 0)
+            {
+                await RefreshAsync(waitToken, true);
+                current = snapshot;
+                missing = current is null
+                    ? required
+                    : required
+                    .Where(table => !current.ContainsDataverse(table))
+                    .ToList();
+                if (missing.Count > 0)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(3), waitToken);
+                }
+            }
+
+            return;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new FabricQueryException(
+                "dependency_not_ready",
+                "Fabric accepted the required Dataverse shortcuts, but the SQL endpoint " +
+                "did not expose these tables within 45 seconds: " +
+                string.Join(", ", missing) + ". Retry the segment preview.");
+        }
+    }
+
+    private async Task RefreshAsync(
+        CancellationToken cancellationToken,
+        bool force)
+    {
+        var refreshRequestedAt = DateTimeOffset.UtcNow;
         var current = snapshot;
-        if (current is not null && DateTimeOffset.UtcNow - current.LoadedAt < cacheDuration)
+        if (!force &&
+            current is not null &&
+            DateTimeOffset.UtcNow - current.LoadedAt < cacheDuration)
         {
             return;
         }
@@ -40,7 +101,16 @@ internal sealed class FabricSegmentCatalog(
         try
         {
             current = snapshot;
-            if (current is not null && DateTimeOffset.UtcNow - current.LoadedAt < cacheDuration)
+            if (force &&
+                current is not null &&
+                current.LoadedAt >= refreshRequestedAt)
+            {
+                return;
+            }
+
+            if (!force &&
+                current is not null &&
+                DateTimeOffset.UtcNow - current.LoadedAt < cacheDuration)
             {
                 return;
             }
@@ -159,6 +229,13 @@ internal sealed class FabricSegmentCatalogSnapshot
     public EventTableDescriptor ResolveJourney(string requestedTable)
     {
         return Resolve("journeys", requestedTable, true);
+    }
+
+    public bool ContainsDataverse(string requestedTable)
+    {
+        return !string.IsNullOrWhiteSpace(requestedTable) &&
+            tables.ContainsKey(
+                Key("dataverse", requestedTable));
     }
 
     internal static string Key(string schema, string table)

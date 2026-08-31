@@ -1,0 +1,38 @@
+#if FABRIC_API
+using CustomerInsightsSegmentSankey.FabricApi;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+public sealed class FabricSegmentCatalogTests
+{
+    [Fact]
+    public void ContainsDataverse_UsesTheSameNormalizedLookupAsResolve()
+    {
+        var snapshot = new FabricSegmentCatalogSnapshot(
+            DateTimeOffset.UtcNow,
+            [
+                new EventTableDescriptor(
+                    "dataverse",
+                    "msdynci_customerprofile",
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
+            ]);
+
+        Assert.True(snapshot.ContainsDataverse("MSDYNCI_CUSTOMERPROFILE"));
+        Assert.False(snapshot.ContainsDataverse("list"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ContainsDataverse_RejectsMissingNames(string? table)
+    {
+        var snapshot = new FabricSegmentCatalogSnapshot(
+            DateTimeOffset.UtcNow,
+            []);
+
+        Assert.False(snapshot.ContainsDataverse(table!));
+    }
+}
+#endif

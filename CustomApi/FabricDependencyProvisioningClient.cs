@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
+using System.Threading.Tasks;
 using Microsoft.Xrm.Sdk;
 using Microsoft.Xrm.Sdk.Query;
 
@@ -61,7 +62,20 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     Serialize(payload),
                     Encoding.UTF8,
                     "application/json");
-                using (var response = HttpClient.SendAsync(request).GetAwaiter().GetResult())
+                HttpResponseMessage response;
+                try
+                {
+                    response = HttpClient.SendAsync(request).GetAwaiter().GetResult();
+                }
+                catch (TaskCanceledException exception)
+                {
+                    throw new InvalidPluginExecutionException(
+                        "Fabric did not finish exposing the required Dataverse tables in time. " +
+                        "Retry the segment preview.",
+                        exception);
+                }
+
+                using (response)
                 {
                     var responseBody = response.Content.ReadAsStringAsync()
                         .GetAwaiter()

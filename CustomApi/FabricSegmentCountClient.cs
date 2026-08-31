@@ -482,7 +482,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 segmentId,
                 new ColumnSet(
                     "msdynmkt_sourcesegmentuid",
-                    "msdynmkt_baseentitylogicalname"));
+                    "msdynmkt_baseentitylogicalname",
+                    "msdynmkt_displayname"));
             Guid definitionId;
             if (!Guid.TryParse(
                 segment.GetAttributeValue<string>("msdynmkt_sourcesegmentuid"),
@@ -528,7 +529,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     segmentId.ToString("N") + ")",
                 ProfileIds = RetrieveStaticSegmentIds(
                     segmentId,
-                    definition.GetAttributeValue<string>("msdynmkt_staticlistmembers"))
+                    definition.GetAttributeValue<string>("msdynmkt_staticlistmembers"),
+                    segment.GetAttributeValue<string>("msdynmkt_displayname"))
                     .ToList()
             };
         }
@@ -753,12 +755,19 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         private HashSet<Guid> RetrieveStaticSegmentIds(
             Guid segmentId,
-            string groupsJson)
+            string groupsJson,
+            string segmentName)
         {
             if (string.IsNullOrWhiteSpace(groupsJson))
             {
                 throw new InvalidPluginExecutionException(
-                    "The referenced segment contains neither MQL nor static member groups.");
+                    "The referenced segment '" +
+                    (string.IsNullOrWhiteSpace(segmentName)
+                        ? segmentId.ToString("D")
+                        : segmentName) +
+                    "' exposes neither an MQL definition nor static member groups. " +
+                    "Its evaluated membership is stored outside Dataverse and cannot be " +
+                    "recomputed by Segment Preview.");
             }
 
             var result = new HashSet<Guid>();

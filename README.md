@@ -189,6 +189,8 @@ The preview evaluates the complete segment in the shared Fabric serving lakehous
 - Dataverse 1:N and N:N relationships are resolved from metadata; N:N filters
   join through the registered intersect table instead of comparing unrelated
   entity primary keys.
+- Runtime dependency provisioning waits for newly added Dataverse shortcuts to
+  appear in the SQL catalog before compiling the segment count query.
 - `/api/segment-counts` compiles profile, relationship, consent, and
   `Interaction(...)` filters, including `UNION`, `INTERSECT`, and `EXCEPT`,
   into parameterized Fabric SQL CTEs.
