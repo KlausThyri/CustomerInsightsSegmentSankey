@@ -220,6 +220,13 @@ app.MapPost(
         try
         {
             var result = await service.EnsureAsync(input, cancellationToken);
+            var missingTables = await catalog.GetMissingDataverseTablesAsync(
+                result.RequiredTables,
+                cancellationToken);
+            await service.RefreshSqlMetadataAsync(
+                missingTables,
+                result.AddedTables,
+                cancellationToken);
             await catalog.WaitForDataverseTablesAsync(
                 result.RequiredTables,
                 cancellationToken);

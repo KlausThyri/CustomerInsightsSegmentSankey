@@ -49,5 +49,126 @@ public sealed class FabricDataverseShortcutServiceTests
         Assert.Contains("workspace", message);
         Assert.Contains("connection", message);
     }
+
+    [Fact]
+    public void Missing_delta_table_explains_initial_Dataverse_sync()
+    {
+        const string response =
+            """
+            {
+              "value": [
+                {
+                  "tableName": "dataverse.msdynci_webvisitslast7days",
+                  "status": "Failure",
+                  "error": {
+                    "errorCode": "DeltaTableNotFound",
+                    "message": "Delta table not found."
+                  }
+                }
+              ]
+            }
+            """;
+
+        var error = FabricDataverseShortcutService.CreateMetadataFailure(response);
+
+        Assert.NotNull(error);
+        Assert.Equal("dependency_source_not_ready", error.Code);
+        Assert.Contains("msdynci_webvisitslast7days", error.Message);
+        Assert.Contains("up to 60 minutes", error.Message);
+        Assert.Contains("Refresh Fabric links/tables", error.Message);
+    }
+
+    [Fact]
+    public void Newly_created_shortcut_tolerates_initial_delta_lookup_race()
+    {
+        const string response =
+            """
+            {
+              "value": [
+                {
+                  "tableName": "dataverse.msdynci_webvisitslast7days",
+                  "status": "Failure",
+                  "error": {
+                    "errorCode": "DeltaTableNotFound",
+                    "message": "Delta table not found."
+                  }
+                }
+              ]
+            }
+            """;
+
+        var error = FabricDataverseShortcutService.CreateMetadataFailure(
+            response,
+            ["msdynci_webvisitslast7days"]);
+
+        Assert.Null(error);
+    }
+
+    [Fact]
+    public void Expired_connection_explains_where_to_update_credentials()
+    {
+        const string response =
+            """
+            {
+              "value": [
+                {
+                  "tableName": "dataverse.contact",
+                  "status": "Failure",
+                  "error": {
+                    "errorCode": "AdalRetryException",
+                    "message": "There is a problem with the Microsoft Entra ID token."
+                  }
+                }
+              ]
+            }
+            """;
+
+        var error = FabricDataverseShortcutService.CreateMetadataFailure(response);
+
+        Assert.NotNull(error);
+        Assert.Equal("dependency_connection_invalid", error.Code);
+        Assert.Contains("Manage connections and gateways", error.Message);
+    }
+
+    [Fact]
+    public void Successful_metadata_refresh_has_no_failure()
+    {
+        const string response =
+            """
+            {
+              "value": [
+                {
+                  "tableName": "dataverse.contact",
+                  "status": "Success"
+                }
+              ]
+            }
+            """;
+
+        Assert.Null(FabricDataverseShortcutService.CreateMetadataFailure(response));
+    }
+
+    [Fact]
+    public async Task Metadata_refresh_request_uses_duration_object()
+    {
+        using var content =
+            FabricDataverseShortcutService.CreateMetadataRefreshContent(["contact"]);
+
+        var json = await content.ReadAsStringAsync();
+
+        Assert.Contains("\"schema\":\"dataverse\"", json);
+        Assert.Contains("\"tableNames\":[\"contact\"]", json);
+        Assert.Contains("\"timeout\":{\"timeUnit\":\"Seconds\",\"value\":10}", json);
+        Assert.DoesNotContain("\"timeout\":\"", json);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("<html>gateway response</html>")]
+    public void Empty_or_non_json_metadata_response_falls_back_to_catalog_polling(
+        string response)
+    {
+        Assert.Null(FabricDataverseShortcutService.CreateMetadataFailure(response));
+    }
 }
 #endif

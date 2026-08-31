@@ -191,6 +191,9 @@ The preview evaluates the complete segment in the shared Fabric serving lakehous
   entity primary keys.
 - Runtime dependency provisioning waits for newly added Dataverse shortcuts to
   appear in the SQL catalog before compiling the segment count query.
+- Missing tables trigger the Fabric SQL metadata refresh API. A shortcut whose
+  Dataverse Managed Lake target has no Delta table is reported with initial-sync
+  and Fabric-link refresh guidance instead of being retried as catalog latency.
 - The dependency response confirms catalog readiness, so a Solution/API version
   mismatch fails with Setup Center upgrade guidance instead of stale-table errors.
 - `/api/segment-counts` compiles profile, relationship, consent, and

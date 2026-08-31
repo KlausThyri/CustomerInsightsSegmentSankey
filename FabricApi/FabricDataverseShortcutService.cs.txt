@@ -21,6 +21,7 @@ internal sealed class FabricDataverseShortcutService
     private readonly TokenCredential credential;
     private readonly string workspaceId;
     private readonly string lakehouseId;
+    private readonly string sqlEndpointId;
     private readonly string connectionId;
     private readonly string deltaLakeFolder;
     private readonly string environmentDomain;
@@ -31,6 +32,7 @@ internal sealed class FabricDataverseShortcutService
         credential = new DefaultAzureCredential();
         workspaceId = ReadRequiredSetting("FABRIC_WORKSPACE_ID");
         lakehouseId = ReadRequiredSetting("FABRIC_SERVING_LAKEHOUSE_ID");
+        sqlEndpointId = ReadRequiredSetting("FABRIC_SQL_DATABASE");
         connectionId = ReadRequiredSetting("FABRIC_DATAVERSE_CONNECTION_ID");
         deltaLakeFolder = ReadRequiredSetting("FABRIC_DATAVERSE_DELTA_FOLDER");
         environmentDomain = ReadRequiredSetting("DATAVERSE_ENVIRONMENT_URL");
@@ -169,6 +171,341 @@ internal sealed class FabricDataverseShortcutService
         return await ListExistingAsync(token.Token, cancellationToken);
     }
 
+    public async Task RefreshSqlMetadataAsync(
+        IReadOnlyCollection<string> tables,
+        IReadOnlyCollection<string> newlyCreatedTables,
+        CancellationToken cancellationToken)
+    {
+        if (tables.Count == 0)
+        {
+            return;
+        }
+
+        using var refreshTimeout =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        refreshTimeout.CancelAfter(TimeSpan.FromSeconds(12));
+        var refreshToken = refreshTimeout.Token;
+        AccessToken token;
+        try
+        {
+            token = await credential.GetTokenAsync(
+                new TokenRequestContext(["https://api.fabric.microsoft.com/.default"]),
+                refreshToken);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            BuildRefreshMetadataUri());
+        request.Headers.Authorization =
+            new AuthenticationHeaderValue("Bearer", token.Token);
+        request.Content = CreateMetadataRefreshContent(tables);
+        HttpResponseMessage response;
+        try
+        {
+            response = await httpClient.SendAsync(request, refreshToken);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
+        using (response)
+        {
+            try
+            {
+                var body = await response.Content.ReadAsStringAsync(refreshToken);
+                if (response.StatusCode == HttpStatusCode.Accepted)
+                {
+                    body = await TryReadMetadataOperationResultAsync(
+                        response,
+                        token.Token,
+                        refreshToken);
+                    if (string.IsNullOrWhiteSpace(body))
+                    {
+                        return;
+                    }
+                }
+                else if (response.StatusCode is HttpStatusCode.Conflict or
+                    HttpStatusCode.TooManyRequests)
+                {
+                    return;
+                }
+                else if (!response.IsSuccessStatusCode)
+                {
+                    throw new FabricQueryException(
+                        "metadata_refresh_failed",
+                        "Fabric could not refresh the SQL metadata for the required Dataverse tables.",
+                        body);
+                }
+
+                var failure = CreateMetadataFailure(body, newlyCreatedTables);
+                if (failure is not null)
+                {
+                    throw failure;
+                }
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+        }
+    }
+
+    internal static HttpContent CreateMetadataRefreshContent(
+        IReadOnlyCollection<string> tables)
+    {
+        return JsonContent.Create(new
+        {
+            recreateTables = false,
+            tables = new[]
+            {
+                new
+                {
+                    schema = "dataverse",
+                    tableNames = tables
+                }
+            },
+            timeout = new
+            {
+                timeUnit = "Seconds",
+                value = 10
+            }
+        });
+    }
+
+    private async Task<string?> TryReadMetadataOperationResultAsync(
+        HttpResponseMessage initialResponse,
+        string accessToken,
+        CancellationToken cancellationToken)
+    {
+        if (!initialResponse.Headers.TryGetValues(
+                "x-ms-operation-id",
+                out var operationIds))
+        {
+            return null;
+        }
+
+        var operationId = operationIds.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(operationId))
+        {
+            return null;
+        }
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        var retryAfter = initialResponse.Headers.RetryAfter?.Delta ??
+            TimeSpan.FromSeconds(1);
+        if (retryAfter < TimeSpan.FromSeconds(1))
+        {
+            retryAfter = TimeSpan.FromSeconds(1);
+        }
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(
+                retryAfter > TimeSpan.FromSeconds(2)
+                    ? TimeSpan.FromSeconds(2)
+                    : retryAfter,
+                cancellationToken);
+            using var statusRequest = new HttpRequestMessage(
+                HttpMethod.Get,
+                new Uri(
+                    $"https://api.fabric.microsoft.com/v1/operations/{Uri.EscapeDataString(operationId)}",
+                    UriKind.Absolute));
+            statusRequest.Headers.Authorization =
+                new AuthenticationHeaderValue("Bearer", accessToken);
+            using var statusResponse = await httpClient.SendAsync(
+                statusRequest,
+                cancellationToken);
+            var statusBody = await statusResponse.Content.ReadAsStringAsync(
+                cancellationToken);
+            if (!statusResponse.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            JsonDocument statusJson;
+            try
+            {
+                statusJson = JsonDocument.Parse(statusBody);
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+
+            using (statusJson)
+            {
+            if (!statusJson.RootElement.TryGetProperty("status", out var status) ||
+                status.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            if (string.Equals(
+                    status.GetString(),
+                    "Failed",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new FabricQueryException(
+                    "metadata_refresh_failed",
+                    "Fabric could not complete the SQL metadata refresh.",
+                    statusBody);
+            }
+
+            if (!string.Equals(
+                    status.GetString(),
+                    "Succeeded",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            using var resultRequest = new HttpRequestMessage(
+                HttpMethod.Get,
+                new Uri(
+                    $"https://api.fabric.microsoft.com/v1/operations/" +
+                    $"{Uri.EscapeDataString(operationId)}/result",
+                    UriKind.Absolute));
+            resultRequest.Headers.Authorization =
+                new AuthenticationHeaderValue("Bearer", accessToken);
+            using var resultResponse = await httpClient.SendAsync(
+                resultRequest,
+                cancellationToken);
+            return resultResponse.IsSuccessStatusCode
+                ? await resultResponse.Content.ReadAsStringAsync(cancellationToken)
+                : null;
+            }
+        }
+
+        return null;
+    }
+
+    internal static FabricQueryException? CreateMetadataFailure(
+        string responseBody,
+        IReadOnlyCollection<string>? newlyCreatedTables = null)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return null;
+        }
+
+        JsonDocument json;
+        try
+        {
+            json = JsonDocument.Parse(responseBody);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        using (json)
+        {
+        if (!json.RootElement.TryGetProperty("value", out var values) ||
+            values.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var failures = values.EnumerateArray()
+            .Where(value =>
+                value.TryGetProperty("status", out var status) &&
+                status.ValueKind == JsonValueKind.String &&
+                string.Equals(status.GetString(), "Failure", StringComparison.OrdinalIgnoreCase))
+            .Select(value => new
+            {
+                Table = value.TryGetProperty("tableName", out var tableName) &&
+                    tableName.ValueKind == JsonValueKind.String
+                        ? tableName.GetString()
+                        : null,
+                Code = value.TryGetProperty("error", out var error) &&
+                    error.TryGetProperty("errorCode", out var errorCode) &&
+                    errorCode.ValueKind == JsonValueKind.String
+                        ? errorCode.GetString()
+                        : null,
+                Message = value.TryGetProperty("error", out error) &&
+                    error.TryGetProperty("message", out var message) &&
+                    message.ValueKind == JsonValueKind.String
+                        ? message.GetString()
+                        : null
+            })
+            .ToList();
+        if (failures.Count == 0)
+        {
+            return null;
+        }
+
+        var actionableFailures = failures
+            .Where(failure =>
+                !string.Equals(
+                    failure.Code,
+                    "DeltaTableNotFound",
+                    StringComparison.OrdinalIgnoreCase) ||
+                !(newlyCreatedTables ?? [])
+                    .Contains(
+                        failure.Table?.Split('.').LastOrDefault() ?? "",
+                        StringComparer.OrdinalIgnoreCase))
+            .ToList();
+        if (actionableFailures.Count == 0)
+        {
+            return null;
+        }
+
+        var missingDeltaTables = actionableFailures
+            .Where(failure =>
+                string.Equals(
+                    failure.Code,
+                    "DeltaTableNotFound",
+                    StringComparison.OrdinalIgnoreCase))
+            .Select(failure => failure.Table)
+            .Where(table => !string.IsNullOrWhiteSpace(table))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (missingDeltaTables.Count > 0)
+        {
+            return new FabricQueryException(
+                "dependency_source_not_ready",
+                "Fabric created the shortcuts, but Dataverse Managed Lake does not contain " +
+                "queryable Delta tables for: " + string.Join(", ", missingDeltaTables) + ". " +
+                "Their initial Link to Microsoft Fabric synchronization must finish before " +
+                "they can be queried and can take up to 60 minutes. In Power Apps, open " +
+                "Link to Microsoft Fabric > Manage tables and select Refresh Fabric links/tables, " +
+                "then retry the segment preview.");
+        }
+
+        var authenticationFailures = actionableFailures
+            .Where(failure =>
+                failure.Code?.IndexOf("Adal", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                failure.Message?.IndexOf(
+                    "Microsoft Entra ID token",
+                    StringComparison.OrdinalIgnoreCase) >= 0)
+            .Select(failure => failure.Table)
+            .Where(table => !string.IsNullOrWhiteSpace(table))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (authenticationFailures.Count > 0)
+        {
+            return new FabricQueryException(
+                "dependency_connection_invalid",
+                "Fabric could not read the Dataverse shortcut targets because the cloud " +
+                "connection credentials are no longer valid. Update the Dataverse connection " +
+                "under Manage connections and gateways, then retry. Tables: " +
+                string.Join(", ", authenticationFailures) + ".");
+        }
+
+        return new FabricQueryException(
+            "metadata_refresh_failed",
+            "Fabric could not synchronize SQL metadata for: " +
+            string.Join(
+                ", ",
+                actionableFailures.Select(failure => failure.Table)
+                    .Where(table => !string.IsNullOrWhiteSpace(table))) + ".",
+            responseBody);
+        }
+    }
+
     private async Task<HashSet<string>> ListExistingAsync(
         string accessToken,
         CancellationToken cancellationToken)
@@ -240,6 +577,14 @@ internal sealed class FabricDataverseShortcutService
             $"https://api.fabric.microsoft.com/v1/workspaces/{Uri.EscapeDataString(workspaceId)}" +
             $"/items/{Uri.EscapeDataString(lakehouseId)}/shortcuts" +
             "?shortcutConflictPolicy=CreateOrOverwrite",
+            UriKind.Absolute);
+    }
+
+    private Uri BuildRefreshMetadataUri()
+    {
+        return new Uri(
+            $"https://api.fabric.microsoft.com/v1/workspaces/{Uri.EscapeDataString(workspaceId)}" +
+            $"/sqlEndpoints/{Uri.EscapeDataString(sqlEndpointId)}/refreshMetadata",
             UriKind.Absolute);
     }
 
