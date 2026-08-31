@@ -1,5 +1,6 @@
 #if FABRIC_API
 using System.Net;
+using System.Text.Json;
 using Xunit;
 
 namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
@@ -169,6 +170,138 @@ public sealed class FabricDataverseShortcutServiceTests
         string response)
     {
         Assert.Null(FabricDataverseShortcutService.CreateMetadataFailure(response));
+    }
+
+    [Fact]
+    public void Source_shortcut_preserves_its_exact_Dataverse_target()
+    {
+        using var json = JsonDocument.Parse(
+            """
+            {
+              "path": "Tables",
+              "name": "listmember",
+              "target": {
+                "type": "Dataverse",
+                "dataverse": {
+                  "connectionId": "11111111-1111-1111-1111-111111111111",
+                  "deltaLakeFolder": "managed/listmember-specific-folder",
+                  "environmentDomain": "https://contoso.crm4.dynamics.com",
+                  "tableName": "listmember"
+                }
+              }
+            }
+            """);
+
+        var found = FabricDataverseShortcutService.TryReadSourceTarget(
+            json.RootElement,
+            out var name,
+            out var target);
+
+        Assert.True(found);
+        Assert.Equal("listmember", name);
+        Assert.Equal(
+            "managed/listmember-specific-folder",
+            target.DeltaLakeFolder);
+        Assert.Equal("listmember", target.TableName);
+    }
+
+    [Fact]
+    public void Source_shortcut_without_readable_target_is_rejected()
+    {
+        using var json = JsonDocument.Parse(
+            """
+            {
+              "path": "Tables",
+              "name": "listmember",
+              "target": {
+                "type": "Dataverse"
+              }
+            }
+            """);
+
+        Assert.False(
+            FabricDataverseShortcutService.TryReadSourceTarget(
+                json.RootElement,
+                out _,
+                out _));
+    }
+
+    [Theory]
+    [InlineData("Tables", true)]
+    [InlineData("Tables/", true)]
+    [InlineData("/Tables", true)]
+    [InlineData("Tables/dataverse", false)]
+    [InlineData("Tables/dataverse/archive", false)]
+    public void Only_top_level_shortcuts_can_be_Dataverse_sources(
+        string path,
+        bool expected)
+    {
+        using var json = JsonDocument.Parse(
+            $$"""
+            {
+              "path": "{{path}}",
+              "name": "listmember"
+            }
+            """);
+
+        Assert.Equal(
+            expected,
+            FabricDataverseShortcutService.IsRootSourceShortcut(json.RootElement));
+    }
+
+    [Fact]
+    public async Task Serving_shortcut_copies_exact_source_target()
+    {
+        var source = new FabricDataverseShortcutService.DataverseShortcutTarget(
+            "11111111-1111-1111-1111-111111111111",
+            "managed/listmember-specific-folder",
+            "https://contoso.crm4.dynamics.com",
+            "listmember");
+        using var content =
+            FabricDataverseShortcutService.CreateShortcutContent("listmember", source);
+
+        var json = await content.ReadAsStringAsync();
+
+        Assert.Contains("\"path\":\"Tables/dataverse\"", json);
+        Assert.Contains("\"name\":\"listmember\"", json);
+        Assert.Contains(
+            "\"deltaLakeFolder\":\"managed/listmember-specific-folder\"",
+            json);
+        Assert.Contains("\"tableName\":\"listmember\"", json);
+    }
+
+    [Fact]
+    public void Existing_shortcut_is_repaired_when_per_table_folder_differs()
+    {
+        var existing = new FabricDataverseShortcutService.DataverseShortcutTarget(
+            "11111111-1111-1111-1111-111111111111",
+            "managed/contact-folder",
+            "https://contoso.crm4.dynamics.com/",
+            "listmember");
+        var source = new FabricDataverseShortcutService.DataverseShortcutTarget(
+            "11111111-1111-1111-1111-111111111111",
+            "managed/listmember-folder",
+            "https://contoso.crm4.dynamics.com",
+            "listmember");
+
+        Assert.False(FabricDataverseShortcutService.TargetsMatch(existing, source));
+    }
+
+    [Fact]
+    public void Equivalent_shortcut_target_is_reused()
+    {
+        var existing = new FabricDataverseShortcutService.DataverseShortcutTarget(
+            "11111111-1111-1111-1111-111111111111",
+            "managed/listmember-folder",
+            "https://contoso.crm4.dynamics.com/",
+            "listmember");
+        var source = new FabricDataverseShortcutService.DataverseShortcutTarget(
+            "11111111-1111-1111-1111-111111111111",
+            "managed/listmember-folder",
+            "https://contoso.crm4.dynamics.com",
+            "LISTMEMBER");
+
+        Assert.True(FabricDataverseShortcutService.TargetsMatch(existing, source));
     }
 }
 #endif

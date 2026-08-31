@@ -285,10 +285,15 @@ else:
 
 for shortcut in source_shortcuts:
     table_name = shortcut.get("name")
+    shortcut_path = str(shortcut.get("path") or "").strip("/").lower()
     source_target = shortcut.get("target", {})
     target_type = source_target.get("type")
     dataverse_target = source_target.get("dataverse", {})
-    if target_type != "Dataverse" or table_name in METADATA_TABLES:
+    if (
+        shortcut_path != "tables"
+        or target_type != "Dataverse"
+        or table_name in METADATA_TABLES
+    ):
         continue
 
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", table_name or ""):

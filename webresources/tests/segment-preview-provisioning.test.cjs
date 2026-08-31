@@ -1672,6 +1672,7 @@ test("direct client discovers the Dataverse shortcut source across continuation 
           value: [
             {
               name: "contact",
+              path: "Tables",
               target: {
                 dataverse: {
                   connectionId: "d1",
@@ -1720,6 +1721,7 @@ test("direct client prefers a Dataverse source Lakehouse that contains contact",
           value: [
             {
               name: "msdynmkt_purpose",
+              path: "Tables",
               target: {
                 dataverse: {
                   connectionId: "d1",
@@ -1739,6 +1741,7 @@ test("direct client prefers a Dataverse source Lakehouse that contains contact",
           value: [
             {
               name: "contact",
+              path: "Tables",
               target: {
                 dataverse: {
                   connectionId: "d2",
@@ -1786,6 +1789,7 @@ test("direct client prefers a separate Dataverse source over the serving Lakehou
           value: [
             {
               name: "contact",
+              path: "Tables",
               target: {
                 dataverse: {
                   connectionId: "d-source",
@@ -1894,6 +1898,7 @@ test("direct client waits for contact to appear in a new Dataverse Fabric link",
           value: [
             {
               name: "msdynmkt_purpose",
+              path: "Tables",
               target: {
                 dataverse: {
                   connectionId: "d1",
@@ -1913,6 +1918,7 @@ test("direct client waits for contact to appear in a new Dataverse Fabric link",
           value: [
             {
               name: "contact",
+              path: "Tables",
               target: {
                 dataverse: {
                   connectionId: "d1",
@@ -5548,6 +5554,7 @@ test("every required ARM parameter is supplied by the orchestrator", () => {
     "fabricSqlDatabase",
     "fabricWorkspaceId",
     "fabricServingLakehouseId",
+    "fabricDataverseLakehouseId",
     "fabricDataverseConnectionId",
     "fabricDataverseDeltaFolder",
     "dataverseEnvironmentUrl",

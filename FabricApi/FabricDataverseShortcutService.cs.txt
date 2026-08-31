@@ -21,10 +21,8 @@ internal sealed class FabricDataverseShortcutService
     private readonly TokenCredential credential;
     private readonly string workspaceId;
     private readonly string lakehouseId;
+    private readonly string dataverseLakehouseId;
     private readonly string sqlEndpointId;
-    private readonly string connectionId;
-    private readonly string deltaLakeFolder;
-    private readonly string environmentDomain;
 
     public FabricDataverseShortcutService(HttpClient httpClient)
     {
@@ -32,10 +30,8 @@ internal sealed class FabricDataverseShortcutService
         credential = new DefaultAzureCredential();
         workspaceId = ReadRequiredSetting("FABRIC_WORKSPACE_ID");
         lakehouseId = ReadRequiredSetting("FABRIC_SERVING_LAKEHOUSE_ID");
+        dataverseLakehouseId = ReadRequiredSetting("FABRIC_DATAVERSE_LAKEHOUSE_ID");
         sqlEndpointId = ReadRequiredSetting("FABRIC_SQL_DATABASE");
-        connectionId = ReadRequiredSetting("FABRIC_DATAVERSE_CONNECTION_ID");
-        deltaLakeFolder = ReadRequiredSetting("FABRIC_DATAVERSE_DELTA_FOLDER");
-        environmentDomain = ReadRequiredSetting("DATAVERSE_ENVIRONMENT_URL");
     }
 
     public async Task<FabricDependencyResponse> EnsureAsync(
@@ -66,11 +62,32 @@ internal sealed class FabricDataverseShortcutService
         var token = await credential.GetTokenAsync(
             new TokenRequestContext(["https://api.fabric.microsoft.com/.default"]),
             cancellationToken);
-        var existing = await ListExistingAsync(token.Token, cancellationToken);
+        var existing = await ListExistingTargetsAsync(token.Token, cancellationToken);
+        var sourceTargets = await ListSourceTargetsAsync(token.Token, cancellationToken);
+        var missingSources = required
+            .Where(table => !sourceTargets.ContainsKey(table))
+            .ToList();
+        if (missingSources.Count > 0)
+        {
+            throw new FabricQueryException(
+                "shortcut_source_missing",
+                "These tables are not available as Dataverse Managed Lake shortcuts: " +
+                string.Join(", ", missingSources) + ". In Power Apps, open Link to Microsoft " +
+                "Fabric > Manage tables, add the tables, and wait for their initial sync to " +
+                "finish before retrying the segment preview.");
+        }
+
+        var tablesToAdd = required
+            .Where(table =>
+                !existing.TryGetValue(table, out var existingTarget) ||
+                existingTarget is null ||
+                !TargetsMatch(existingTarget, sourceTargets[table]))
+            .ToList();
 
         var added = new List<string>();
-        foreach (var table in required.Where(table => !existing.Contains(table)))
+        foreach (var table in tablesToAdd)
         {
+            var sourceTarget = sourceTargets[table];
             for (var attempt = 1; attempt <= MaximumCreateAttempts; attempt++)
             {
                 using var createRequest = new HttpRequestMessage(
@@ -78,21 +95,7 @@ internal sealed class FabricDataverseShortcutService
                     BuildCreateShortcutUri());
                 createRequest.Headers.Authorization =
                     new AuthenticationHeaderValue("Bearer", token.Token);
-                createRequest.Content = JsonContent.Create(new
-                {
-                    path = "Tables/dataverse",
-                    name = table,
-                    target = new
-                    {
-                        dataverse = new
-                        {
-                            connectionId,
-                            deltaLakeFolder,
-                            environmentDomain,
-                            tableName = table
-                        }
-                    }
-                });
+                createRequest.Content = CreateShortcutContent(table, sourceTarget);
                 using var createResponse = await httpClient.SendAsync(
                     createRequest,
                     cancellationToken);
@@ -119,7 +122,7 @@ internal sealed class FabricDataverseShortcutService
             }
 
             added.Add(table);
-            existing.Add(table);
+            existing[table] = sourceTarget;
         }
 
         return new FabricDependencyResponse
@@ -168,7 +171,7 @@ internal sealed class FabricDataverseShortcutService
         var token = await credential.GetTokenAsync(
             new TokenRequestContext(["https://api.fabric.microsoft.com/.default"]),
             cancellationToken);
-        return await ListExistingAsync(token.Token, cancellationToken);
+        return (await ListExistingTargetsAsync(token.Token, cancellationToken)).Keys;
     }
 
     public async Task RefreshSqlMetadataAsync(
@@ -272,6 +275,27 @@ internal sealed class FabricDataverseShortcutService
             {
                 timeUnit = "Seconds",
                 value = 10
+            }
+        });
+    }
+
+    internal static HttpContent CreateShortcutContent(
+        string name,
+        DataverseShortcutTarget sourceTarget)
+    {
+        return JsonContent.Create(new
+        {
+            path = "Tables/dataverse",
+            name,
+            target = new
+            {
+                dataverse = new
+                {
+                    sourceTarget.ConnectionId,
+                    sourceTarget.DeltaLakeFolder,
+                    sourceTarget.EnvironmentDomain,
+                    sourceTarget.TableName
+                }
             }
         });
     }
@@ -506,11 +530,13 @@ internal sealed class FabricDataverseShortcutService
         }
     }
 
-    private async Task<HashSet<string>> ListExistingAsync(
+    private async Task<Dictionary<string, DataverseShortcutTarget?>>
+        ListExistingTargetsAsync(
         string accessToken,
         CancellationToken cancellationToken)
     {
-        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var existing = new Dictionary<string, DataverseShortcutTarget?>(
+            StringComparer.OrdinalIgnoreCase);
         string? continuationToken = null;
         do
         {
@@ -540,7 +566,11 @@ internal sealed class FabricDataverseShortcutService
                     if (shortcut.TryGetProperty("name", out var name) &&
                         name.ValueKind == JsonValueKind.String)
                     {
-                        existing.Add(name.GetString()!);
+                        var shortcutName = name.GetString()!;
+                        existing[shortcutName] =
+                            TryReadSourceTarget(shortcut, out _, out var target)
+                                ? target
+                                : null;
                     }
                 }
             }
@@ -555,6 +585,139 @@ internal sealed class FabricDataverseShortcutService
         }
         while (!string.IsNullOrEmpty(continuationToken));
         return existing;
+    }
+
+    internal static bool TargetsMatch(
+        DataverseShortcutTarget left,
+        DataverseShortcutTarget right)
+    {
+        return string.Equals(
+                left.ConnectionId,
+                right.ConnectionId,
+                StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(
+                left.DeltaLakeFolder,
+                right.DeltaLakeFolder,
+                StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(
+                left.EnvironmentDomain.TrimEnd('/'),
+                right.EnvironmentDomain.TrimEnd('/'),
+                StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(
+                left.TableName,
+                right.TableName,
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<Dictionary<string, DataverseShortcutTarget>> ListSourceTargetsAsync(
+        string accessToken,
+        CancellationToken cancellationToken)
+    {
+        var targets = new Dictionary<string, DataverseShortcutTarget>(
+            StringComparer.OrdinalIgnoreCase);
+        string? continuationToken = null;
+        do
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                BuildListSourceShortcutUri(continuationToken));
+            request.Headers.Authorization =
+                new AuthenticationHeaderValue("Bearer", accessToken);
+            using var response = await httpClient.SendAsync(request, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new FabricQueryException(
+                    "shortcut_source_list_failed",
+                    "The Dataverse Managed Lake shortcuts could not be read.",
+                    body);
+            }
+
+            using var json = JsonDocument.Parse(body);
+            if (json.RootElement.TryGetProperty("value", out var values))
+            {
+                foreach (var shortcut in values.EnumerateArray())
+                {
+                    if (!IsRootSourceShortcut(shortcut) ||
+                        !TryReadSourceTarget(shortcut, out var name, out var target))
+                    {
+                        continue;
+                    }
+
+                    targets[name] = target;
+                }
+            }
+
+            continuationToken =
+                json.RootElement.TryGetProperty(
+                    "continuationToken",
+                    out var continuation) &&
+                continuation.ValueKind == JsonValueKind.String
+                    ? continuation.GetString()
+                    : null;
+        }
+        while (!string.IsNullOrEmpty(continuationToken));
+        return targets;
+    }
+
+    internal static bool IsRootSourceShortcut(JsonElement shortcut)
+    {
+        return shortcut.TryGetProperty("path", out var path) &&
+            path.ValueKind == JsonValueKind.String &&
+            string.Equals(
+                path.GetString()?.Trim('/'),
+                "Tables",
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool TryReadSourceTarget(
+        JsonElement shortcut,
+        out string name,
+        out DataverseShortcutTarget target)
+    {
+        name = "";
+        target = default!;
+        if (!shortcut.TryGetProperty("name", out var nameElement) ||
+            nameElement.ValueKind != JsonValueKind.String ||
+            !shortcut.TryGetProperty("target", out var targetElement) ||
+            !targetElement.TryGetProperty("type", out var typeElement) ||
+            typeElement.ValueKind != JsonValueKind.String ||
+            !string.Equals(
+                typeElement.GetString(),
+                "Dataverse",
+                StringComparison.OrdinalIgnoreCase) ||
+            !targetElement.TryGetProperty("dataverse", out var dataverse))
+        {
+            return false;
+        }
+
+        name = nameElement.GetString()!;
+        var connectionId = ReadJsonString(dataverse, "connectionId");
+        var deltaLakeFolder = ReadJsonString(dataverse, "deltaLakeFolder");
+        var environmentDomain = ReadJsonString(dataverse, "environmentDomain");
+        var tableName = ReadJsonString(dataverse, "tableName");
+        if (string.IsNullOrWhiteSpace(connectionId) ||
+            string.IsNullOrWhiteSpace(deltaLakeFolder) ||
+            string.IsNullOrWhiteSpace(environmentDomain) ||
+            string.IsNullOrWhiteSpace(tableName))
+        {
+            return false;
+        }
+
+        target = new DataverseShortcutTarget(
+            connectionId,
+            deltaLakeFolder,
+            environmentDomain,
+            tableName);
+        return true;
+    }
+
+    private static string? ReadJsonString(JsonElement value, string propertyName)
+    {
+        return value.TryGetProperty(propertyName, out var property) &&
+            property.ValueKind == JsonValueKind.String
+                ? property.GetString()
+                : null;
     }
 
     private Uri BuildListShortcutUri(string? continuationToken)
@@ -580,6 +743,20 @@ internal sealed class FabricDataverseShortcutService
             UriKind.Absolute);
     }
 
+    private Uri BuildListSourceShortcutUri(string? continuationToken)
+    {
+        var uri =
+            $"https://api.fabric.microsoft.com/v1/workspaces/{Uri.EscapeDataString(workspaceId)}" +
+            $"/items/{Uri.EscapeDataString(dataverseLakehouseId)}/shortcuts" +
+            "?parentPath=Tables";
+        if (!string.IsNullOrEmpty(continuationToken))
+        {
+            uri += "&continuationToken=" + Uri.EscapeDataString(continuationToken);
+        }
+
+        return new Uri(uri, UriKind.Absolute);
+    }
+
     private Uri BuildRefreshMetadataUri()
     {
         return new Uri(
@@ -596,5 +773,11 @@ internal sealed class FabricDataverseShortcutService
             : throw new InvalidOperationException(
                 $"The app setting '{name}' is not configured.");
     }
+
+    internal sealed record DataverseShortcutTarget(
+        string ConnectionId,
+        string DeltaLakeFolder,
+        string EnvironmentDomain,
+        string TableName);
 }
 #endif

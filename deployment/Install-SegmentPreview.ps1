@@ -1018,6 +1018,7 @@ function Step-AzureInfrastructure {
         fabricSqlDatabase            = Get-ConfigValue -Name 'FabricSqlDatabase'
         fabricWorkspaceId            = Get-ConfigValue -Name 'FabricWorkspaceId'
         fabricServingLakehouseId     = Get-ConfigValue -Name 'FabricServingLakehouseId'
+        fabricDataverseLakehouseId   = Get-ConfigValue -Name 'FabricDataverseLakehouseId'
         fabricDataverseConnectionId  = Get-ConfigValue -Name 'FabricDataverseConnectionId'
         fabricDataverseDeltaFolder   = Get-ConfigValue -Name 'FabricDataverseDeltaFolder'
         dataverseEnvironmentUrl      = "https://$script:EnvironmentDomain"
@@ -1050,6 +1051,7 @@ function Step-AzureInfrastructure {
         "fabricSqlDatabase=$($required.fabricSqlDatabase)",
         "fabricWorkspaceId=$($required.fabricWorkspaceId)",
         "fabricServingLakehouseId=$($required.fabricServingLakehouseId)",
+        "fabricDataverseLakehouseId=$($required.fabricDataverseLakehouseId)",
         "fabricDataverseConnectionId=$($required.fabricDataverseConnectionId)",
         "fabricDataverseDeltaFolder=$($required.fabricDataverseDeltaFolder)",
         "dataverseEnvironmentUrl=$($required.dataverseEnvironmentUrl)",

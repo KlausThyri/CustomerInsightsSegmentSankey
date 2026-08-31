@@ -1,4 +1,5 @@
 using CustomerInsightsSegmentSankey.Broker;
+using System.Text.Json;
 using Xunit;
 
 namespace CustomerInsightsSegmentSankey.Broker.Tests;
@@ -70,5 +71,46 @@ public class DeploymentOutputTests
     public void RefusesAnEmptyWebAppUrl()
     {
         Assert.Throws<InvalidOperationException>(() => AzureFabricProvisioningExecutor.NormalizeApiBaseUrl("  "));
+    }
+
+    [Theory]
+    [InlineData("Tables", true)]
+    [InlineData("/Tables/", true)]
+    [InlineData("Tables/dataverse", false)]
+    public void DataverseDiscoveryAcceptsOnlyRootSourceShortcuts(
+        string path,
+        bool expected)
+    {
+        using var json = JsonDocument.Parse(
+            $$"""
+            {
+              "path": "{{path}}",
+              "name": "contact",
+              "target": {
+                "dataverse": {
+                  "connectionId": "11111111-1111-1111-1111-111111111111",
+                  "deltaLakeFolder": "managed/contact",
+                  "environmentDomain": "https://contoso.crm4.dynamics.com"
+                }
+              }
+            }
+            """);
+
+        var found = AzureFabricProvisioningExecutor.IsRootDataverseShortcut(
+            json.RootElement,
+            "contoso.crm4.dynamics.com",
+            out var name,
+            out var connectionId,
+            out var deltaLakeFolder);
+
+        Assert.Equal(expected, found);
+        if (expected)
+        {
+            Assert.Equal("contact", name);
+            Assert.Equal(
+                "11111111-1111-1111-1111-111111111111",
+                connectionId);
+            Assert.Equal("managed/contact", deltaLakeFolder);
+        }
     }
 }

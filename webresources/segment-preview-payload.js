@@ -24,7 +24,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
   return {
-    "contentVersion": "1.1.0.61",
+    "contentVersion": "1.1.0.62",
     "notebook": {
       "displayName": "Customer Insights Serving Bootstrap",
       "description": "Registers Journeys event folders and selected Dataverse mirror tables in one serving Lakehouse.",
@@ -360,10 +360,15 @@
               "\n",
               "for shortcut in source_shortcuts:\n",
               "    table_name = shortcut.get(\"name\")\n",
+              "    shortcut_path = str(shortcut.get(\"path\") or \"\").strip(\"/\").lower()\n",
               "    source_target = shortcut.get(\"target\", {})\n",
               "    target_type = source_target.get(\"type\")\n",
               "    dataverse_target = source_target.get(\"dataverse\", {})\n",
-              "    if target_type != \"Dataverse\" or table_name in METADATA_TABLES:\n",
+              "    if (\n",
+              "        shortcut_path != \"tables\"\n",
+              "        or target_type != \"Dataverse\"\n",
+              "        or table_name in METADATA_TABLES\n",
+              "    ):\n",
               "        continue\n",
               "\n",
               "    if not re.fullmatch(r\"[A-Za-z][A-Za-z0-9_]*\", table_name or \"\"):\n",
@@ -431,9 +436,9 @@
       }
     },
     "api": {
-      "version": "1.1.0.30",
-      "packageUrl": "https://github.com/KlausThyri/CustomerInsightsSegmentSankey/releases/download/v1.1.0.61/segment-preview-api-1.1.0.30.zip",
-      "sha256": "abdd26f9952a356d8e42023c8f734ef6996d66db3896e28e1361ae125c2e24aa",
+      "version": "1.1.0.31",
+      "packageUrl": "https://github.com/KlausThyri/CustomerInsightsSegmentSankey/releases/download/v1.1.0.62/segment-preview-api-1.1.0.31.zip",
+      "sha256": "2a6b7e4542b89d8632d26015e555254aed9a1ddfc0a06f970685462951c905a9",
       "packageUrlTemplate": "https://github.com/KlausThyri/CustomerInsightsSegmentSankey/releases/download/v{version}/segment-preview-api-{version}.zip"
     }
   };

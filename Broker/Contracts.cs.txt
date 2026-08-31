@@ -90,6 +90,7 @@ public sealed class FabricTarget
     [JsonPropertyName("capacityId")] public string? CapacityId { get; set; }
     [JsonPropertyName("servingLakehouseId")] public string? ServingLakehouseId { get; set; }
     [JsonPropertyName("servingLakehouseName")] public string? ServingLakehouseName { get; set; }
+    [JsonPropertyName("dataverseLakehouseId")] public string? DataverseLakehouseId { get; set; }
     [JsonPropertyName("dataverseConnectionId")] public string? DataverseConnectionId { get; set; }
     [JsonPropertyName("dataverseDeltaFolder")] public string? DataverseDeltaFolder { get; set; }
 }

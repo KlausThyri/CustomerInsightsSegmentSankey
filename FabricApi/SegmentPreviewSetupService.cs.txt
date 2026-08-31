@@ -12,9 +12,7 @@ internal sealed class SegmentPreviewSetupService
         "FABRIC_SQL_DATABASE",
         "FABRIC_WORKSPACE_ID",
         "FABRIC_SERVING_LAKEHOUSE_ID",
-        "FABRIC_DATAVERSE_CONNECTION_ID",
-        "FABRIC_DATAVERSE_DELTA_FOLDER",
-        "DATAVERSE_ENVIRONMENT_URL"
+        "FABRIC_DATAVERSE_LAKEHOUSE_ID"
     ];
 
     private static readonly string[] DefaultDataverseTables =

@@ -194,6 +194,9 @@ The preview evaluates the complete segment in the shared Fabric serving lakehous
 - Missing tables trigger the Fabric SQL metadata refresh API. A shortcut whose
   Dataverse Managed Lake target has no Delta table is reported with initial-sync
   and Fabric-link refresh guidance instead of being retried as catalog latency.
+- Runtime shortcuts copy the exact Dataverse target metadata from the matching
+  source-Lakehouse shortcut, including table-specific Managed Lake folder paths.
+  Existing shortcuts with stale targets are repaired automatically.
 - The dependency response confirms catalog readiness, so a Solution/API version
   mismatch fails with Setup Center upgrade guidance instead of stale-table errors.
 - `/api/segment-counts` compiles profile, relationship, consent, and

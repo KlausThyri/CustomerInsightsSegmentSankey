@@ -2482,7 +2482,11 @@
           shortcuts.forEach(function (shortcut) {
             var target = shortcut && shortcut.target;
             var dataverse = target && target.dataverse;
+            var shortcutPath = String((shortcut && shortcut.path) || "")
+              .replace(/^\/+|\/+$/g, "")
+              .toLowerCase();
             if (
+              shortcutPath === "tables" &&
               dataverse &&
               dataverse.connectionId &&
               dataverse.deltaLakeFolder &&
@@ -3365,6 +3369,10 @@
         target.fabricServingLakehouseId = current.FABRIC_SERVING_LAKEHOUSE_ID;
         facts.servingLakehouseId = current.FABRIC_SERVING_LAKEHOUSE_ID;
       }
+      if (isGuid(current.FABRIC_DATAVERSE_LAKEHOUSE_ID)) {
+        target.fabricDataverseLakehouseId = current.FABRIC_DATAVERSE_LAKEHOUSE_ID;
+        facts.dataverseLakehouseId = current.FABRIC_DATAVERSE_LAKEHOUSE_ID;
+      }
       if (!isBlank(current.FABRIC_DATAVERSE_CONNECTION_ID)) {
         target.fabricDataverseConnectionId = current.FABRIC_DATAVERSE_CONNECTION_ID;
         facts.dataverseConnectionId = current.FABRIC_DATAVERSE_CONNECTION_ID;
@@ -3444,6 +3452,7 @@
             capacityId: target.fabricCapacityId || null,
             servingLakehouseId: target.fabricServingLakehouseId || null,
             servingLakehouseName: target.fabricServingLakehouseName || null,
+            dataverseLakehouseId: target.fabricDataverseLakehouseId || null,
             dataverseConnectionId: target.fabricDataverseConnectionId || null,
             dataverseDeltaFolder: target.fabricDataverseDeltaFolder || null
           },
@@ -4033,6 +4042,11 @@
           requireFact(context.workspace && context.workspace.id, "fabric-discovery", "The Fabric workspace id");
           requireFact(context.serving && context.serving.id, "fabric-discovery", "The serving lakehouse id");
         }
+        requireFact(
+          context.dataverseLakehouseId || target.fabricDataverseLakehouseId,
+          "fabric-discovery",
+          "The Dataverse source lakehouse id"
+        );
         // The package URL and digest are handed to the template, which copies the
         // package into customer-owned storage from inside Azure. A browser cannot
         // do that itself: release assets carry no cross-origin headers.
@@ -4066,6 +4080,8 @@
           fabricWorkspaceId: (context.workspace && context.workspace.id) || target.fabricWorkspaceId || "",
           fabricServingLakehouseId:
             (context.serving && context.serving.id) || target.fabricServingLakehouseId || "",
+          fabricDataverseLakehouseId:
+            context.dataverseLakehouseId || target.fabricDataverseLakehouseId || "",
           fabricDataverseConnectionId: context.dataverseConnectionId || "",
           fabricDataverseDeltaFolder:
             context.dataverseDeltaFolder || target.fabricDataverseDeltaFolder,

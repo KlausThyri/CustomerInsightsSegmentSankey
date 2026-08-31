@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 
@@ -93,29 +94,163 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
         context.Outputs["workspaceId"] = workspaceId;
         context.Outputs["servingLakehouseId"] = lakehouseId;
 
+        var source = await DiscoverDataverseSourceAsync(
+            context,
+            workspaceId!,
+            lakehouses,
+            cancellationToken).ConfigureAwait(false);
+        if (source is null)
+        {
+            return StepOutcome.ActionRequired(
+                "The Dataverse source Lakehouse could not be discovered.",
+                "In Power Apps, verify Link to Microsoft Fabric, then run setup again.");
+        }
+
+        fabric.DataverseLakehouseId = source.LakehouseId;
+        fabric.DataverseConnectionId = source.ConnectionId;
+        fabric.DataverseDeltaFolder = source.DeltaLakeFolder;
+        context.Outputs["dataverseLakehouseId"] = source.LakehouseId;
+
         var sqlEndpoint = await ReadSqlEndpointAsync(context, workspaceId!, lakehouseId!, cancellationToken).ConfigureAwait(false);
-        if (sqlEndpoint is not null) context.Outputs["fabricSqlServer"] = sqlEndpoint;
+        if (sqlEndpoint is not null)
+        {
+            context.Outputs["fabricSqlServer"] = sqlEndpoint.ConnectionString;
+            context.Outputs["fabricSqlDatabase"] = sqlEndpoint.Id;
+        }
 
         return StepOutcome.Succeeded(
-            "Fabric workspace and serving lakehouse are ready.",
+            "Fabric workspace, serving lakehouse, and Dataverse source are ready.",
             new Dictionary<string, string?>
             {
                 ["workspaceId"] = workspaceId,
                 ["servingLakehouseId"] = lakehouseId,
-                ["fabricSqlServer"] = sqlEndpoint
+                ["dataverseLakehouseId"] = source.LakehouseId,
+                ["fabricSqlServer"] = sqlEndpoint?.ConnectionString,
+                ["fabricSqlDatabase"] = sqlEndpoint?.Id
             });
     }
 
-    private async Task<string?> ReadSqlEndpointAsync(ProvisioningContext context, string workspaceId, string lakehouseId, CancellationToken cancellationToken)
+    private async Task<DataverseSource?> DiscoverDataverseSourceAsync(
+        ProvisioningContext context,
+        string workspaceId,
+        IReadOnlyCollection<JsonElement> lakehouses,
+        CancellationToken cancellationToken)
+    {
+        var environmentHost = new Uri(
+            context.Request.Dataverse?.EnvironmentUrl ??
+            throw new InvalidOperationException("The Dataverse environment URL is missing.")).Host;
+        var requestedSourceId = Trim(context.Request.Fabric?.DataverseLakehouseId);
+        var candidates = lakehouses
+            .OrderBy(lakehouse =>
+                requestedSourceId is not null &&
+                string.Equals(
+                    Text(lakehouse, "id"),
+                    requestedSourceId,
+                    StringComparison.OrdinalIgnoreCase)
+                    ? 0
+                    : 1);
+        DataverseSource? fallback = null;
+        foreach (var lakehouse in candidates)
+        {
+            var candidateId = Text(lakehouse, "id");
+            if (string.IsNullOrWhiteSpace(candidateId))
+            {
+                continue;
+            }
+
+            List<JsonElement> shortcuts;
+            try
+            {
+                shortcuts = await FabricCollectionAsync(
+                    context,
+                    "workspaces/" + workspaceId + "/items/" + candidateId +
+                    "/shortcuts?parentPath=Tables",
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (ProvisioningRequestException exception)
+                when (exception.StatusCode is HttpStatusCode.BadRequest or
+                    HttpStatusCode.NotFound)
+            {
+                continue;
+            }
+
+            foreach (var shortcut in shortcuts)
+            {
+                if (!IsRootDataverseShortcut(
+                        shortcut,
+                        environmentHost,
+                        out var name,
+                        out var connectionId,
+                        out var deltaLakeFolder))
+                {
+                    continue;
+                }
+
+                var source = new DataverseSource(
+                    candidateId,
+                    connectionId,
+                    deltaLakeFolder);
+                if (string.Equals(name, "contact", StringComparison.OrdinalIgnoreCase))
+                {
+                    return source;
+                }
+
+                fallback ??= source;
+            }
+        }
+
+        return fallback;
+    }
+
+    public static bool IsRootDataverseShortcut(
+        JsonElement shortcut,
+        string environmentHost,
+        out string name,
+        out string connectionId,
+        out string deltaLakeFolder)
+    {
+        name = "";
+        connectionId = "";
+        deltaLakeFolder = "";
+        if (!shortcut.TryGetProperty("path", out var path) ||
+            !string.Equals(
+                path.GetString()?.Trim('/'),
+                "Tables",
+                StringComparison.OrdinalIgnoreCase) ||
+            !shortcut.TryGetProperty("name", out var nameElement) ||
+            !shortcut.TryGetProperty("target", out var target) ||
+            !target.TryGetProperty("dataverse", out var dataverse))
+        {
+            return false;
+        }
+
+        name = nameElement.GetString() ?? "";
+        connectionId = Text(dataverse, "connectionId") ?? "";
+        deltaLakeFolder = Text(dataverse, "deltaLakeFolder") ?? "";
+        var environmentDomain = Text(dataverse, "environmentDomain");
+        return Uri.TryCreate(environmentDomain, UriKind.Absolute, out var environmentUri) &&
+            string.Equals(
+                environmentUri.Host,
+                environmentHost,
+                StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(name) &&
+            !string.IsNullOrWhiteSpace(connectionId) &&
+            !string.IsNullOrWhiteSpace(deltaLakeFolder);
+    }
+
+    private async Task<SqlEndpoint?> ReadSqlEndpointAsync(ProvisioningContext context, string workspaceId, string lakehouseId, CancellationToken cancellationToken)
     {
         try
         {
             var lakehouse = await FabricAsync(context, HttpMethod.Get, "workspaces/" + workspaceId + "/lakehouses/" + lakehouseId, null, cancellationToken).ConfigureAwait(false);
             if (lakehouse.TryGetProperty("properties", out var properties) &&
                 properties.TryGetProperty("sqlEndpointProperties", out var endpoint) &&
-                endpoint.TryGetProperty("connectionString", out var connection))
+                endpoint.TryGetProperty("connectionString", out var connection) &&
+                endpoint.TryGetProperty("id", out var id))
             {
-                return connection.GetString();
+                return new SqlEndpoint(
+                    id.GetString() ?? "",
+                    connection.GetString() ?? "");
             }
         }
         catch (InvalidOperationException)
@@ -341,6 +476,12 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
                 "The setup page must send an https package URL together with its SHA-256 digest. " +
                 "Set klth_SetupApiPackageUrl to '<https url> <64 hex sha-256>' on the setup page and install again.");
         }
+        if (Trim(fabric?.DataverseLakehouseId) is null)
+        {
+            return StepOutcome.ActionRequired(
+                "The Dataverse source Lakehouse ID is missing, so the Azure deployment was not started.",
+                "Run Fabric discovery again and select the Lakehouse created by Link to Microsoft Fabric.");
+        }
 
         var blobName = package.ResolvedBlobName;
         var parameters = new Dictionary<string, object?>
@@ -348,9 +489,10 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
             ["location"] = location,
             ["webAppName"] = webAppName,
             ["fabricSqlServer"] = context.Outputs.TryGetValue("fabricSqlServer", out var sql) ? sql ?? string.Empty : string.Empty,
-            ["fabricSqlDatabase"] = Trim(fabric?.ServingLakehouseName) ?? "SegmentServing",
+            ["fabricSqlDatabase"] = context.Outputs.TryGetValue("fabricSqlDatabase", out var database) ? database ?? string.Empty : string.Empty,
             ["fabricWorkspaceId"] = context.Outputs.TryGetValue("workspaceId", out var workspace) ? workspace ?? string.Empty : string.Empty,
             ["fabricServingLakehouseId"] = context.Outputs.TryGetValue("servingLakehouseId", out var lakehouse) ? lakehouse ?? string.Empty : string.Empty,
+            ["fabricDataverseLakehouseId"] = Trim(fabric?.DataverseLakehouseId) ?? string.Empty,
             ["fabricDataverseConnectionId"] = Trim(fabric?.DataverseConnectionId) ?? string.Empty,
             ["fabricDataverseDeltaFolder"] = Trim(fabric?.DataverseDeltaFolder) ?? "deltalake",
             ["dataverseEnvironmentUrl"] = Trim(context.Request.Dataverse?.EnvironmentUrl) ?? string.Empty,
@@ -649,6 +791,13 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
     }
 
     private static string? Trim(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private sealed record DataverseSource(
+        string LakehouseId,
+        string ConnectionId,
+        string DeltaLakeFolder);
+
+    private sealed record SqlEndpoint(string Id, string ConnectionString);
 
     private static string Require(string? value, string name) =>
         Trim(value) ?? throw new InvalidOperationException("The run is missing the required value '" + name + "'.");
