@@ -36,6 +36,7 @@ DATAVERSE_SCHEMA = "dataverse"
 WORKSPACE_ID = "<fabric-workspace-id>"
 SERVING_LAKEHOUSE_ID = "<serving-lakehouse-id>"
 DATAVERSE_LAKEHOUSE_ID = "<dataverse-mirror-lakehouse-id>"
+REQUIRED_DATAVERSE_TABLES = "<required-dataverse-tables>"
 SHORTCUTS_API = (
     f"https://api.fabric.microsoft.com/v1/workspaces/{WORKSPACE_ID}"
     f"/items/{SERVING_LAKEHOUSE_ID}/shortcuts"
@@ -55,6 +56,11 @@ METADATA_TABLES = {
     "StateMetadata",
     "StatusMetadata",
     "TargetMetadata",
+}
+required_dataverse_tables = {
+    table.strip().lower()
+    for table in REQUIRED_DATAVERSE_TABLES.split(",")
+    if table.strip()
 }
 
 fabric_token = mssparkutils.credentials.getToken(
@@ -254,6 +260,7 @@ write_diagnostic(
 )
 
 dataverse_results = []
+source_listing_failed = False
 if not HAS_DATAVERSE_MIRROR:
     source_shortcuts = []
 else:
@@ -273,12 +280,31 @@ else:
             )
             source_response.raise_for_status()
             source_page = source_response.json()
-            source_shortcuts.extend(source_page.get("value", []))
+            for source_shortcut in source_page.get("value", []):
+                source_name = str(source_shortcut.get("name") or "")
+                source_path = str(
+                    source_shortcut.get("path") or ""
+                ).strip("/").lower()
+                source_target = source_shortcut.get("target", {})
+                if (
+                    source_name.lower() in required_dataverse_tables
+                    and source_path == "tables"
+                    and source_target.get("type") == "Dataverse"
+                ):
+                    source_shortcuts.append(source_shortcut)
             continuation_token = source_page.get("continuationToken")
-            if not continuation_token:
+            found_tables = {
+                str(item.get("name") or "").lower()
+                for item in source_shortcuts
+            }
+            if (
+                not continuation_token
+                or required_dataverse_tables.issubset(found_tables)
+            ):
                 break
     except Exception as error:
         source_shortcuts = []
+        source_listing_failed = True
         dataverse_results.append(
             (None, None, "failed", f"Could not list Dataverse shortcuts: {error}")
         )
@@ -329,6 +355,23 @@ for shortcut in source_shortcuts:
     except Exception as error:
         dataverse_results.append(
             (table_name, table_name, "failed", str(error))
+        )
+
+registered_source_tables = {
+    str(shortcut.get("name") or "").lower()
+    for shortcut in source_shortcuts
+}
+if not source_listing_failed:
+    for missing_table in sorted(
+        required_dataverse_tables - registered_source_tables
+    ):
+        dataverse_results.append(
+            (
+                missing_table,
+                None,
+                "failed",
+                "Required root Dataverse shortcut was not found",
+            )
         )
 
 write_diagnostic(

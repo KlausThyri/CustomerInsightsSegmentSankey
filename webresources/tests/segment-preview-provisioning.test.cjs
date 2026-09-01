@@ -3526,11 +3526,18 @@ test("the shipped payload carries the bootstrap notebook and its parameters", ()
   assert.deepEqual(payload.notebook.parameters, [
     "WORKSPACE_ID",
     "SERVING_LAKEHOUSE_ID",
-    "DATAVERSE_LAKEHOUSE_ID"
+    "DATAVERSE_LAKEHOUSE_ID",
+    "REQUIRED_DATAVERSE_TABLES"
   ]);
   assert.ok(Array.isArray(payload.notebook.content.cells));
   assert.ok(payload.notebook.content.cells.some((cell) => cell.cell_type === "code"));
   assert.ok(payload.notebook.schedule.configuration.times.length);
+  const source = payload.notebook.content.cells
+    .filter((cell) => cell.cell_type === "code")
+    .flatMap((cell) => cell.source)
+    .join("");
+  assert.match(source, /source_name\.lower\(\) in required_dataverse_tables/);
+  assert.match(source, /required_dataverse_tables\.issubset\(found_tables\)/);
 });
 
 test("notebook parameters are substituted and unknown constants are reported", () => {
@@ -3559,7 +3566,8 @@ test("buildNotebookDefinition emits an InlineBase64 part with every constant app
   const definition = engine.buildNotebookDefinition(payload.notebook, {
     WORKSPACE_ID: "11111111-2222-3333-4444-555555555555",
     SERVING_LAKEHOUSE_ID: "66666666-7777-8888-9999-aaaaaaaaaaaa",
-    DATAVERSE_LAKEHOUSE_ID: "12341234-5678-5678-9abc-9abcdef01234"
+    DATAVERSE_LAKEHOUSE_ID: "12341234-5678-5678-9abc-9abcdef01234",
+    REQUIRED_DATAVERSE_TABLES: "contact,msdynmkt_purpose"
   });
   assert.equal(definition.format, "ipynb");
   assert.equal(definition.parts.length, 2);
@@ -3591,6 +3599,7 @@ test("buildNotebookDefinition emits an InlineBase64 part with every constant app
   assert.ok(source.includes('WORKSPACE_ID = "11111111-2222-3333-4444-555555555555"'));
   assert.ok(source.includes('SERVING_LAKEHOUSE_ID = "66666666-7777-8888-9999-aaaaaaaaaaaa"'));
   assert.ok(source.includes('DATAVERSE_LAKEHOUSE_ID = "12341234-5678-5678-9abc-9abcdef01234"'));
+  assert.ok(source.includes('REQUIRED_DATAVERSE_TABLES = "contact,msdynmkt_purpose"'));
 });
 
 test("buildNotebookDefinition refuses to publish a notebook with missing ids", () => {
@@ -3627,6 +3636,11 @@ test("the direct run publishes the notebook through the Fabric definition API", 
   assert.ok(source.includes(`WORKSPACE_ID = "${VALID_TARGET.fabricWorkspaceId}"`));
   assert.ok(source.includes(`SERVING_LAKEHOUSE_ID = "${VALID_TARGET.fabricServingLakehouseId}"`));
   assert.ok(source.includes('DATAVERSE_LAKEHOUSE_ID = "12341234-5678-5678-9abc-9abcdef01234"'));
+  assert.ok(
+    source.includes(
+      `REQUIRED_DATAVERSE_TABLES = "${engine.TARGET_DEFAULTS.requiredDataverseTables}"`
+    )
+  );
   const schedule = direct.calls.find(
     (call) => call.kind === "fabric" && /\/jobs\/Execute\/schedules$/.test(call.path)
   );

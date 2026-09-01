@@ -919,6 +919,7 @@ function Step-FabricNotebook {
         WORKSPACE_ID           = $workspaceId
         SERVING_LAKEHOUSE_ID   = $servingId
         DATAVERSE_LAKEHOUSE_ID = $mirrorId
+        REQUIRED_DATAVERSE_TABLES = Get-ConfigValue -Name 'RequiredDataverseTables'
     }
     if ($parameterized.Missing.Count -gt 0) {
         throw "The bootstrap notebook does not declare: $($parameterized.Missing -join ', ')."

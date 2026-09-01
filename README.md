@@ -218,8 +218,9 @@ Both sources are additionally provisioned into a shared serving lakehouse:
 - The secured Fabric API adds missing Dataverse shortcuts serially and
   append-only. Existing shortcuts are never replaced by a full mirror
   reconfiguration.
-- The daily bootstrap notebook also picks up any tables manually added to the
-  Dataverse mirror into the `dataverse` serving schema.
+- The bootstrap notebook registers only the configured installation baseline
+  tables. It does not copy every table from a large Dataverse link; additional
+  segment dependencies are added on demand by the secured Fabric API.
 
 The UI shows the calculation timestamp and the end-to-end load time. The
 actual data state depends on the Customer Insights export to Fabric. The

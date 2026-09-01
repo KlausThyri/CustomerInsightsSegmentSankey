@@ -512,7 +512,7 @@
   }
 
   /** Constant values may never terminate the Python string literal. */
-  var NOTEBOOK_VALUE_PATTERN = /^[A-Za-z0-9 ._/-]+$/;
+  var NOTEBOOK_VALUE_PATTERN = /^[A-Za-z0-9 ,._/-]+$/;
 
   /**
    * Rewrites the top-level `NAME = "value"` constants of the bootstrap
@@ -4013,7 +4013,8 @@
           WORKSPACE_ID: context.workspace.id,
           SERVING_LAKEHOUSE_ID: context.serving.id,
           SERVING_LAKEHOUSE_NAME: context.serving.displayName,
-          DATAVERSE_LAKEHOUSE_ID: mirrorId
+          DATAVERSE_LAKEHOUSE_ID: mirrorId,
+          REQUIRED_DATAVERSE_TABLES: (context.requiredTables || []).join(",")
         });
 
         var workspacePath = "workspaces/" + context.workspace.id;

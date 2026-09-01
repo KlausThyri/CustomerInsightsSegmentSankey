@@ -103,7 +103,12 @@ $notebookSource = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Fabric\bo
 $platform = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Fabric\bootstrap-events.platform.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $schedules = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Fabric\bootstrap-events.schedules.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 
-$parameters = @('WORKSPACE_ID', 'SERVING_LAKEHOUSE_ID', 'DATAVERSE_LAKEHOUSE_ID')
+$parameters = @(
+    'WORKSPACE_ID',
+    'SERVING_LAKEHOUSE_ID',
+    'DATAVERSE_LAKEHOUSE_ID',
+    'REQUIRED_DATAVERSE_TABLES'
+)
 foreach ($name in $parameters) {
     if ($notebookSource -notmatch ('(?m)^' + [regex]::Escape($name) + '\s*=\s*"[^"]*"')) {
         throw "The bootstrap notebook does not declare the constant '$name'."

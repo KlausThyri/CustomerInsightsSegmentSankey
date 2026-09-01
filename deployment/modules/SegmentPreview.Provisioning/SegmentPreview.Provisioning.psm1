@@ -446,7 +446,7 @@ function Set-SegmentPreviewNotebookParameter {
         }
 
         $value = [string] $Parameter[$name]
-        if ($value -notmatch '^[A-Za-z0-9 ._/\-]+$') {
+        if ($value -notmatch '^[A-Za-z0-9 ,._/\-]+$') {
             throw "The value for the notebook constant '$name' contains unsupported characters."
         }
 
