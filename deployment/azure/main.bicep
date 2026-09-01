@@ -388,6 +388,9 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
   properties: {
     serverFarmId: appServicePlan.id
     virtualNetworkSubnetId: webAppSubnet.id
+    // Dataverse plug-ins call this HTTPS endpoint from Microsoft-managed
+    // infrastructure, so the API cannot be private-endpoint-only.
+    publicNetworkAccess: 'Enabled'
     httpsOnly: true
     clientAffinityEnabled: false
     siteConfig: {

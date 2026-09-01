@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
@@ -120,11 +121,17 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         if (!response.IsSuccessStatusCode)
                         {
                             var error = TryDeserialize<SetupApiError>(body);
-                            throw new InvalidPluginExecutionException(
+                            var message =
                                 error != null && !string.IsNullOrWhiteSpace(error.Message)
                                     ? error.Message
-                                    : "The Segment Preview setup API returned HTTP " +
-                                      (int)response.StatusCode + ".");
+                                    : response.StatusCode == HttpStatusCode.Forbidden
+                                        ? "The Segment Preview Azure Web App blocks public HTTPS access. " +
+                                          "Run Setup Center > Install everything to restore public network access, " +
+                                          "or remove an App Service access restriction that blocks Dataverse."
+                                        : "The Segment Preview setup API returned HTTP " +
+                                          (int)response.StatusCode + ".";
+                            throw new InvalidPluginExecutionException(
+                                message);
                         }
 
                         var remote = action == "provision-shortcuts"

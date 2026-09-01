@@ -23,7 +23,7 @@
       "_generator": {
         "name": "bicep",
         "version": "0.46.1.21595",
-        "templateHash": "17106558676789641806"
+        "templateHash": "5585614113388543942"
       }
     },
     "parameters": {
@@ -459,6 +459,7 @@
         "properties": {
           "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', parameters('webAppName')))]",
           "virtualNetworkSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', format('{0}-vnet', parameters('webAppName')), 'web-app')]",
+          "publicNetworkAccess": "Enabled",
           "httpsOnly": true,
           "clientAffinityEnabled": false,
           "siteConfig": {

@@ -94,6 +94,14 @@ an automatic resume and shows **Starting Fabric capacity** progress. A
 permission error is not hidden; rerun Setup so the capacity-scoped Contributor
 assignment can be restored.
 
+If **Refresh status** reports that the Azure Web App blocks public HTTPS access,
+run **Install everything** again. Dataverse plug-ins call the API from
+Microsoft-managed infrastructure, so the Web App endpoint must have **Public
+network access** enabled; the API key remains required for every product and
+setup endpoint. The Azure template restores this setting during an update. If
+the message remains, remove or adjust a manually added App Service access
+restriction that blocks Dataverse.
+
 The page writes `klth_FabricBehavioralApiUrl` and `klth_FabricBehavioralApiKey`
 itself using your Dataverse session, generates the server-side API key in the
 browser with `crypto.getRandomValues`, and never displays or stores the key -

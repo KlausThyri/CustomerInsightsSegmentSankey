@@ -803,6 +803,10 @@ Describe 'Browser-only notebook and API deployment' {
         $bicep | Should -Match 'allowSharedKeyAccess:\s*false'
         $bicep | Should -Match 'allowBlobPublicAccess:\s*false'
         $bicep | Should -Match "publicNetworkAccess:\s*'Disabled'"
+        $bicep | Should -Match "resource webApp[\s\S]+?publicNetworkAccess:\s*'Enabled'"
+        ([regex]::Matches(
+                $bicep,
+                "publicNetworkAccess:\s*'Disabled'")).Count | Should -Be 1
         $bicep | Should -Not -Match '(?i)listServiceSas|listAccountSas'
     }
 
@@ -829,6 +833,13 @@ Describe 'Browser-only notebook and API deployment' {
         $script:Engine | Should -Match 'apiHealth'
         $script:Engine | Should -Match 'HEALTH_ATTEMPTS'
         $script:Engine | Should -Match 'HEALTH_DELAY_MS'
+    }
+
+    It 'reports when App Service blocks the public Dataverse endpoint' {
+        $plugin = Get-Content -LiteralPath (
+            Join-Path $script:BrowserRoot 'CustomApi\ManageSegmentPreviewSetupPlugin.cs') -Raw
+        $plugin | Should -Match 'Azure Web App blocks public HTTPS access'
+        $plugin | Should -Match 'App Service access restriction'
     }
 
     It 'opens only the health and authenticated key-check probes to the setup origin' {

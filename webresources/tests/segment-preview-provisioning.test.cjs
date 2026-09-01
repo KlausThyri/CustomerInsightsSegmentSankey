@@ -6004,6 +6004,17 @@ test("the ARM template copies the package server side and never exposes it publi
   assert.equal(/sig=|signedPermission|listAccountSas/i.test(resources), false, "no shared access signature");
 });
 
+test("the ARM template keeps the Dataverse-facing Web App publicly reachable", () => {
+  const webApp = embeddedTemplate.resources.find(
+    (resource) =>
+      String(resource.type).toLowerCase() === "microsoft.web/sites" &&
+      resource.name === "[parameters('webAppName')]"
+  );
+  assert.ok(webApp, "the Web App resource must exist");
+  assert.equal(webApp.properties.publicNetworkAccess, "Enabled");
+  assert.equal(webApp.properties.httpsOnly, true);
+});
+
 
 // -------------------------------------------------- tenant app registration
 
