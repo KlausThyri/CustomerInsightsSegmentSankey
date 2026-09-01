@@ -2647,6 +2647,147 @@
       return fallbackSource;
     }
 
+    function dataverseTargetsMatch(left, right) {
+      var leftTarget = left && left.dataverse;
+      var rightTarget = right && right.dataverse;
+      if (!leftTarget || !rightTarget) return false;
+      return (
+        String(leftTarget.connectionId || "").toLowerCase() ===
+          String(rightTarget.connectionId || "").toLowerCase() &&
+        String(leftTarget.deltaLakeFolder || "").replace(/\/+$/, "").toLowerCase() ===
+          String(rightTarget.deltaLakeFolder || "").replace(/\/+$/, "").toLowerCase() &&
+        environmentDomain(leftTarget.environmentDomain) ===
+          environmentDomain(rightTarget.environmentDomain) &&
+        String(leftTarget.tableName || "").toLowerCase() ===
+          String(rightTarget.tableName || "").toLowerCase()
+      );
+    }
+
+    async function listShortcutTargets(workspaceId, lakehouseId, parentPath) {
+      var targets = {};
+      var continuationToken = null;
+      do {
+        var path =
+          "workspaces/" +
+          workspaceId +
+          "/items/" +
+          lakehouseId +
+          "/shortcuts?parentPath=" +
+          encodeURIComponent(parentPath);
+        if (continuationToken) {
+          path += "&continuationToken=" + encodeURIComponent(continuationToken);
+        }
+        var response = await fabric("GET", path);
+        var payload = response.body || {};
+        (Array.isArray(payload.value) ? payload.value : []).forEach(function (shortcut) {
+          var exactPath = String(shortcut.path || "")
+            .replace(/^\/+|\/+$/g, "")
+            .toLowerCase() === String(parentPath).replace(/^\/+|\/+$/g, "").toLowerCase();
+          if (exactPath && shortcut.name) {
+            targets[String(shortcut.name).toLowerCase()] = shortcut.target || null;
+          }
+        });
+        continuationToken = payload.continuationToken || null;
+      } while (continuationToken);
+      return targets;
+    }
+
+    async function ensureDataverseShortcuts(
+      workspaceId,
+      servingLakehouseId,
+      sourceLakehouseId,
+      tables,
+      onProgress
+    ) {
+      var required = Array.from(
+        new Set((tables || []).map(function (table) {
+          return String(table).trim().toLowerCase();
+        }).filter(Boolean))
+      ).sort();
+      var sourceTargets = await listShortcutTargets(
+        workspaceId,
+        sourceLakehouseId,
+        "Tables"
+      );
+      var servingTargets = await listShortcutTargets(
+        workspaceId,
+        servingLakehouseId,
+        "Tables/dataverse"
+      );
+      var result = {
+        created: 0,
+        repaired: 0,
+        unchanged: 0,
+        failed: 0,
+        total: required.length
+      };
+      for (var index = 0; index < required.length; index += 1) {
+        var table = required[index];
+        var sourceTarget = sourceTargets[table];
+        var existingTarget = servingTargets[table];
+        var changed = false;
+        var action = "unchanged";
+        var progressError = null;
+        if (!sourceTarget || !sourceTarget.dataverse) {
+          result.failed += 1;
+          action = "failed";
+          progressError =
+            "The required root Dataverse shortcut '" + table + "' was not found.";
+        } else {
+          var desiredTarget = {
+            dataverse: {
+              connectionId: sourceTarget.dataverse.connectionId,
+              deltaLakeFolder: sourceTarget.dataverse.deltaLakeFolder,
+              environmentDomain: sourceTarget.dataverse.environmentDomain,
+              tableName: table
+            }
+          };
+          changed = !dataverseTargetsMatch(existingTarget, desiredTarget);
+          if (!changed) {
+            result.unchanged += 1;
+          } else {
+            try {
+              await fabric(
+                "POST",
+                "workspaces/" +
+                  workspaceId +
+                  "/items/" +
+                  servingLakehouseId +
+                  "/shortcuts?shortcutConflictPolicy=CreateOrOverwrite",
+                {
+                  path: "Tables/dataverse",
+                  name: table,
+                  target: desiredTarget
+                }
+              );
+              if (existingTarget) {
+                result.repaired += 1;
+                action = "repaired";
+              } else {
+                result.created += 1;
+                action = "created";
+              }
+            } catch (error) {
+              result.failed += 1;
+              action = "failed";
+              progressError = error && error.message ? error.message : String(error);
+            }
+          }
+        }
+        if (onProgress) {
+          onProgress({
+            completed: index + 1,
+            total: required.length,
+            table: table,
+            changed: changed,
+            action: action,
+            error: progressError
+          });
+        }
+      }
+      return result;
+    }
+
     async function waitForDataverseShortcutSource(
       workspaceId,
       lakehouses,
@@ -3317,6 +3458,7 @@
       listLakehouses: listLakehouses,
       listDataverseConnections: listDataverseConnections,
       findDataverseShortcutSource: findDataverseShortcutSource,
+      ensureDataverseShortcuts: ensureDataverseShortcuts,
       waitForDataverseShortcutSource: waitForDataverseShortcutSource,
       ensureConnectionRoleAssignment: ensureConnectionRoleAssignment,
       ensureWorkspaceRoleAssignment: ensureWorkspaceRoleAssignment,
@@ -4008,6 +4150,61 @@
         if (!isGuid(mirrorId)) {
           mirrorId = EMPTY_GUID;
         }
+        var notebookStep = STEPS.filter(function (step) {
+          return step.id === "fabric-notebook";
+        })[0];
+        var requiredShortcutTables = context.requiredTables || [];
+        var progressTotal = requiredShortcutTables.length + 1;
+        report(
+          notebookStep,
+          "running",
+          "Checking existing Dataverse serving shortcuts…",
+          {
+            itemProgress: {
+              completed: 0,
+              total: requiredShortcutTables.length,
+              overallCompleted: 0,
+              overallTotal: progressTotal,
+              label: "Checking existing shortcuts"
+            }
+          }
+        );
+        var shortcutResult = await direct.ensureDataverseShortcuts(
+          context.workspace.id,
+          context.serving.id,
+          mirrorId,
+          requiredShortcutTables,
+          function (progress) {
+            report(
+              notebookStep,
+              "running",
+              "Dataverse table " +
+                progress.completed +
+                " of " +
+                progress.total +
+                ": " +
+                progress.table +
+                (progress.changed ? " updated." : " already current."),
+              {
+                itemProgress: {
+                  completed: progress.completed,
+                  total: progress.total,
+                  overallCompleted: progress.completed,
+                  overallTotal: progressTotal,
+                  label:
+                    progress.table +
+                    (progress.action === "created"
+                      ? " created"
+                      : progress.action === "repaired"
+                        ? " repaired"
+                        : progress.action === "failed"
+                          ? " could not be updated"
+                        : " already current")
+                }
+              }
+            );
+          }
+        );
 
         var definition = buildNotebookDefinition(notebook, {
           WORKSPACE_ID: context.workspace.id,
@@ -4118,6 +4315,20 @@
         }
 
         try {
+          report(
+            notebookStep,
+            "running",
+            "Dataverse shortcuts are current; running the Journeys bootstrap notebook…",
+            {
+              itemProgress: {
+                completed: 0,
+                total: 1,
+                overallCompleted: requiredShortcutTables.length,
+                overallTotal: progressTotal,
+                label: "Running Journeys bootstrap"
+              }
+            }
+          );
           await direct.runNotebookJob(context.workspace.id, notebookId);
         } catch (error) {
           if (
@@ -4151,7 +4362,18 @@
           }
           throw error;
         }
-        return scheduleMessage + " Initial run completed.";
+        return (
+          scheduleMessage +
+          " Initial run completed. Dataverse shortcuts: " +
+          shortcutResult.created +
+          " created, " +
+          shortcutResult.repaired +
+          " repaired, " +
+          shortcutResult.unchanged +
+          " already current, " +
+          shortcutResult.failed +
+          " deferred to the bootstrap notebook."
+        );
       },
 
       secret: async function () {

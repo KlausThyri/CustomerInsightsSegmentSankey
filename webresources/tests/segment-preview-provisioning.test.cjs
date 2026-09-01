@@ -1339,6 +1339,289 @@ test("direct client grants capacity-scoped permission to the managed identity", 
   assert.match(body.properties.roleDefinitionId, /b24988ac-6180-42a0-ab88-20f7382dd24c$/);
 });
 
+test("direct bootstrap checks every table but writes only missing or stale shortcuts", async () => {
+  const target = (tableName, folder = "deltalake") => ({
+    dataverse: {
+      connectionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      deltaLakeFolder: folder,
+      environmentDomain: "contoso.crm4.dynamics.com",
+      tableName
+    }
+  });
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.includes("/items/source/shortcuts?parentPath=Tables"),
+      respond: () => jsonResponse(200, {
+        value: [
+          { path: "Tables", name: "contact", target: target("contact") },
+          { path: "Tables", name: "account", target: target("account", "account-delta") }
+        ]
+      })
+    },
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.includes("/items/serving/shortcuts?parentPath=Tables%2Fdataverse"),
+      respond: () => jsonResponse(200, {
+        value: [
+          { path: "Tables/dataverse", name: "contact", target: target("contact") },
+          { path: "Tables/dataverse", name: "account", target: target("account", "old-folder") }
+        ]
+      })
+    },
+    {
+      match: (request) =>
+        request.init.method === "POST" &&
+        request.url.includes("shortcutConflictPolicy=CreateOrOverwrite"),
+      respond: () => jsonResponse(201, {})
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    crypto: webcrypto,
+    timer: immediateTimer
+  });
+  const progress = [];
+
+  const result = await direct.ensureDataverseShortcuts(
+    "workspace",
+    "serving",
+    "source",
+    ["contact", "account"],
+    (entry) => progress.push(entry)
+  );
+
+  assert.deepEqual(result, {
+    created: 0,
+    repaired: 1,
+    unchanged: 1,
+    failed: 0,
+    total: 2
+  });
+  assert.equal(
+    fetchImpl.calls.filter((call) => call.init.method === "POST").length,
+    1
+  );
+  assert.equal(progress.length, 2);
+  assert.equal(progress[0].action, "repaired");
+  assert.equal(progress[1].table, "contact");
+  assert.equal(progress[1].action, "unchanged");
+});
+
+test("direct bootstrap skips matching co-located shortcuts and filters exact paths", async () => {
+  const matchingTarget = {
+    dataverse: {
+      connectionId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      deltaLakeFolder: "DeltaLake/",
+      environmentDomain: "https://CONTOSO.crm4.dynamics.com/",
+      tableName: "CONTACT"
+    }
+  };
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.includes("/items/shared-lakehouse/shortcuts?parentPath=Tables"),
+      respond: () => jsonResponse(200, {
+        value: [
+          {
+            path: "Tables/dataverse",
+            name: "contact",
+            target: { oneLake: { itemId: "wrong-source" } }
+          },
+          {
+            path: "Tables",
+            name: "contact",
+            target: matchingTarget
+          }
+        ]
+      })
+    },
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.includes(
+          "/items/shared-lakehouse/shortcuts?parentPath=Tables%2Fdataverse"
+        ),
+      respond: () => jsonResponse(200, {
+        value: [
+          {
+            path: "Tables/dataverse/archive",
+            name: "contact",
+            target: { oneLake: { itemId: "wrong-serving" } }
+          },
+          {
+            path: "Tables/dataverse",
+            name: "contact",
+            target: {
+              dataverse: {
+                connectionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                deltaLakeFolder: "deltalake",
+                environmentDomain: "contoso.crm4.dynamics.com",
+                tableName: "contact"
+              }
+            }
+          }
+        ]
+      })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    crypto: webcrypto,
+    timer: immediateTimer
+  });
+  const progress = [];
+
+  const result = await direct.ensureDataverseShortcuts(
+    "workspace",
+    "shared-lakehouse",
+    "shared-lakehouse",
+    ["contact"],
+    (entry) => progress.push(entry)
+  );
+
+  assert.deepEqual(result, {
+    created: 0,
+    repaired: 0,
+    unchanged: 1,
+    failed: 0,
+    total: 1
+  });
+  assert.equal(
+    fetchImpl.calls.filter((call) => call.init.method === "POST").length,
+    0
+  );
+  assert.equal(progress.length, 1);
+  assert.equal(progress[0].changed, false);
+  assert.equal(progress[0].action, "unchanged");
+});
+
+test("direct bootstrap creates a missing serving shortcut", async () => {
+  const target = {
+    dataverse: {
+      connectionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      deltaLakeFolder: "contact-delta",
+      environmentDomain: "contoso.crm4.dynamics.com",
+      tableName: "contact"
+    }
+  };
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.includes("parentPath=Tables"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [{ path: "Tables", name: "contact", target }]
+        })
+    },
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.includes("parentPath=Tables%2Fdataverse"),
+      respond: () => jsonResponse(200, { value: [] })
+    },
+    {
+      match: (request) => request.init.method === "POST",
+      respond: () => jsonResponse(201, {})
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    crypto: webcrypto,
+    timer: immediateTimer
+  });
+
+  const result = await direct.ensureDataverseShortcuts(
+    "workspace",
+    "serving",
+    "source",
+    ["contact"]
+  );
+
+  assert.deepEqual(result, {
+    created: 1,
+    repaired: 0,
+    unchanged: 0,
+    failed: 0,
+    total: 1
+  });
+  const write = fetchImpl.calls.find((call) => call.init.method === "POST");
+  assert.ok(write);
+  assert.deepEqual(JSON.parse(write.init.body), {
+    path: "Tables/dataverse",
+    name: "contact",
+    target
+  });
+});
+
+test("direct bootstrap reports a missing source table and continues checking others", async () => {
+  const target = {
+    dataverse: {
+      connectionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      deltaLakeFolder: "contact-delta",
+      environmentDomain: "contoso.crm4.dynamics.com",
+      tableName: "contact"
+    }
+  };
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.includes("parentPath=Tables"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [{ path: "Tables", name: "contact", target }]
+        })
+    },
+    {
+      match: (request) =>
+        request.init.method === "GET" &&
+        request.url.includes("parentPath=Tables%2Fdataverse"),
+      respond: () =>
+        jsonResponse(200, {
+          value: [{ path: "Tables/dataverse", name: "contact", target }]
+        })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    crypto: webcrypto,
+    timer: immediateTimer
+  });
+  const progress = [];
+
+  const result = await direct.ensureDataverseShortcuts(
+    "workspace",
+    "serving",
+    "source",
+    ["contact", "account"],
+    (entry) => progress.push(entry)
+  );
+
+  assert.deepEqual(result, {
+    created: 0,
+    repaired: 0,
+    unchanged: 1,
+    failed: 1,
+    total: 2
+  });
+  assert.deepEqual(
+    progress.map((entry) => [entry.table, entry.action]),
+    [
+      ["account", "failed"],
+      ["contact", "unchanged"]
+    ]
+  );
+});
+
 test("direct client discovers an existing deployment only inside the selected Resource Group", async () => {
   const subscriptionId = "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6";
   const fetchImpl = createFetchMock([
@@ -3320,6 +3603,38 @@ function directHarness(options = {}) {
         tables:
           options.sourceTables ||
           engine.requiredTables(VALID_TARGET.requiredDataverseTables)
+      };
+    },
+    async ensureDataverseShortcuts(
+      workspaceId,
+      servingLakehouseId,
+      sourceLakehouseId,
+      tables,
+      onProgress
+    ) {
+      calls.push({
+        kind: "ensureDataverseShortcuts",
+        workspaceId,
+        servingLakehouseId,
+        sourceLakehouseId,
+        tables
+      });
+      (tables || []).forEach((table, index) => {
+        if (onProgress) {
+          onProgress({
+            completed: index + 1,
+            total: tables.length,
+            table,
+            changed: false
+          });
+        }
+      });
+      return {
+        created: 0,
+        repaired: 0,
+        unchanged: (tables || []).length,
+        failed: 0,
+        total: (tables || []).length
       };
     },
     async ensureConnectionRoleAssignment(connectionId, principalId) {

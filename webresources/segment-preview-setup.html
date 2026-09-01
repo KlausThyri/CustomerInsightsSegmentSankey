@@ -511,6 +511,11 @@
       width: 42%;
       animation: sub-progress 1.5s ease-in-out infinite;
     }
+    .step-sub-progress.determinate .step-sub-progress-fill {
+      animation: none;
+      transform: none;
+      transition: width 180ms ease;
+    }
     .step-sub-progress-list {
       display: grid;
       gap: 4px;
@@ -694,7 +699,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.64">v1.1.0.64</span>
+          <span class="app-version" aria-label="Version 1.1.0.65">v1.1.0.65</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -1027,9 +1032,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.64"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.64"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.64"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.65"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.65"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.65"></script>
 
   <script>
     (() => {
@@ -2912,12 +2917,31 @@
         installProgress.hidden = false;
         const completedStatuses = new Set(["succeeded", "resumed", "skipped"]);
         const completed = activePlan.filter(step => completedStatuses.has(step.status)).length;
-        const percent = Math.round((completed / activePlan.length) * 100);
+        const itemProgress = currentEntry?.itemProgress;
+        const itemFraction =
+          currentEntry?.status === "running" &&
+          itemProgress &&
+          Number(itemProgress.overallTotal || itemProgress.total) > 0
+            ? Math.max(
+                0,
+                Math.min(
+                  1,
+                  Number(
+                    itemProgress.overallCompleted ?? itemProgress.completed
+                  ) /
+                    Number(itemProgress.overallTotal || itemProgress.total)
+                )
+              )
+            : 0;
+        const percent = Math.round(
+          ((completed + itemFraction) / activePlan.length) * 100
+        );
         installProgress.setAttribute("aria-valuenow", String(percent));
         installProgressFill.style.width = percent + "%";
         installProgressPercent.textContent = percent + "%";
         if (currentEntry?.status === "running") {
-          installProgressStatus.textContent = currentEntry.name || "Installing…";
+          installProgressStatus.textContent =
+            currentEntry.message || currentEntry.name || "Installing…";
         } else if (currentEntry?.status === "failed") {
           installProgressStatus.textContent = "Stopped: " + (currentEntry.name || currentEntry.id);
         } else if (percent === 100) {
@@ -2988,6 +3012,36 @@
             substeps.setAttribute("aria-label", "Azure resources being deployed");
             renderAzureSubsteps(substeps, azureDeploymentStages);
             subProgress.append(header, track, substeps);
+            main.append(subProgress);
+          }
+          if (step.id === "fabric-notebook") {
+            const subProgress = document.createElement("div");
+            subProgress.className = "step-sub-progress determinate";
+            subProgress.id = "step-sub-progress-fabric-notebook";
+            subProgress.setAttribute("aria-hidden", "true");
+            subProgress.setAttribute("role", "progressbar");
+            subProgress.setAttribute("aria-label", "Dataverse shortcut progress");
+            subProgress.setAttribute("aria-valuemin", "0");
+            subProgress.setAttribute("aria-valuemax", "1");
+            subProgress.setAttribute("aria-valuenow", "0");
+            const header = document.createElement("div");
+            header.className = "step-sub-progress-header";
+            const label = document.createElement("span");
+            label.id = "step-sub-progress-label-fabric-notebook";
+            label.textContent = "Checking existing shortcuts…";
+            const count = document.createElement("span");
+            count.id = "step-sub-progress-count-fabric-notebook";
+            count.textContent = "0 / 0";
+            header.append(label, count);
+            const track = document.createElement("div");
+            track.className = "step-sub-progress-track";
+            track.setAttribute("aria-hidden", "true");
+            const fill = document.createElement("div");
+            fill.className = "step-sub-progress-fill";
+            fill.id = "step-sub-progress-fill-fabric-notebook";
+            fill.style.width = "0%";
+            track.append(fill);
+            subProgress.append(header, track);
             main.append(subProgress);
           }
           const phase = document.createElement("span");
@@ -3063,6 +3117,44 @@
               const seconds = Number(detail.elapsedSeconds || 0);
               elapsed.textContent =
                 Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
+            }
+            if (entry.id === "fabric-notebook") {
+              const subProgress = document.getElementById(
+                "step-sub-progress-fabric-notebook"
+              );
+              const label = document.getElementById(
+                "step-sub-progress-label-fabric-notebook"
+              );
+              const count = document.getElementById(
+                "step-sub-progress-count-fabric-notebook"
+              );
+              const fill = document.getElementById(
+                "step-sub-progress-fill-fabric-notebook"
+              );
+              const detail = entry.itemProgress || {};
+              const total = Math.max(0, Number(detail.total || 0));
+              const completed = Math.max(
+                0,
+                Math.min(total, Number(detail.completed || 0))
+              );
+              const percent = total ? Math.round((completed / total) * 100) : 0;
+              if (subProgress) {
+                subProgress.setAttribute(
+                  "aria-hidden",
+                  status === "running" ? "false" : "true"
+                );
+                subProgress.setAttribute("aria-valuemax", String(total || 1));
+                subProgress.setAttribute("aria-valuenow", String(completed));
+                subProgress.setAttribute(
+                  "aria-valuetext",
+                  detail.label || "Checking Dataverse shortcuts"
+                );
+              }
+              if (label) {
+                label.textContent = detail.label || "Checking Dataverse shortcuts…";
+              }
+              if (count) count.textContent = completed + " / " + total;
+              if (fill) fill.style.width = percent + "%";
             }
             if (substeps && Array.isArray(detail.steps)) {
               renderAzureSubsteps(

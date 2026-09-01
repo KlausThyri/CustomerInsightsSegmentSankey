@@ -133,6 +133,17 @@ test("the Azure infrastructure step renders an accessible nested progress indica
   assert.match(html, /Verify and copy the API package/);
 });
 
+test("the Fabric notebook step renders determinate per-table progress", () => {
+  assert.match(html, /step-sub-progress-fabric-notebook/);
+  assert.match(html, /aria-label", "Dataverse shortcut progress"/);
+  assert.match(html, /aria-valuemin", "0"/);
+  assert.match(html, /entry\.itemProgress/);
+  assert.match(html, /step-sub-progress-fill-fabric-notebook/);
+  assert.match(html, /detail\.completed/);
+  assert.match(html, /fill\.style\.width = percent \+ "%"/);
+  assert.match(html, /\.step-sub-progress\.determinate \.step-sub-progress-fill/);
+});
+
 test("selecting an existing Resource Group does not force its metadata location", () => {
   inlineScripts(html).forEach((code) => {
     assert.doesNotMatch(

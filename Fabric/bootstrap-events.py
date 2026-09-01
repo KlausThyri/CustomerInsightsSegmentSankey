@@ -126,6 +126,22 @@ def is_journeys_shortcut_target(target):
     )
 
 
+def normalized_dataverse_target(target):
+    dataverse = (target or {}).get("dataverse")
+    if not isinstance(dataverse, dict):
+        return None
+    return (
+        str(dataverse.get("connectionId") or "").lower(),
+        str(dataverse.get("deltaLakeFolder") or "").rstrip("/").lower(),
+        str(dataverse.get("environmentDomain") or "")
+        .removeprefix("https://")
+        .removeprefix("http://")
+        .rstrip("/")
+        .lower(),
+        str(dataverse.get("tableName") or "").lower(),
+    )
+
+
 def list_serving_shortcuts(parent_path):
     shortcuts = {}
     unsupported = []
@@ -261,6 +277,7 @@ write_diagnostic(
 
 dataverse_results = []
 source_listing_failed = False
+serving_listing_failed = False
 if not HAS_DATAVERSE_MIRROR:
     source_shortcuts = []
 else:
@@ -309,6 +326,48 @@ else:
             (None, None, "failed", f"Could not list Dataverse shortcuts: {error}")
         )
 
+existing_dataverse_targets = {}
+try:
+    continuation_token = None
+    while True:
+        existing_response = requests.get(
+            SHORTCUTS_API,
+            headers=headers,
+            params={
+                "parentPath": f"Tables/{DATAVERSE_SCHEMA}",
+                **(
+                    {"continuationToken": continuation_token}
+                    if continuation_token
+                    else {}
+                ),
+            },
+            timeout=60,
+        )
+        existing_response.raise_for_status()
+        existing_page = existing_response.json()
+        for existing_shortcut in existing_page.get("value", []):
+            existing_name = str(existing_shortcut.get("name") or "").lower()
+            existing_path = str(
+                existing_shortcut.get("path") or ""
+            ).strip("/").lower()
+            if existing_name and existing_path == f"tables/{DATAVERSE_SCHEMA}":
+                existing_dataverse_targets[existing_name] = (
+                    existing_shortcut.get("target")
+                )
+        continuation_token = existing_page.get("continuationToken")
+        if not continuation_token:
+            break
+except Exception as error:
+    serving_listing_failed = True
+    dataverse_results.append(
+        (
+            None,
+            None,
+            "failed",
+            f"Could not list existing Serving shortcuts: {error}",
+        )
+    )
+
 for shortcut in source_shortcuts:
     table_name = shortcut.get("name")
     shortcut_path = str(shortcut.get("path") or "").strip("/").lower()
@@ -328,6 +387,25 @@ for shortcut in source_shortcuts:
         )
         continue
 
+    if serving_listing_failed:
+        continue
+
+    desired_target = {
+        "dataverse": {
+            "connectionId": dataverse_target.get("connectionId"),
+            "deltaLakeFolder": dataverse_target.get("deltaLakeFolder"),
+            "environmentDomain": dataverse_target.get("environmentDomain"),
+            "tableName": table_name,
+        }
+    }
+    if normalized_dataverse_target(
+        existing_dataverse_targets.get(table_name.lower())
+    ) == normalized_dataverse_target(desired_target):
+        dataverse_results.append(
+            (table_name, table_name, "unchanged", None)
+        )
+        continue
+
     try:
         response = requests.post(
             SHORTCUT_API,
@@ -335,16 +413,7 @@ for shortcut in source_shortcuts:
             json={
                 "path": f"Tables/{DATAVERSE_SCHEMA}",
                 "name": table_name,
-                "target": {
-                    "dataverse": {
-                        "connectionId": dataverse_target.get("connectionId"),
-                        "deltaLakeFolder": dataverse_target.get("deltaLakeFolder"),
-                        "environmentDomain": dataverse_target.get(
-                            "environmentDomain"
-                        ),
-                        "tableName": table_name,
-                    }
-                },
+                "target": desired_target,
             },
             timeout=60,
         )
