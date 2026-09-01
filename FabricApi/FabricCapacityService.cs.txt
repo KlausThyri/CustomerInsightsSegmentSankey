@@ -1,0 +1,220 @@
+#if FABRIC_API
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using Azure.Core;
+using Azure.Identity;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+internal sealed class FabricCapacityService
+{
+    private const string ArmScope = "https://management.azure.com/.default";
+    private const string ApiVersion = "2023-11-01";
+    private static readonly SemaphoreSlim ResumeLock = new(1, 1);
+    private static readonly Regex CapacityResourceIdPattern = new(
+        "^/subscriptions/[0-9a-f-]{36}/resourceGroups/[^/]+/providers/Microsoft\\.Fabric/capacities/[^/]+$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private readonly HttpClient httpClient;
+    private readonly TokenCredential credential;
+    private readonly string capacityResourceId;
+    private readonly Func<TimeSpan, CancellationToken, Task> delay;
+
+    public FabricCapacityService(HttpClient httpClient)
+        : this(
+            httpClient,
+            new DefaultAzureCredential(),
+            ReadRequiredSetting("FABRIC_CAPACITY_RESOURCE_ID"),
+            static (duration, cancellationToken) => Task.Delay(duration, cancellationToken))
+    {
+    }
+
+    internal FabricCapacityService(
+        HttpClient httpClient,
+        TokenCredential credential,
+        string capacityResourceId,
+        Func<TimeSpan, CancellationToken, Task> delay)
+    {
+        this.httpClient = httpClient;
+        this.credential = credential;
+        this.capacityResourceId = NormalizeResourceId(capacityResourceId);
+        this.delay = delay;
+    }
+
+    public async Task EnsureActiveAsync(CancellationToken cancellationToken)
+    {
+        var token = await credential.GetTokenAsync(
+            new TokenRequestContext([ArmScope]),
+            cancellationToken);
+        var state = await ReadStateAsync(token.Token, cancellationToken);
+        if (IsActive(state))
+        {
+            return;
+        }
+
+        await ResumeLock.WaitAsync(cancellationToken);
+        try
+        {
+            state = await ReadStateAsync(token.Token, cancellationToken);
+            if (IsActive(state))
+            {
+                return;
+            }
+
+            if (string.Equals(state, "Paused", StringComparison.OrdinalIgnoreCase))
+            {
+                await ResumeAsync(token.Token, cancellationToken);
+            }
+            else if (!IsStarting(state))
+            {
+                throw new FabricQueryException(
+                    "capacity_unavailable",
+                    $"The Fabric capacity is in state '{state ?? "Unknown"}' and cannot be used. " +
+                    "Open the Azure portal, verify the capacity, and retry the segment preview.");
+            }
+
+            for (var attempt = 0; attempt < 6; attempt++)
+            {
+                await delay(TimeSpan.FromSeconds(2), cancellationToken);
+                state = await ReadStateAsync(token.Token, cancellationToken);
+                if (IsActive(state))
+                {
+                    return;
+                }
+                if (!IsStarting(state) && !string.Equals(
+                        state,
+                        "Paused",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new FabricQueryException(
+                        "capacity_unavailable",
+                        $"The Fabric capacity entered state '{state ?? "Unknown"}' while starting. " +
+                        "Open the Azure portal, verify the capacity, and retry the segment preview.");
+                }
+            }
+        }
+        finally
+        {
+            ResumeLock.Release();
+        }
+
+        throw new FabricQueryException(
+            "capacity_starting",
+            "The Fabric capacity is starting automatically. Retry the segment preview in a few seconds.");
+    }
+
+    private async Task<string?> ReadStateAsync(
+        string accessToken,
+        CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(HttpMethod.Get, capacityResourceId, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.Forbidden)
+        {
+            throw new FabricQueryException(
+                "capacity_permission_missing",
+                "The Segment Preview managed identity cannot read or start the Fabric capacity. " +
+                "Run Setup Center > Install everything to grant access.");
+        }
+        if (!response.IsSuccessStatusCode)
+        {
+            throw await CreateRequestFailureAsync(
+                "capacity_status_failed",
+                "The Fabric capacity status could not be read.",
+                response,
+                cancellationToken);
+        }
+
+        using var document = JsonDocument.Parse(
+            await response.Content.ReadAsStreamAsync(cancellationToken));
+        return document.RootElement.TryGetProperty("properties", out var properties) &&
+               properties.TryGetProperty("state", out var state)
+            ? state.GetString()
+            : null;
+    }
+
+    private async Task ResumeAsync(
+        string accessToken,
+        CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Post,
+            capacityResourceId + "/resume",
+            accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.Forbidden)
+        {
+            throw new FabricQueryException(
+                "capacity_permission_missing",
+                "The Segment Preview managed identity cannot start the Fabric capacity. " +
+                "Run Setup Center > Install everything to grant access.");
+        }
+        if (response.StatusCode is not (HttpStatusCode.OK or HttpStatusCode.Accepted))
+        {
+            throw await CreateRequestFailureAsync(
+                "capacity_resume_failed",
+                "Azure rejected the automatic Fabric capacity start.",
+                response,
+                cancellationToken);
+        }
+    }
+
+    private static HttpRequestMessage CreateRequest(
+        HttpMethod method,
+        string resourcePath,
+        string accessToken)
+    {
+        var separator = resourcePath.IndexOf('?') >= 0 ? '&' : '?';
+        var request = new HttpRequestMessage(
+            method,
+            "https://management.azure.com" + resourcePath + separator +
+            "api-version=" + ApiVersion);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        return request;
+    }
+
+    private static async Task<FabricQueryException> CreateRequestFailureAsync(
+        string code,
+        string message,
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        var detail = await response.Content.ReadAsStringAsync(cancellationToken);
+        return new FabricQueryException(
+            code,
+            message,
+            $"Azure returned {(int)response.StatusCode} {response.ReasonPhrase}. {detail}".Trim());
+    }
+
+    private static bool IsActive(string? state) =>
+        string.Equals(state, "Active", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsStarting(string? state) =>
+        string.Equals(state, "Provisioning", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(state, "Updating", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(state, "Resuming", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeResourceId(string value)
+    {
+        var normalized = (value ?? string.Empty).Trim().TrimEnd('/');
+        if (!CapacityResourceIdPattern.IsMatch(normalized))
+        {
+            throw new InvalidOperationException(
+                "FABRIC_CAPACITY_RESOURCE_ID must be the Azure resource ID of a Microsoft.Fabric capacity.");
+        }
+        return normalized;
+    }
+
+    private static string ReadRequiredSetting(string name)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException($"The required app setting '{name}' is missing.");
+        }
+        return value;
+    }
+}
+#endif

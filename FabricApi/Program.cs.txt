@@ -14,6 +14,7 @@ builder.Services.AddSingleton<QueryTokenService>();
 builder.Services.AddSingleton<FabricSegmentCountService>();
 builder.Services.AddSingleton<FabricSegmentMemberService>();
 builder.Services.AddHttpClient<FabricDataverseShortcutService>();
+builder.Services.AddHttpClient<FabricCapacityService>();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<SegmentPreviewSetupService>();
 
@@ -69,6 +70,7 @@ app.MapPost(
     async (
         HttpRequest request,
         SegmentCountRequest input,
+        FabricCapacityService capacity,
         FabricSegmentCountService service,
         ILogger<Program> logger,
         CancellationToken cancellationToken) =>
@@ -86,6 +88,7 @@ app.MapPost(
 
         try
         {
+            await capacity.EnsureActiveAsync(cancellationToken);
             return Results.Ok(await service.EvaluateAsync(input, cancellationToken));
         }
         catch (SegmentQueryException exception)
@@ -135,6 +138,7 @@ app.MapPost(
     async (
         HttpRequest request,
         SegmentMemberRequest input,
+        FabricCapacityService capacity,
         FabricSegmentMemberService service,
         ILogger<Program> logger,
         CancellationToken cancellationToken) =>
@@ -152,6 +156,7 @@ app.MapPost(
 
         try
         {
+            await capacity.EnsureActiveAsync(cancellationToken);
             return Results.Ok(await service.EvaluateAsync(input, cancellationToken));
         }
         catch (SegmentQueryException exception)
@@ -201,6 +206,7 @@ app.MapPost(
     async (
         HttpRequest request,
         FabricDependencyRequest input,
+        FabricCapacityService capacity,
         FabricDataverseShortcutService service,
         FabricSegmentCatalog catalog,
         ILogger<Program> logger,
@@ -219,6 +225,7 @@ app.MapPost(
 
         try
         {
+            await capacity.EnsureActiveAsync(cancellationToken);
             var result = await service.EnsureAsync(input, cancellationToken);
             var missingTables = await catalog.GetMissingDataverseTablesAsync(
                 result.RequiredTables,

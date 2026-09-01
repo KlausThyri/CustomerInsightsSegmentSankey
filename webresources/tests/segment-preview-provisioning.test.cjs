@@ -183,6 +183,8 @@ test("validateTarget accepts a complete configuration", () => {
     webAppName: "segment-preview-api",
     fabricWorkspaceId: "11111111-2222-3333-4444-555555555555",
     fabricServingLakehouseId: "66666666-7777-8888-9999-aaaaaaaaaaaa",
+    fabricCapacityResourceId:
+      "/subscriptions/6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6/resourceGroups/fabric-rg/providers/Microsoft.Fabric/capacities/fabriccapacity",
     fabricDataverseConnectionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
     fabricDataverseDeltaFolder: "deltalake"
   });
@@ -1269,6 +1271,72 @@ test("direct client creates a missing Resource Group in the requested location",
   assert.equal(fetchImpl.calls.length, 2);
   assert.deepEqual(JSON.parse(fetchImpl.calls[1].init.body), { location: "westeurope" });
   assert.equal(group.location, "westeurope");
+});
+
+test("direct client resolves the Azure resource behind a Fabric capacity", async () => {
+  const subscriptionId = "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6";
+  const capacityId = "22222222-2222-2222-2222-222222222222";
+  const resourceId =
+    `/subscriptions/${subscriptionId}/resourceGroups/fabric-rg/providers/Microsoft.Fabric/capacities/fabriccapacity`;
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.url.includes("api.fabric.microsoft.com/v1/capacities"),
+      respond: () => jsonResponse(200, {
+        value: [{ id: capacityId, displayName: "fabriccapacity" }]
+      })
+    },
+    {
+      match: (request) => request.url.includes("management.azure.com/subscriptions?"),
+      respond: () => jsonResponse(200, {
+        value: [{ subscriptionId, displayName: "Subscription", state: "Enabled" }]
+      })
+    },
+    {
+      match: (request) =>
+        request.url.includes(`/subscriptions/${subscriptionId}/providers/Microsoft.Fabric/capacities?`),
+      respond: () => jsonResponse(200, {
+        value: [{ id: resourceId, name: "fabriccapacity" }]
+      })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    crypto: webcrypto,
+    timer: immediateTimer
+  });
+
+  assert.equal(
+    await direct.resolveCapacityResourceId(capacityId, subscriptionId),
+    resourceId
+  );
+});
+
+test("direct client grants capacity-scoped permission to the managed identity", async () => {
+  const resourceId =
+    "/subscriptions/6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6/resourceGroups/fabric-rg/providers/Microsoft.Fabric/capacities/fabriccapacity";
+  const principalId = "99999999-8888-7777-6666-555555555555";
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) =>
+        request.init.method === "PUT" &&
+        request.url.includes("/providers/Microsoft.Authorization/roleAssignments/"),
+      respond: () => jsonResponse(201, {})
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    crypto: webcrypto,
+    timer: immediateTimer
+  });
+
+  await direct.ensureCapacityRoleAssignment(resourceId, principalId);
+
+  const body = JSON.parse(fetchImpl.calls[0].init.body);
+  assert.equal(body.properties.principalId, principalId);
+  assert.equal(body.properties.principalType, "ServicePrincipal");
+  assert.match(body.properties.roleDefinitionId, /b24988ac-6180-42a0-ab88-20f7382dd24c$/);
 });
 
 test("direct client discovers an existing deployment only inside the selected Resource Group", async () => {
@@ -2613,6 +2681,8 @@ const VALID_TARGET = {
   webAppName: "segment-preview-api",
   fabricWorkspaceId: "11111111-2222-3333-4444-555555555555",
   fabricServingLakehouseId: "66666666-7777-8888-9999-aaaaaaaaaaaa",
+  fabricCapacityResourceId:
+    "/subscriptions/6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6/resourceGroups/fabric-rg/providers/Microsoft.Fabric/capacities/fabriccapacity",
   fabricDataverseConnectionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   requiredDataverseTables: engine.TARGET_DEFAULTS.requiredDataverseTables};
 const DATAVERSE_LAKEHOUSE_ID = "12341234-5678-5678-9abc-9abcdef01234";
@@ -3266,6 +3336,14 @@ function directHarness(options = {}) {
     async ensureWorkspaceRoleAssignment(workspaceId, principalId) {
       calls.push({ kind: "ensureWorkspaceRoleAssignment", workspaceId, principalId });
       return { created: !options.workspaceRoleExists };
+    },
+    async ensureCapacityRoleAssignment(capacityResourceId, principalId) {
+      calls.push({ kind: "ensureCapacityRoleAssignment", capacityResourceId, principalId });
+      return { created: true };
+    },
+    async resolveCapacityResourceId(capacityId, subscriptionId) {
+      calls.push({ kind: "resolveCapacityResourceId", capacityId, subscriptionId });
+      return VALID_TARGET.fabricCapacityResourceId;
     },
     async deployTemplate(subscriptionId, resourceGroup, name, template, parameters) {
       calls.push({ kind: "deployTemplate", subscriptionId, resourceGroup, name, parameters });
@@ -5554,6 +5632,7 @@ test("every required ARM parameter is supplied by the orchestrator", () => {
     "fabricSqlDatabase",
     "fabricWorkspaceId",
     "fabricServingLakehouseId",
+    "fabricCapacityResourceId",
     "fabricDataverseLakehouseId",
     "fabricDataverseConnectionId",
     "fabricDataverseDeltaFolder",

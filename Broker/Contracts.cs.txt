@@ -88,6 +88,7 @@ public sealed class FabricTarget
     [JsonPropertyName("workspaceId")] public string? WorkspaceId { get; set; }
     [JsonPropertyName("workspaceName")] public string? WorkspaceName { get; set; }
     [JsonPropertyName("capacityId")] public string? CapacityId { get; set; }
+    [JsonPropertyName("capacityResourceId")] public string? CapacityResourceId { get; set; }
     [JsonPropertyName("servingLakehouseId")] public string? ServingLakehouseId { get; set; }
     [JsonPropertyName("servingLakehouseName")] public string? ServingLakehouseName { get; set; }
     [JsonPropertyName("dataverseLakehouseId")] public string? DataverseLakehouseId { get; set; }

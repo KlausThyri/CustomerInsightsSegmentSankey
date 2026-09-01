@@ -48,6 +48,9 @@ required selections. Setup generates the remaining names and defaults,
 discovers the matching Fabric connection, and creates or reuses the workspace
 and lakehouse. An existing Fabric Capacity can optionally be selected under
 **Advanced options**; otherwise setup chooses a suitable active capacity.
+Setup grants the Web App managed identity access only to that capacity. When the
+Segment Preview panel later finds it paused, it resumes the capacity automatically
+and shows startup progress before querying Fabric.
 
 The Setup Center deploys the Azure infrastructure and API, discovers or creates
 the Fabric workspace, serving lakehouse, bootstrap notebook and workspace

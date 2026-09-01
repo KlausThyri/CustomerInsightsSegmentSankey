@@ -11,6 +11,7 @@
   "FabricWorkspaceName": "<Fabric workspace display name>",
   "FabricWorkspaceId": "<fabric-workspace-guid>",
   "FabricCapacityId": "<fabric-capacity-guid>",
+  "FabricCapacityResourceId": "/subscriptions/<subscription-guid>/resourceGroups/<capacity-resource-group>/providers/Microsoft.Fabric/capacities/<capacity-name>",
 
   "FabricServingLakehouseName": "SegmentPreviewServing",
   "FabricServingLakehouseId": "<serving-lakehouse-guid>",

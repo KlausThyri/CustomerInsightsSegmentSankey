@@ -894,6 +894,7 @@
     "fabricWorkspaceId",
     "fabricWorkspaceName",
     "fabricCapacityId",
+    "fabricCapacityResourceId",
     "fabricServingLakehouseId",
     "fabricServingLakehouseName",
     "fabricDataverseLakehouseId",
@@ -977,6 +978,7 @@
     "dataverseConnectionId",
     "dataverseLakehouseId",
     "dataverseDeltaFolder",
+    "capacityResourceId",
     "notebookId",
     "apiBaseUrl",
     "principalId",
@@ -995,7 +997,8 @@
     servingLakehouseName: "fabricServingLakehouseName",
     dataverseConnectionId: "fabricDataverseConnectionId",
     dataverseLakehouseId: "fabricDataverseLakehouseId",
-    dataverseDeltaFolder: "fabricDataverseDeltaFolder"
+    dataverseDeltaFolder: "fabricDataverseDeltaFolder",
+    capacityResourceId: "fabricCapacityResourceId"
   };
 
   var MAX_CONFIGURATION_LENGTH = 2000;
@@ -1032,6 +1035,7 @@
       dataverseConnectionId: source.dataverseConnectionId,
       dataverseLakehouseId: source.dataverseLakehouseId,
       dataverseDeltaFolder: source.dataverseDeltaFolder,
+      capacityResourceId: source.capacityResourceId,
       notebookId: source.notebookId,
       apiBaseUrl: source.apiBaseUrl,
       principalId: source.principalId,
@@ -2231,6 +2235,8 @@
     var fetchImpl = settings.fetch || (typeof fetch === "function" ? fetch.bind(globalThis) : null);
     var getToken = settings.getToken;
     var timer = settings.timer;
+    var cryptoImpl =
+      settings.crypto || (typeof globalThis !== "undefined" ? globalThis.crypto : null);
     var armRoot = settings.armRoot || ARM_ROOT;
     var fabricRoot = settings.fabricRoot || FABRIC_ROOT;
 
@@ -2338,6 +2344,131 @@
         .sort(function (left, right) {
           return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
         });
+    }
+
+    async function listArmCapacities(subscriptionId) {
+      var capacities = [];
+      var next =
+        "/subscriptions/" +
+        encodeURIComponent(subscriptionId) +
+        "/providers/Microsoft.Fabric/capacities";
+      var guard = 0;
+      while (next && guard++ < 100) {
+        var response = await arm("GET", next, undefined, "2023-11-01");
+        var payload = response.body || {};
+        if (Array.isArray(payload.value)) capacities = capacities.concat(payload.value);
+        next = payload.nextLink || null;
+      }
+      return capacities;
+    }
+
+    async function resolveCapacityResourceId(capacityId, preferredSubscriptionId) {
+      if (!isGuid(capacityId)) {
+        throw new Error("The Fabric workspace does not identify its capacity.");
+      }
+      var fabricCapacities = await fabricCollection("capacities");
+      var fabricCapacity = fabricCapacities.filter(function (capacity) {
+        return sameIdentifier(capacity.id, capacityId);
+      })[0];
+      if (!fabricCapacity) {
+        throw new Error(
+          "The Fabric capacity could not be read. Verify that the signed-in administrator is a capacity administrator."
+        );
+      }
+
+      var subscriptions = await listSubscriptions();
+      var ordered = subscriptions.slice().sort(function (left, right) {
+        if (sameIdentifier(left.id, preferredSubscriptionId)) return -1;
+        if (sameIdentifier(right.id, preferredSubscriptionId)) return 1;
+        return 0;
+      });
+      var matches = [];
+      for (var index = 0; index < ordered.length; index += 1) {
+        var armCapacities;
+        try {
+          armCapacities = await listArmCapacities(ordered[index].id);
+        } catch (error) {
+          if (error && (error.status === 401 || error.status === 403)) continue;
+          throw error;
+        }
+        armCapacities.forEach(function (capacity) {
+          if (
+            String(capacity.name || "").localeCompare(
+              String(fabricCapacity.displayName || ""),
+              undefined,
+              { sensitivity: "base" }
+            ) === 0
+          ) {
+            matches.push(capacity);
+          }
+        });
+        if (matches.length && sameIdentifier(ordered[index].id, preferredSubscriptionId)) break;
+      }
+      if (matches.length !== 1 || !matches[0].id) {
+        throw new Error(
+          matches.length > 1
+            ? "More than one Azure Fabric capacity matches '" +
+                fabricCapacity.displayName +
+                "'. Select a capacity whose Azure resource name is unique across the accessible subscriptions."
+            : "The Azure resource for Fabric capacity '" +
+                fabricCapacity.displayName +
+                "' could not be found in the accessible subscriptions."
+        );
+      }
+      return String(matches[0].id).replace(/\/+$/, "");
+    }
+
+    async function deterministicRoleAssignmentId(resourceId, principalId) {
+      var input = new TextEncoder().encode(
+        String(resourceId).toLowerCase() + "|" + String(principalId).toLowerCase()
+      );
+      if (!cryptoImpl || !cryptoImpl.subtle) {
+        throw new Error("The browser does not provide the cryptography required for Azure role assignment.");
+      }
+      var digest = new Uint8Array(await cryptoImpl.subtle.digest("SHA-256", input));
+      digest[6] = (digest[6] & 15) | 64;
+      digest[8] = (digest[8] & 63) | 128;
+      var hex = Array.from(digest.slice(0, 16), function (value) {
+        return value.toString(16).padStart(2, "0");
+      }).join("");
+      return (
+        hex.slice(0, 8) +
+        "-" +
+        hex.slice(8, 12) +
+        "-" +
+        hex.slice(12, 16) +
+        "-" +
+        hex.slice(16, 20) +
+        "-" +
+        hex.slice(20, 32)
+      );
+    }
+
+    async function ensureCapacityRoleAssignment(capacityResourceId, principalId) {
+      var normalized = String(capacityResourceId || "").replace(/\/+$/, "");
+      var subscriptionMatch = /^\/subscriptions\/([^/]+)\//i.exec(normalized);
+      if (!subscriptionMatch || !isGuid(subscriptionMatch[1])) {
+        throw new Error("The Azure Fabric capacity resource ID is invalid.");
+      }
+      var assignmentId = await deterministicRoleAssignmentId(normalized, principalId);
+      var roleDefinitionId =
+        "/subscriptions/" +
+        subscriptionMatch[1] +
+        "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c";
+      await arm(
+        "PUT",
+        normalized +
+          "/providers/Microsoft.Authorization/roleAssignments/" +
+          assignmentId,
+        {
+          properties: {
+            principalId: principalId,
+            principalType: "ServicePrincipal",
+            roleDefinitionId: roleDefinitionId
+          }
+        },
+        "2022-04-01"
+      );
     }
 
     async function listLocations(subscriptionId) {
@@ -3179,6 +3310,8 @@
       fabricCollection: fabricCollection,
       listSubscriptions: listSubscriptions,
       listCapacities: listCapacities,
+      resolveCapacityResourceId: resolveCapacityResourceId,
+      ensureCapacityRoleAssignment: ensureCapacityRoleAssignment,
       listLocations: listLocations,
       listWorkspaces: listWorkspaces,
       listLakehouses: listLakehouses,
@@ -3263,6 +3396,9 @@
       if (!isBlank(facts.dataverseDeltaFolder)) {
         context.dataverseDeltaFolder = facts.dataverseDeltaFolder;
       }
+      if (!isBlank(facts.capacityResourceId)) {
+        context.capacityResourceId = facts.capacityResourceId;
+      }
       if (!isBlank(facts.notebookId)) context.notebookId = facts.notebookId;
       if (!isBlank(facts.apiBaseUrl)) context.apiBaseUrl = facts.apiBaseUrl;
       if (!isBlank(facts.principalId)) context.principalId = facts.principalId;
@@ -3300,6 +3436,12 @@
       forceRerun(
         ["azure-infra", "azure-app"],
         "The current API package was not recorded by the earlier run, so Azure deployment and package verification run again."
+      );
+    }
+    if (mode === "direct" && isBlank(facts.capacityResourceId)) {
+      forceRerun(
+        ["fabric-discovery", "azure-infra", "fabric-permissions"],
+        "The Azure Fabric capacity resource was not recorded by the earlier run, so discovery, configuration, and permission assignment run again."
       );
     }
 
@@ -3381,6 +3523,11 @@
         target.fabricDataverseDeltaFolder = current.FABRIC_DATAVERSE_DELTA_FOLDER;
         facts.dataverseDeltaFolder = current.FABRIC_DATAVERSE_DELTA_FOLDER;
       }
+      if (!isBlank(current.FABRIC_CAPACITY_RESOURCE_ID)) {
+        target.fabricCapacityResourceId = current.FABRIC_CAPACITY_RESOURCE_ID;
+        facts.capacityResourceId = current.FABRIC_CAPACITY_RESOURCE_ID;
+        context.capacityResourceId = current.FABRIC_CAPACITY_RESOURCE_ID;
+      }
       context.existingAzureDeployment = existing;
       return existing;
     }
@@ -3450,6 +3597,7 @@
             workspaceId: target.fabricWorkspaceId || null,
             workspaceName: target.fabricWorkspaceName || null,
             capacityId: target.fabricCapacityId || null,
+            capacityResourceId: target.fabricCapacityResourceId || null,
             servingLakehouseId: target.fabricServingLakehouseId || null,
             servingLakehouseName: target.fabricServingLakehouseName || null,
             dataverseLakehouseId: target.fabricDataverseLakehouseId || null,
@@ -3582,6 +3730,14 @@
           workspace = created.body;
         }
         context.workspace = workspace;
+        var workspaceCapacityId = workspace.capacityId || target.fabricCapacityId;
+        context.capacityResourceId =
+          target.fabricCapacityResourceId ||
+          facts.capacityResourceId ||
+          (await direct.resolveCapacityResourceId(
+            workspaceCapacityId,
+            target.subscriptionId
+          ));
 
         var lakehouses = await direct.fabricCollection("workspaces/" + workspace.id + "/lakehouses");
         var requestedServingId = target.fabricServingLakehouseId || facts.servingLakehouseId;
@@ -4082,6 +4238,8 @@
             (context.serving && context.serving.id) || target.fabricServingLakehouseId || "",
           fabricDataverseLakehouseId:
             context.dataverseLakehouseId || target.fabricDataverseLakehouseId || "",
+          fabricCapacityResourceId:
+            context.capacityResourceId || target.fabricCapacityResourceId || "",
           fabricDataverseConnectionId: context.dataverseConnectionId || "",
           fabricDataverseDeltaFolder:
             context.dataverseDeltaFolder || target.fabricDataverseDeltaFolder,
@@ -4173,10 +4331,21 @@
           context.workspace.id,
           context.principalId
         );
-        if (assignment.created) return "Contributor role assigned to the managed identity.";
+        requireFact(
+          context.capacityResourceId || target.fabricCapacityResourceId,
+          "fabric-discovery",
+          "The Azure Fabric capacity resource id"
+        );
+        await direct.ensureCapacityRoleAssignment(
+          context.capacityResourceId || target.fabricCapacityResourceId,
+          context.principalId
+        );
+        if (assignment.created) {
+          return "Contributor role assigned to the workspace; capacity start permission assigned to the managed identity.";
+        }
         return assignment.updated
-          ? "The managed identity's existing workspace role was upgraded to Contributor."
-          : "The managed identity already has a sufficient workspace role.";
+          ? "The workspace role was upgraded and capacity start permission was assigned."
+          : "The managed identity already has a sufficient workspace role and capacity start permission.";
       },
 
       "fabric-connection-permissions": async function () {

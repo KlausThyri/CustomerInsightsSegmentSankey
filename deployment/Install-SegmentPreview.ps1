@@ -69,6 +69,8 @@ param(
 
     [string] $FabricCapacityId,
 
+    [string] $FabricCapacityResourceId,
+
     [string] $FabricServingLakehouseId,
 
     [string] $FabricServingLakehouseName = 'SegmentPreviewServing',
@@ -547,6 +549,7 @@ $script:FactConfigName = [ordered]@{
     fabricSqlServer             = 'FabricSqlServer'
     fabricSqlDatabase           = 'FabricSqlDatabase'
     fabricDataverseLakehouseId  = 'FabricDataverseLakehouseId'
+    fabricCapacityResourceId    = 'FabricCapacityResourceId'
     fabricDataverseConnectionId = 'FabricDataverseConnectionId'
     fabricNotebookId            = 'FabricNotebookId'
     apiBaseUrl                  = 'ApiBaseUrl'
@@ -664,6 +667,11 @@ function Step-Preflight {
             throw "$guidName must be a GUID, but '$value' was supplied."
         }
     }
+    $capacityResourceId = Get-ConfigValue -Name 'FabricCapacityResourceId'
+    if ($capacityResourceId -and
+        $capacityResourceId -notmatch '^/subscriptions/[0-9a-f-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Fabric/capacities/[^/]+/?$') {
+        throw 'FabricCapacityResourceId must be the full Azure resource ID of a Microsoft.Fabric capacity.'
+    }
 
     return 'Tooling, inputs, and packages validated.'
 }
@@ -754,6 +762,35 @@ function Step-FabricDiscovery {
 
     Set-ConfigValue -Name 'FabricWorkspaceId' -Value $workspace.id
     Set-ConfigValue -Name 'FabricWorkspaceName' -Value $workspace.displayName
+
+    $capacityResourceId = Get-ConfigValue -Name 'FabricCapacityResourceId'
+    if (-not $capacityResourceId) {
+        $workspaceCapacityId = if ($workspace.PSObject.Properties['capacityId']) {
+            [string] $workspace.capacityId
+        }
+        else {
+            Get-ConfigValue -Name 'FabricCapacityId'
+        }
+        $fabricCapacity = Get-FabricCollection -Path 'capacities' |
+            Where-Object { ([string] $_.id) -eq $workspaceCapacityId } |
+            Select-Object -First 1
+        if (-not $fabricCapacity) {
+            throw "The Fabric capacity '$workspaceCapacityId' could not be read."
+        }
+        $subscriptionId = Get-ConfigValue -Name 'SubscriptionId'
+        $armCapacities = Invoke-AzJson -Arguments @(
+            'rest', '--method', 'get', '--url',
+            "https://management.azure.com/subscriptions/$subscriptionId/providers/Microsoft.Fabric/capacities?api-version=2023-11-01"
+        )
+        $matches = @($armCapacities.value | Where-Object {
+            ([string] $_.name) -eq ([string] $fabricCapacity.displayName)
+        })
+        if ($matches.Count -ne 1) {
+            throw "The Azure resource for Fabric capacity '$($fabricCapacity.displayName)' could not be resolved uniquely. Supply -FabricCapacityResourceId."
+        }
+        $capacityResourceId = [string] $matches[0].id
+        Set-ConfigValue -Name 'FabricCapacityResourceId' -Value $capacityResourceId
+    }
 
     $lakehouses = Get-FabricCollection -Path "workspaces/$($workspace.id)/lakehouses"
     $servingId = Get-ConfigValue -Name 'FabricServingLakehouseId'
@@ -852,7 +889,8 @@ function Step-FabricDiscovery {
 
     $script:StepFacts = Get-StepFactSnapshot -Name @(
         'FabricWorkspaceId', 'FabricWorkspaceName', 'FabricServingLakehouseId', 'FabricServingLakehouseName',
-        'FabricSqlServer', 'FabricSqlDatabase', 'FabricDataverseLakehouseId', 'FabricDataverseConnectionId')
+        'FabricSqlServer', 'FabricSqlDatabase', 'FabricDataverseLakehouseId', 'FabricDataverseConnectionId',
+        'FabricCapacityResourceId')
 
     return "Fabric workspace '$($workspace.displayName)' and serving lakehouse resolved."
 }
@@ -1018,6 +1056,7 @@ function Step-AzureInfrastructure {
         fabricSqlDatabase            = Get-ConfigValue -Name 'FabricSqlDatabase'
         fabricWorkspaceId            = Get-ConfigValue -Name 'FabricWorkspaceId'
         fabricServingLakehouseId     = Get-ConfigValue -Name 'FabricServingLakehouseId'
+        fabricCapacityResourceId     = Get-ConfigValue -Name 'FabricCapacityResourceId'
         fabricDataverseLakehouseId   = Get-ConfigValue -Name 'FabricDataverseLakehouseId'
         fabricDataverseConnectionId  = Get-ConfigValue -Name 'FabricDataverseConnectionId'
         fabricDataverseDeltaFolder   = Get-ConfigValue -Name 'FabricDataverseDeltaFolder'
@@ -1051,6 +1090,7 @@ function Step-AzureInfrastructure {
         "fabricSqlDatabase=$($required.fabricSqlDatabase)",
         "fabricWorkspaceId=$($required.fabricWorkspaceId)",
         "fabricServingLakehouseId=$($required.fabricServingLakehouseId)",
+        "fabricCapacityResourceId=$($required.fabricCapacityResourceId)",
         "fabricDataverseLakehouseId=$($required.fabricDataverseLakehouseId)",
         "fabricDataverseConnectionId=$($required.fabricDataverseConnectionId)",
         "fabricDataverseDeltaFolder=$($required.fabricDataverseDeltaFolder)",
@@ -1112,25 +1152,55 @@ function Step-FabricPermissions {
         Select-Object -First 1
     if ($existing) {
         Write-Skipped "The managed identity already holds the '$($existing.role)' workspace role."
-        return "Managed identity already has the '$($existing.role)' role."
+    }
+    elseif ($PSCmdlet.ShouldProcess("Fabric workspace '$workspaceId'", "Assign Contributor to $principalId")) {
+        try {
+            Invoke-FabricApi -Method Post -Path "workspaces/$workspaceId/roleAssignments" -Body @{
+                principal = @{ id = $principalId; type = 'ServicePrincipal' }
+                role      = 'Contributor'
+            } | Out-Null
+            Write-Ok 'The managed identity was granted the Contributor workspace role.'
+        }
+        catch {
+            Write-Manual "The role assignment failed. Add the managed identity ($principalId) as a workspace Contributor in the Fabric portal, and confirm that the tenant setting 'Service principals can use Fabric APIs' is enabled. Details: $($_.Exception.Message)"
+            return 'Manual role assignment required.'
+        }
     }
 
-    if (-not $PSCmdlet.ShouldProcess("Fabric workspace '$workspaceId'", "Assign Contributor to $principalId")) {
-        return 'Role assignment not performed (WhatIf).'
+    $capacityResourceId = Get-ConfigValue -Name 'FabricCapacityResourceId'
+    if (-not $capacityResourceId) {
+        Write-Manual 'The Fabric capacity resource ID is unknown. Supply -FabricCapacityResourceId and install again.'
+        return 'Manual capacity permission assignment required.'
     }
-
-    try {
-        Invoke-FabricApi -Method Post -Path "workspaces/$workspaceId/roleAssignments" -Body @{
-            principal = @{ id = $principalId; type = 'ServicePrincipal' }
-            role      = 'Contributor'
-        } | Out-Null
-        Write-Ok 'The managed identity was granted the Contributor workspace role.'
-        return 'Managed identity granted the Contributor role.'
+    $capacityAssignments = @(Invoke-AzJson -Arguments @(
+        'role', 'assignment', 'list',
+        '--assignee', $principalId,
+        '--scope', $capacityResourceId
+    ))
+    $capacityAccess = $capacityAssignments | Where-Object {
+        $_.roleDefinitionName -in @('Contributor', 'Owner')
+    } | Select-Object -First 1
+    if ($capacityAccess) {
+        Write-Skipped "The managed identity already holds the '$($capacityAccess.roleDefinitionName)' role on the Fabric capacity."
     }
-    catch {
-        Write-Manual "The role assignment failed. Add the managed identity ($principalId) as a workspace Contributor in the Fabric portal, and confirm that the tenant setting 'Service principals can use Fabric APIs' is enabled. Details: $($_.Exception.Message)"
-        return 'Manual role assignment required.'
+    elseif ($PSCmdlet.ShouldProcess($capacityResourceId, "Assign Contributor to $principalId")) {
+        try {
+            Invoke-ExternalCommand -FilePath 'az' -Arguments @(
+                'role', 'assignment', 'create',
+                '--assignee-object-id', $principalId,
+                '--assignee-principal-type', 'ServicePrincipal',
+                '--role', 'Contributor',
+                '--scope', $capacityResourceId,
+                '--output', 'none'
+            ) | Out-Null
+            Write-Ok 'The managed identity can read and start the Fabric capacity.'
+        }
+        catch {
+            Write-Manual "The capacity role assignment failed. Grant the managed identity ($principalId) Contributor on '$capacityResourceId'. Details: $($_.Exception.Message)"
+            return 'Manual capacity permission assignment required.'
+        }
     }
+    return 'Managed identity has workspace access and capacity start permission.'
 }
 
 function Step-AzureApp {

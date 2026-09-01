@@ -50,9 +50,17 @@ test("pending Fabric dependency tables are retried across separate plugin reques
 
 test("pending Fabric dependency tables display accessible progress", () => {
   assert.match(html, /id="dependency-progress" role="status" aria-live="polite"/);
-  assert.match(html, /aria-label="Fabric table synchronization progress"/);
+  assert.match(html, /aria-label="Fabric preparation progress"/);
   assert.match(html, /function showDependencyProgress\(/);
   assert.match(html, /Waiting for: /);
-  assert.match(html, /Synchronization attempt /);
+  assert.match(html, /Readiness attempt /);
   assert.match(html, /function clearDependencyProgress\(/);
+});
+
+test("a paused Fabric capacity is retried with dedicated progress", () => {
+  assert.match(html, /const MAX_CAPACITY_RETRIES = 30;/);
+  assert.match(html, /error\.retryLimit = MAX_CAPACITY_RETRIES;/);
+  assert.match(html, /Fabric capacity is starting automatically/);
+  assert.match(html, /Starting Fabric capacity/);
+  assert.match(html, /Azure is resuming the paused capacity/);
 });

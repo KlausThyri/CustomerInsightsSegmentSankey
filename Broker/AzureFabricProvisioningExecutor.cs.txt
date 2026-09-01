@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 
 namespace CustomerInsightsSegmentSankey.Broker;
 
@@ -51,13 +52,13 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
         var requestedWorkspaceId = Trim(fabric.WorkspaceId);
         var workspaceName = Trim(fabric.WorkspaceName);
         var workspaces = await FabricCollectionAsync(context, "workspaces", cancellationToken).ConfigureAwait(false);
-        var workspaceId = workspaces
+        var workspace = workspaces
             .FirstOrDefault(item =>
                 requestedWorkspaceId is not null &&
                 string.Equals(Text(item, "id"), requestedWorkspaceId, StringComparison.OrdinalIgnoreCase) ||
                 workspaceName is not null &&
-                string.Equals(Text(item, "displayName"), workspaceName, StringComparison.OrdinalIgnoreCase))
-            is { } foundWorkspace ? Text(foundWorkspace, "id") : null;
+                string.Equals(Text(item, "displayName"), workspaceName, StringComparison.OrdinalIgnoreCase));
+        var workspaceId = workspace.ValueKind == JsonValueKind.Undefined ? null : Text(workspace, "id");
 
         if (workspaceId is null)
         {
@@ -73,6 +74,7 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
             var created = await FabricAsync(context, HttpMethod.Post, "workspaces",
                 new { displayName = name, capacityId }, cancellationToken).ConfigureAwait(false);
             workspaceId = Text(created, "id");
+            workspace = created;
         }
 
         var requestedLakehouseId = Trim(fabric.ServingLakehouseId);
@@ -93,6 +95,14 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
 
         context.Outputs["workspaceId"] = workspaceId;
         context.Outputs["servingLakehouseId"] = lakehouseId;
+        var workspaceCapacityId = Text(workspace, "capacityId") ?? Trim(fabric.CapacityId);
+        var capacityResourceId = Trim(fabric.CapacityResourceId) ??
+            await ResolveCapacityResourceIdAsync(
+                context,
+                Require(workspaceCapacityId, "capacityId"),
+                cancellationToken).ConfigureAwait(false);
+        fabric.CapacityResourceId = capacityResourceId;
+        context.Outputs["capacityResourceId"] = capacityResourceId;
 
         var source = await DiscoverDataverseSourceAsync(
             context,
@@ -287,6 +297,7 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
 
         try
         {
+            var upgraded = false;
             var path = "workspaces/" + Uri.EscapeDataString(workspaceId) + "/roleAssignments";
             var assignments = await FabricCollectionAsync(
                 context,
@@ -335,14 +346,27 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
                         path + "/" + Uri.EscapeDataString(assignmentId),
                         new { role = "Contributor" },
                         cancellationToken).ConfigureAwait(false);
-                    return StepOutcome.Succeeded(
-                        "The managed identity's existing workspace role was upgraded to Contributor.");
+                    upgraded = true;
                 }
             }
+            var capacityResourceId = Trim(context.Request.Fabric?.CapacityResourceId);
+            if (capacityResourceId is null)
+            {
+                return StepOutcome.ActionRequired(
+                    "The Azure Fabric capacity resource is unknown.",
+                    "Run Fabric discovery again, then install again.");
+            }
+            await EnsureCapacityRoleAssignmentAsync(
+                context,
+                capacityResourceId,
+                principalId,
+                cancellationToken).ConfigureAwait(false);
             return StepOutcome.Succeeded(
-                exists
-                    ? "The managed identity already has a sufficient workspace role."
-                    : "The managed identity is a Contributor of the Fabric workspace.");
+                upgraded
+                    ? "The workspace role was upgraded and capacity start permission was assigned."
+                    : exists
+                    ? "The managed identity already has workspace access and capacity start permission."
+                    : "The managed identity is a workspace Contributor and can start the capacity.");
         }
         catch (InvalidOperationException exception)
         {
@@ -492,6 +516,7 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
             ["fabricSqlDatabase"] = context.Outputs.TryGetValue("fabricSqlDatabase", out var database) ? database ?? string.Empty : string.Empty,
             ["fabricWorkspaceId"] = context.Outputs.TryGetValue("workspaceId", out var workspace) ? workspace ?? string.Empty : string.Empty,
             ["fabricServingLakehouseId"] = context.Outputs.TryGetValue("servingLakehouseId", out var lakehouse) ? lakehouse ?? string.Empty : string.Empty,
+            ["fabricCapacityResourceId"] = Trim(fabric?.CapacityResourceId) ?? string.Empty,
             ["fabricDataverseLakehouseId"] = Trim(fabric?.DataverseLakehouseId) ?? string.Empty,
             ["fabricDataverseConnectionId"] = Trim(fabric?.DataverseConnectionId) ?? string.Empty,
             ["fabricDataverseDeltaFolder"] = Trim(fabric?.DataverseDeltaFolder) ?? "deltalake",
@@ -726,6 +751,160 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
             ? webAppUrl
             : "https://" + webAppName + ".azurewebsites.net";
         outputs["apiBaseUrl"] = NormalizeApiBaseUrl(reported);
+    }
+
+    private async Task<string> ResolveCapacityResourceIdAsync(
+        ProvisioningContext context,
+        string capacityId,
+        CancellationToken cancellationToken)
+    {
+        var capacities = await FabricCollectionAsync(
+            context,
+            "capacities",
+            cancellationToken).ConfigureAwait(false);
+        var capacityName = capacities
+            .Where(item => string.Equals(
+                Text(item, "id"),
+                capacityId,
+                StringComparison.OrdinalIgnoreCase))
+            .Select(item => Text(item, "displayName"))
+            .FirstOrDefault();
+        if (capacityName is null)
+        {
+            throw new InvalidOperationException(
+                "The Fabric capacity could not be read. Verify that the signed-in administrator is a capacity administrator.");
+        }
+
+        var preferredSubscription = Require(
+            context.Request.Azure?.SubscriptionId,
+            "subscriptionId");
+        var subscriptionsPayload = await ArmAsync(
+            context,
+            HttpMethod.Get,
+            "/subscriptions",
+            null,
+            "2020-01-01",
+            cancellationToken).ConfigureAwait(false);
+        var subscriptionIds = new List<string> { preferredSubscription };
+        if (subscriptionsPayload.TryGetProperty("value", out var subscriptions))
+        {
+            subscriptionIds.AddRange(
+                subscriptions.EnumerateArray()
+                    .Where(item =>
+                        string.Equals(
+                            Text(item, "state"),
+                            "Enabled",
+                            StringComparison.OrdinalIgnoreCase))
+                    .Select(item => Text(item, "subscriptionId"))
+                    .Where(id => id is not null && !string.Equals(
+                        id,
+                        preferredSubscription,
+                        StringComparison.OrdinalIgnoreCase))!);
+        }
+
+        var matches = new List<string>();
+        foreach (var subscriptionId in subscriptionIds)
+        {
+            JsonElement payload;
+            try
+            {
+                payload = await ArmAsync(
+                    context,
+                    HttpMethod.Get,
+                    "/subscriptions/" + subscriptionId +
+                    "/providers/Microsoft.Fabric/capacities",
+                    null,
+                    "2023-11-01",
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (ProvisioningRequestException exception)
+                when (exception.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                continue;
+            }
+
+            if (payload.TryGetProperty("value", out var resources))
+            {
+                matches.AddRange(
+                    resources.EnumerateArray()
+                        .Where(item => string.Equals(
+                            Text(item, "name"),
+                            capacityName,
+                            StringComparison.OrdinalIgnoreCase))
+                        .Select(item => Text(item, "id"))
+                        .Where(id => id is not null)!);
+            }
+            if (matches.Count > 0 &&
+                string.Equals(
+                    subscriptionId,
+                    preferredSubscription,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
+        }
+
+        return matches.Count switch
+        {
+            1 => matches[0].TrimEnd('/'),
+            > 1 => throw new InvalidOperationException(
+                "More than one Azure Fabric capacity matches '" + capacityName +
+                "'. Use a capacity whose resource name is unique across the accessible subscriptions."),
+            _ => throw new InvalidOperationException(
+                "The Azure resource for Fabric capacity '" + capacityName +
+                "' could not be found in the accessible subscriptions.")
+        };
+    }
+
+    private async Task EnsureCapacityRoleAssignmentAsync(
+        ProvisioningContext context,
+        string capacityResourceId,
+        string principalId,
+        CancellationToken cancellationToken)
+    {
+        var normalized = capacityResourceId.Trim().TrimEnd('/');
+        var parts = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 8 ||
+            !string.Equals(parts[0], "subscriptions", StringComparison.OrdinalIgnoreCase) ||
+            !Guid.TryParse(parts[1], out _) ||
+            !string.Equals(parts[2], "resourceGroups", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(parts[4], "providers", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(parts[5], "Microsoft.Fabric", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(parts[6], "capacities", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("The Azure Fabric capacity resource ID is invalid.");
+        }
+
+        var roleSeed = Encoding.UTF8.GetBytes(
+            normalized.ToLowerInvariant() + "|" + principalId.ToLowerInvariant());
+        var roleBytes = SHA256.HashData(roleSeed)[..16];
+        roleBytes[6] = (byte)((roleBytes[6] & 0x0f) | 0x40);
+        roleBytes[8] = (byte)((roleBytes[8] & 0x3f) | 0x80);
+        var roleHex = Convert.ToHexString(roleBytes).ToLowerInvariant();
+        var assignmentId =
+            roleHex[..8] + "-" + roleHex[8..12] + "-" + roleHex[12..16] + "-" +
+            roleHex[16..20] + "-" + roleHex[20..32];
+        var roleDefinitionId =
+            "/subscriptions/" + parts[1] +
+            "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c";
+
+        await ArmAsync(
+            context,
+            HttpMethod.Put,
+            normalized +
+            "/providers/Microsoft.Authorization/roleAssignments/" +
+            assignmentId,
+            new
+            {
+                properties = new
+                {
+                    principalId,
+                    principalType = "ServicePrincipal",
+                    roleDefinitionId
+                }
+            },
+            "2022-04-01",
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<JsonElement> ArmAsync(ProvisioningContext context, HttpMethod method, string path, object? body, string apiVersion, CancellationToken cancellationToken)

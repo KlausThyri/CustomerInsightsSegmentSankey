@@ -293,7 +293,7 @@ Dataverse Web API.
 | 4 | `fabric-notebook` | Injects the resolved workspace/lakehouse ids into `Fabric/bootstrap-events.py`, converts it to `.ipynb`, creates or updates the notebook, and creates the daily schedule from `Fabric/bootstrap-events.schedules.json`. |
 | 5 | `secret` | Reuses the existing `BEHAVIORAL_API_KEY`, or generates a new 48-byte CSPRNG key. |
 | 6 | `azure-infra` | Creates the resource group and deploys `azure/main.bicep` with every resolved value. |
-| 7 | `fabric-permissions` | Assigns the Contributor workspace role to the Web App managed identity. |
+| 7 | `fabric-permissions` | Assigns the Contributor workspace role and capacity-scoped start permission to the Web App managed identity. |
 | 8 | `azure-app` | `dotnet publish`, zips, and deploys the API, then polls `/api/health`. |
 | 9 | `dataverse-import` | Imports or stages-and-upgrades the managed solution and waits for the async job. |
 | 10 | `dataverse-config` | Writes `klth_FabricBehavioralApiUrl` and `klth_FabricBehavioralApiKey` environment variable values and publishes customizations. |
@@ -311,6 +311,7 @@ Dataverse Web API.
 | `-WebAppName` | Globally unique, 2-40 lower-case characters. |
 | `-FabricWorkspaceId` / `-FabricWorkspaceName` | One of the two is required unless `-SkipFabric` is used. |
 | `-FabricCapacityId` | Required only to create a new workspace. |
+| `-FabricCapacityResourceId` | Optional Azure resource ID override; otherwise resolved from the selected capacity in the deployment subscription. |
 | `-FabricServingLakehouseId` / `-FabricServingLakehouseName` | Default name `SegmentPreviewServing`. |
 | `-FabricDataverseLakehouseId` / `-FabricDataverseLakehouseName` | The Dataverse mirror lakehouse. |
 | `-FabricDataverseConnectionId` | Fabric cloud connection to Dataverse. Auto-discovered when omitted. |
@@ -521,7 +522,7 @@ information in its **Preview** view before any change is made.
 | Tenant consent for a hosted provisioning service | Global Administrator or Privileged Role Administrator | Optional broker mode only, once. Shown inside the service sign-in pop-up. Revocable afterwards under **Enterprise applications**. |
 | First Azure CLI token for Dataverse | Deploying admin, sometimes tenant admin | PowerShell only. The first `az account get-access-token --resource https://<env>.crm.dynamics.com` in a tenant can require a one-time consent. Approve once, then re-run the same command. |
 | Fabric tenant setting **Service principals can use Fabric APIs** | Fabric tenant admin | Admin-portal-only setting; there is no public write API. |
-| Fabric capacity purchase or resume | Capacity admin | Commercial decision. Once a capacity exists, the workspace creation is automated. |
+| Fabric capacity purchase | Capacity admin | Commercial decision. Once a capacity exists, workspace creation and resuming a paused capacity from Segment Preview are automated. |
 | Fabric cloud connection to Dataverse | Workspace admin | The connection is created through an interactive OAuth dialog. Both paths discover an existing one and report clear instructions when none exists. |
 | Dataverse **Link to Microsoft Fabric** and the Journeys export to Fabric | Power Platform / CI-J admin | No documented public API. Setup distinguishes Dataverse table shortcuts from Journeys Files shortcuts. Dataverse tables may come from a separate source Lakehouse or already exist at the Serving Lakehouse root; Journeys interactions may be nested under `Files/Customer Insights Journeys` or exposed as registered shortcuts directly below the Serving Lakehouse `Files` root. |
 | Dataverse System Administrator role | Dataverse admin | Required to import a managed solution and to write environment variable values. |

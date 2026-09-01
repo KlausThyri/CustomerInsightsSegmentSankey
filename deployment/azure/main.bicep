@@ -18,6 +18,9 @@ param fabricWorkspaceId string
 @description('Fabric Serving Lakehouse ID.')
 param fabricServingLakehouseId string
 
+@description('Azure resource ID of the Fabric capacity that hosts the workspace.')
+param fabricCapacityResourceId string
+
 @description('Fabric Lakehouse ID that contains the Dataverse Managed Lake shortcuts.')
 param fabricDataverseLakehouseId string
 
@@ -435,6 +438,10 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'FABRIC_SERVING_LAKEHOUSE_ID'
           value: fabricServingLakehouseId
+        }
+        {
+          name: 'FABRIC_CAPACITY_RESOURCE_ID'
+          value: fabricCapacityResourceId
         }
         {
           name: 'FABRIC_DATAVERSE_LAKEHOUSE_ID'

@@ -511,7 +511,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.62">v1.1.0.62</span>
+          <span class="app-version" aria-label="Version 1.1.0.63">v1.1.0.63</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -528,14 +528,14 @@
 
     <div class="notice" id="notice" role="status"></div>
     <div class="dependency-progress" id="dependency-progress" role="status" aria-live="polite">
-      <div class="dependency-progress-heading">Adding required tables to Fabric</div>
+      <div class="dependency-progress-heading" id="dependency-progress-heading">Preparing Fabric</div>
       <div class="dependency-progress-detail" id="dependency-progress-detail"></div>
       <progress
         class="dependency-progress-bar"
         id="dependency-progress-bar"
         max="7"
         value="1"
-        aria-label="Fabric table synchronization progress"
+        aria-label="Fabric preparation progress"
       ></progress>
     </div>
 
@@ -575,6 +575,7 @@
       const AUTOMATIC_RETRY_DELAY_MS = 1500;
       const MAX_AUTOMATIC_RETRIES = 2;
       const MAX_DEPENDENCY_RETRIES = 6;
+      const MAX_CAPACITY_RETRIES = 30;
       const PANE_IDS = ["klth_segment_preview", "klth_segment_sankey"];
       const ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
       const state = {
@@ -743,6 +744,12 @@
         return error;
       }
 
+      function createCapacityPendingError(message) {
+        const error = createDependencyPendingError(message);
+        error.retryLimit = MAX_CAPACITY_RETRIES;
+        return error;
+      }
+
       function clearAutomaticRetry() {
         state.retrySegmentId = "";
         state.retryCount = 0;
@@ -765,11 +772,18 @@
         const bar = document.getElementById("dependency-progress-bar");
         const totalAttempts = retryLimit + 1;
         const tables = getPendingTableNames(message);
+        const capacityStarting = /Fabric capacity is starting automatically/i.test(message || "");
         bar.max = totalAttempts;
         bar.value = Math.min(completedAttempts, totalAttempts);
+        document.getElementById("dependency-progress-heading").textContent =
+          capacityStarting ? "Starting Fabric capacity" : "Adding required tables to Fabric";
         document.getElementById("dependency-progress-detail").textContent =
-          (tables ? "Waiting for: " + tables + ". " : "") +
-          "Synchronization attempt " + completedAttempts + " of " + totalAttempts + ".";
+          (capacityStarting
+            ? "Azure is resuming the paused capacity. "
+            : tables
+            ? "Waiting for: " + tables + ". "
+            : "") +
+          "Readiness attempt " + completedAttempts + " of " + totalAttempts + ".";
         progress.classList.add("visible");
       }
 
@@ -893,8 +907,13 @@
           const errorBody = await response.json();
           const message = errorBody?.error?.message ||
             "The count provider returned HTTP " + response.status + ".";
-          if (/did not expose these tables within \d+ seconds/i.test(message)) {
-            throw createDependencyPendingError(message);
+          if (
+            /did not expose these tables within \d+ seconds/i.test(message) ||
+            /Fabric capacity is starting automatically/i.test(message)
+          ) {
+            throw /Fabric capacity is starting automatically/i.test(message)
+              ? createCapacityPendingError(message)
+              : createDependencyPendingError(message);
           }
           throw new Error(message);
         }
@@ -1858,7 +1877,8 @@
             state.retryCount < retryLimit) {
             state.retryCount += 1;
             state.retrySegmentId = segmentId;
-            state.retryAfter = Date.now() + AUTOMATIC_RETRY_DELAY_MS * state.retryCount;
+            state.retryAfter =
+              Date.now() + Math.min(AUTOMATIC_RETRY_DELAY_MS * state.retryCount, 5000);
             retryScheduled = true;
           } else {
             clearAutomaticRetry();
