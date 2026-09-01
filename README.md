@@ -43,6 +43,30 @@ installed on your computer.**
 6. Press **Preview** to see the plan and the consent checklist, then
    **Install everything** and sign in once when the pop-up appears.
 
+### Update an existing installation
+
+Do not uninstall the previous Managed Solution. Import the newer
+`CustomerInsightsSegmentPreview-<version>-managed.zip` from the latest GitHub
+release into the same Dataverse environment, then reopen **Settings > Overview >
+Segment Preview** and press **Install everything** again.
+
+Setup reuses the resource identities stored in `klth_SetupConfiguration` and
+updates the existing deployment in place. It does not rebuild every Fabric
+shortcut:
+
+- an exact per-table Dataverse target match is skipped;
+- a missing Serving Lakehouse shortcut is created;
+- an existing shortcut with stale connection, Managed Lake folder, environment,
+  or table metadata is repaired with `CreateOrOverwrite`.
+
+The bootstrap step shows determinate progress for every required Dataverse
+table and reports whether it was created, repaired, already current, or deferred.
+A table that has not yet appeared in the Dataverse Link does not stop the
+remaining tables or prevent the bootstrap notebook from being published. The
+notebook checks again; if Microsoft synchronization is still incomplete, use
+the Setup diagnostics, confirm the table under **Power Apps > Link data > Manage
+tables**, and run **Install everything** again.
+
 For a new installation, only **Azure subscription** and **Resource Group** are
 required selections. Setup generates the remaining names and defaults,
 discovers the matching Fabric connection, and creates or reuses the workspace
@@ -56,7 +80,9 @@ The Setup Center deploys the Azure infrastructure and API, discovers or creates
 the Fabric workspace, serving lakehouse, bootstrap notebook and workspace
 permissions, generates the server-side API key, writes the Dataverse environment
 variable values, and verifies the result. It is idempotent and resumable: close
-the page and reopen it and completed steps are skipped.
+the page and reopen it and completed steps are skipped. During an update, steps
+that must refresh definitions are rerun safely while already-correct
+per-table shortcuts are left untouched.
 
 The two steps that look as if they need a build machine do not. The bootstrap
 notebook ships **inside the solution** as a Jupyter definition, so the browser
@@ -121,9 +147,9 @@ Sitemap component contains only an additive `Segment Preview` SubArea patch, so
 existing customer navigation entries remain intact. The unmanaged developer
 package deliberately omits the Marketing app Sitemap because Dataverse does not
 isolate competing unmanaged Sitemap customizations.
-The
-GitHub release `v1.1.0` additionally contains a complete download package with
-source code, deployment templates, documentation, and both Dataverse solutions.
+Every versioned GitHub release additionally contains a complete source package,
+deployment templates, documentation, architecture files, checksums, and both
+Dataverse solutions.
 
 ## Included web resources
 

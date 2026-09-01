@@ -31,8 +31,10 @@ Both drive the same steps, use the same step ids, and produce the same result.
 2. Open **Customer Insights - Journeys > Settings > Overview > Segment Preview**.
 3. First time only: expand **Connect this environment** and register the
    single-page application in your own tenant (guided by the page).
-4. Fill in the target fields (subscription, resource group, location, web app
-   name, Fabric workspace/lakehouse). The page pre-fills everything it can read.
+4. Press **Load subscriptions**, select an enabled Azure subscription, and
+   select an existing Resource Group or choose **Create a new resource group**.
+   For a new installation these are the only required selections. Setup
+   generates the remaining names and discovers reusable tenant resources.
 
 The managed package contributes only the `klth_SegmentPreviewSetup` SubArea as
 an additive Sitemap difference. It does not ship a complete Customer Insights -
@@ -56,6 +58,41 @@ a customer installation.
    pop-up. Progress is reported per step, and the page can be closed and
    reopened: completed steps are recorded in `klth_SetupConfiguration` and are
    skipped on the next run.
+
+### Update
+
+1. Download the newer
+   `CustomerInsightsSegmentPreview-<version>-managed.zip` from the corresponding
+   GitHub release.
+2. Import it into the existing Dataverse environment as an update. Do **not**
+   uninstall the previous Managed Solution.
+3. Reopen **Customer Insights - Journeys > Settings > Overview > Segment
+   Preview** so the new web resources are loaded.
+4. Press **Install everything** again. Setup reads the existing resource
+   identities from `klth_SetupConfiguration` and updates the deployment in
+   place.
+
+The update path is incremental. Before the bootstrap notebook runs, Setup
+compares every required root Dataverse shortcut with the corresponding
+`Tables/dataverse` shortcut in the Serving Lakehouse. Exact target matches are
+skipped, missing shortcuts are created, and stale per-table targets are repaired
+with `CreateOrOverwrite`. The step-local progress bar reports the current table,
+`X of Y`, and whether the table was created, repaired, already current, or
+deferred.
+
+If a required root shortcut is not visible yet, that table is deferred to the
+bootstrap notebook instead of blocking the remaining tables. The notebook
+performs the same idempotent comparison for browser, PowerShell, and manual
+fallback runs. If the table is still absent after Microsoft has synchronized the
+Dataverse Link, open **Power Apps > Link data > Manage tables**, confirm that the
+table belongs to the link, and rerun **Install everything**. The Setup
+diagnostics log preserves the exact listing or creation error.
+
+The Web App managed identity has capacity-scoped access. When the Segment
+Preview panel detects that its configured Fabric capacity is paused, it requests
+an automatic resume and shows **Starting Fabric capacity** progress. A
+permission error is not hidden; rerun Setup so the capacity-scoped Contributor
+assignment can be restored.
 
 The page writes `klth_FabricBehavioralApiUrl` and `klth_FabricBehavioralApiKey`
 itself using your Dataverse session, generates the server-side API key in the
