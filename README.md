@@ -320,7 +320,7 @@ spurious count of null. The editor's internal preview endpoints are not used.
 | `FabricApi/` | ASP.NET Core API with managed identity and a metadata-driven SQL compiler |
 | `Fabric/` | Daily bootstrap for all Journeys delta event folders |
 | `CustomApi/FabricSegmentCountClient.cs` | MQL AST construction and server-side call to `/api/segment-counts` |
-| `CustomApi/FabricDependencyProvisioningClient.cs` | Calls `/api/fabric-dependencies` and ensures missing Dataverse shortcuts |
+| `CustomApi/FabricDependencyProvisioningClient.cs` | Compatibility client for explicit `/api/fabric-dependencies` provisioning |
 
 The bootstrap creates a OneLake shortcut under `Tables/journeys/<EventName>`
 for every delta folder under `Files/Customer Insights Journeys/<EventName>`.
@@ -330,9 +330,13 @@ change. `journeys._event_registry` logs successful and failed registrations.
 The bootstrap also reads the selected tables from the Dataverse mirror and
 creates idempotent shortcuts under `Tables/dataverse`. The
 `dataverse._shortcut_registry` registry documents this reconciliation. At
-runtime, the plugin calls `/api/fabric-dependencies`; this makes newly
-required relationship or consent tables automatically available in the same
-SQL endpoint as the Journeys events.
+runtime, the plugin sends the compiled query and its required Dataverse tables
+in one `/api/segment-counts` request. The API evaluates the query
+optimistically and returns immediately when the tables are already queryable.
+Only a confirmed missing-table compiler failure triggers targeted shortcut
+reconciliation, metadata refresh, and one retry. Successful requests validate
+shortcut targets in a deduplicated background queue, so normal previews do not
+wait for Fabric shortcut enumeration.
 
 The API resolves tables and columns exclusively via `INFORMATION_SCHEMA`,
 quotes all identifiers, and parameterizes values. Known Journeys aliases are:
@@ -359,8 +363,9 @@ The **Base Solution** (`KLTHBaseSolution`) contains the following environment va
 
 The names of these two environment variables originate from an earlier
 architecture and are kept unchanged for compatibility reasons; today they
-apply to all Fabric API calls (`/api/segment-counts` and
-`/api/fabric-dependencies`), not only to behavioral-specific queries.
+apply to all Fabric API calls, including `/api/segment-counts` and the
+compatibility `/api/fabric-dependencies` endpoint, not only to
+behavioral-specific queries.
 
 `klth_BusinessUnitScopingEnabled` records whether the irreversible Customer
 Insights - Journeys **Business unit scoping** feature switch is enabled in the
@@ -385,10 +390,13 @@ Otherwise the Linux process is terminated after being idle, and the first
 call after that must additionally initialize the application, the managed
 identity token, the Fabric SQL connection, and the catalog. Subsequent calls
 use the warm process, connection pool, and catalog cache.
-The API initializes the catalog in the background, keeps it for 60 minutes,
-and sends a lightweight Fabric SQL keep-alive every four minutes. Catalog
-refreshes use stale-while-refresh semantics so an existing preview is not
-blocked by metadata refresh latency. These defaults can be adjusted with
+At process startup, the API warms capacity readiness, its shared Fabric access
+token, and SQL connectivity concurrently. Confirmed active-capacity state is
+cached briefly, the catalog is kept for 60 minutes, and a lightweight Fabric
+SQL keep-alive runs every four minutes. Capacity readiness and SQL evaluation
+also run concurrently on a preview request. Catalog refreshes use
+stale-while-refresh semantics so an existing preview is not blocked by
+metadata refresh latency. These defaults can be adjusted with
 `FABRIC_CATALOG_CACHE_MINUTES` and `FABRIC_WARMUP_INTERVAL_MINUTES`.
 The initial load of the Fabric event catalog uses a 90-second timeout and
 retries only a transient SQL execution timeout (`-2`) once after two seconds.

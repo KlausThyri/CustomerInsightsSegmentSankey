@@ -5,14 +5,17 @@ using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Azure.Core;
-using Azure.Identity;
 
 namespace CustomerInsightsSegmentSankey.FabricApi;
 
-internal sealed class FabricDataverseShortcutService
+internal sealed class FabricDataverseShortcutService : IFabricTokenWarmup
 {
     private const int MaximumTablesPerRequest = 20;
     private const int MaximumCreateAttempts = 5;
+    private const string ServingShortcutParentPath = "Tables/dataverse";
+    private const string SourceShortcutParentPath = "Tables";
+    private static readonly string[] FabricApiScope =
+        ["https://api.fabric.microsoft.com/.default"];
     private static readonly Regex SafeTableName = new(
         "^[A-Za-z][A-Za-z0-9_]*$",
         RegexOptions.CultureInvariant);
@@ -24,14 +27,45 @@ internal sealed class FabricDataverseShortcutService
     private readonly string dataverseLakehouseId;
     private readonly string sqlEndpointId;
 
-    public FabricDataverseShortcutService(HttpClient httpClient)
+    /// <summary>
+    /// Production constructor. <paramref name="credential"/> is resolved
+    /// from DI as a singleton (see <c>Program.cs</c>) and shared with
+    /// <see cref="FabricCapacityService"/>, so the Fabric REST API token
+    /// this credential caches internally after
+    /// <see cref="FabricSqlWarmupService"/> startup warm-up remains
+    /// available to the first real requests instead of being discarded with
+    /// a fresh, per-instance <c>DefaultAzureCredential</c>.
+    /// </summary>
+    public FabricDataverseShortcutService(HttpClient httpClient, TokenCredential credential)
+        : this(
+            httpClient,
+            credential,
+            ReadRequiredSetting("FABRIC_WORKSPACE_ID"),
+            ReadRequiredSetting("FABRIC_SERVING_LAKEHOUSE_ID"),
+            ReadRequiredSetting("FABRIC_DATAVERSE_LAKEHOUSE_ID"),
+            ReadRequiredSetting("FABRIC_SQL_DATABASE"))
+    {
+    }
+
+    /// <summary>
+    /// Test-friendly constructor allowing a fake <see cref="TokenCredential"/>
+    /// and explicit resource identifiers, mirroring the pattern used by
+    /// <see cref="FabricCapacityService"/>.
+    /// </summary>
+    internal FabricDataverseShortcutService(
+        HttpClient httpClient,
+        TokenCredential credential,
+        string workspaceId,
+        string lakehouseId,
+        string dataverseLakehouseId,
+        string sqlEndpointId)
     {
         this.httpClient = httpClient;
-        credential = new DefaultAzureCredential();
-        workspaceId = ReadRequiredSetting("FABRIC_WORKSPACE_ID");
-        lakehouseId = ReadRequiredSetting("FABRIC_SERVING_LAKEHOUSE_ID");
-        dataverseLakehouseId = ReadRequiredSetting("FABRIC_DATAVERSE_LAKEHOUSE_ID");
-        sqlEndpointId = ReadRequiredSetting("FABRIC_SQL_DATABASE");
+        this.credential = credential;
+        this.workspaceId = workspaceId;
+        this.lakehouseId = lakehouseId;
+        this.dataverseLakehouseId = dataverseLakehouseId;
+        this.sqlEndpointId = sqlEndpointId;
     }
 
     public async Task<FabricDependencyResponse> EnsureAsync(
@@ -60,10 +94,16 @@ internal sealed class FabricDataverseShortcutService
         }
 
         var token = await credential.GetTokenAsync(
-            new TokenRequestContext(["https://api.fabric.microsoft.com/.default"]),
+            new TokenRequestContext(FabricApiScope),
             cancellationToken);
-        var existing = await ListExistingTargetsAsync(token.Token, cancellationToken);
-        var sourceTargets = await ListSourceTargetsAsync(token.Token, cancellationToken);
+        // The serving (already-created) shortcuts and the Dataverse Managed
+        // Lake source shortcuts are independent Fabric REST calls, so run
+        // them concurrently instead of paying for their latency serially.
+        var existingTask = ListExistingTargetsAsync(token.Token, required, cancellationToken);
+        var sourceTargetsTask = ListSourceTargetsAsync(token.Token, required, cancellationToken);
+        await Task.WhenAll((Task)existingTask, sourceTargetsTask);
+        var existing = await existingTask;
+        var sourceTargets = await sourceTargetsTask;
         var missingSources = required
             .Where(table => !sourceTargets.ContainsKey(table))
             .ToList();
@@ -169,10 +209,19 @@ internal sealed class FabricDataverseShortcutService
         CancellationToken cancellationToken)
     {
         var token = await credential.GetTokenAsync(
-            new TokenRequestContext(["https://api.fabric.microsoft.com/.default"]),
+            new TokenRequestContext(FabricApiScope),
             cancellationToken);
-        return (await ListExistingTargetsAsync(token.Token, cancellationToken)).Keys;
+        return (await ListExistingTargetsAsync(token.Token, null, cancellationToken)).Keys;
     }
+
+    /// <summary>
+    /// Pre-acquires the Fabric REST API access token used by <see cref="EnsureAsync"/>
+    /// so a real request does not pay for that latency on a cold start.
+    /// </summary>
+    public Task WarmTokenAsync(CancellationToken cancellationToken) =>
+        credential.GetTokenAsync(
+            new TokenRequestContext(FabricApiScope),
+            cancellationToken).AsTask();
 
     public async Task RefreshSqlMetadataAsync(
         IReadOnlyCollection<string> tables,
@@ -192,7 +241,7 @@ internal sealed class FabricDataverseShortcutService
         try
         {
             token = await credential.GetTokenAsync(
-                new TokenRequestContext(["https://api.fabric.microsoft.com/.default"]),
+                new TokenRequestContext(FabricApiScope),
                 refreshToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -533,10 +582,20 @@ internal sealed class FabricDataverseShortcutService
     private async Task<Dictionary<string, DataverseShortcutTarget?>>
         ListExistingTargetsAsync(
         string accessToken,
+        IReadOnlyCollection<string>? targetTables,
         CancellationToken cancellationToken)
     {
         var existing = new Dictionary<string, DataverseShortcutTarget?>(
             StringComparer.OrdinalIgnoreCase);
+        var remaining = targetTables is null
+            ? null
+            : new HashSet<string>(targetTables, StringComparer.OrdinalIgnoreCase);
+        if (remaining is { Count: 0 })
+        {
+            // Nothing was requested; short-circuit before issuing any HTTP call.
+            return existing;
+        }
+
         string? continuationToken = null;
         do
         {
@@ -563,6 +622,11 @@ internal sealed class FabricDataverseShortcutService
             {
                 foreach (var shortcut in values.EnumerateArray())
                 {
+                    if (!IsServingShortcut(shortcut))
+                    {
+                        continue;
+                    }
+
                     if (shortcut.TryGetProperty("name", out var name) &&
                         name.ValueKind == JsonValueKind.String)
                     {
@@ -571,6 +635,7 @@ internal sealed class FabricDataverseShortcutService
                             TryReadSourceTarget(shortcut, out _, out var target)
                                 ? target
                                 : null;
+                        remaining?.Remove(shortcutName);
                     }
                 }
             }
@@ -583,7 +648,11 @@ internal sealed class FabricDataverseShortcutService
                     ? continuation.GetString()
                     : null;
         }
-        while (!string.IsNullOrEmpty(continuationToken));
+        // Stop pagination as soon as every requested table has been found;
+        // callers that request the full list (targetTables == null) keep
+        // walking every page.
+        while (!string.IsNullOrEmpty(continuationToken) &&
+            (remaining is null || remaining.Count > 0));
         return existing;
     }
 
@@ -611,10 +680,20 @@ internal sealed class FabricDataverseShortcutService
 
     private async Task<Dictionary<string, DataverseShortcutTarget>> ListSourceTargetsAsync(
         string accessToken,
+        IReadOnlyCollection<string>? targetTables,
         CancellationToken cancellationToken)
     {
         var targets = new Dictionary<string, DataverseShortcutTarget>(
             StringComparer.OrdinalIgnoreCase);
+        var remaining = targetTables is null
+            ? null
+            : new HashSet<string>(targetTables, StringComparer.OrdinalIgnoreCase);
+        if (remaining is { Count: 0 })
+        {
+            // Nothing was requested; short-circuit before issuing any HTTP call.
+            return targets;
+        }
+
         string? continuationToken = null;
         do
         {
@@ -645,6 +724,7 @@ internal sealed class FabricDataverseShortcutService
                     }
 
                     targets[name] = target;
+                    remaining?.Remove(name);
                 }
             }
 
@@ -656,19 +736,29 @@ internal sealed class FabricDataverseShortcutService
                     ? continuation.GetString()
                     : null;
         }
-        while (!string.IsNullOrEmpty(continuationToken));
+        // Stop pagination as soon as every requested table has been found;
+        // callers that request the full list (targetTables == null) keep
+        // walking every page.
+        while (!string.IsNullOrEmpty(continuationToken) &&
+            (remaining is null || remaining.Count > 0));
         return targets;
     }
 
-    internal static bool IsRootSourceShortcut(JsonElement shortcut)
+    internal static bool HasExactParentPath(JsonElement shortcut, string expectedPath)
     {
         return shortcut.TryGetProperty("path", out var path) &&
             path.ValueKind == JsonValueKind.String &&
             string.Equals(
                 path.GetString()?.Trim('/'),
-                "Tables",
+                expectedPath,
                 StringComparison.OrdinalIgnoreCase);
     }
+
+    internal static bool IsServingShortcut(JsonElement shortcut) =>
+        HasExactParentPath(shortcut, ServingShortcutParentPath);
+
+    internal static bool IsRootSourceShortcut(JsonElement shortcut) =>
+        HasExactParentPath(shortcut, SourceShortcutParentPath);
 
     internal static bool TryReadSourceTarget(
         JsonElement shortcut,

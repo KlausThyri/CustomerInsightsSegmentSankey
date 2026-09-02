@@ -1,0 +1,48 @@
+#if FABRIC_API
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+/// <summary>
+/// Narrow seam so <see cref="FabricSqlWarmupService"/> can warm Fabric
+/// capacity readiness without a hard dependency on the concrete
+/// <see cref="FabricCapacityService"/>, keeping the warm-up orchestration
+/// unit-testable with a fake.
+/// </summary>
+internal interface IFabricCapacityReadiness
+{
+    /// <summary>
+    /// Ensures the Fabric capacity is active, resuming and waiting for it
+    /// if necessary.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when this call observed the capacity as
+    /// something other than immediately active (paused, resuming, etc.)
+    /// and had to resume/wait for it to transition to active before
+    /// returning successfully; <see langword="false"/> when the capacity
+    /// was already known active (including a recently cached result) and
+    /// no transition occurred during this call.
+    /// </returns>
+    Task<bool> EnsureActiveAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Narrow seam so <see cref="FabricSqlWarmupService"/> can pre-acquire the
+/// Fabric REST API access token used by <see cref="FabricDataverseShortcutService"/>
+/// without a hard dependency on that class.
+/// </summary>
+internal interface IFabricTokenWarmup
+{
+    Task WarmTokenAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Narrow seam so <see cref="FabricSqlWarmupService"/> can warm the Fabric
+/// SQL catalog and connectivity through dependency injection instead of
+/// holding <see cref="FabricConnectionFactory"/> and
+/// <see cref="FabricSegmentCatalog"/> directly, keeping the warm-up
+/// orchestration unit-testable with a fake.
+/// </summary>
+internal interface IFabricSqlConnectivityWarmup
+{
+    Task WarmAsync(CancellationToken cancellationToken);
+}
+#endif

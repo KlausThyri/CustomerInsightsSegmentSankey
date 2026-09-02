@@ -5,34 +5,144 @@ using System.IO;
 
 namespace CustomerInsightsSegmentSankey.FabricApi;
 
+/// <summary>
+/// Warms Fabric dependencies proactively so the first real request after a
+/// cold start does not pay for capacity checks, Fabric REST token
+/// acquisition, and SQL connection setup serially. The immediate startup
+/// iteration warms capacity readiness, Fabric token acquisition, and SQL
+/// connectivity concurrently; every later, periodic iteration only re-warms
+/// the SQL catalog and connectivity, since capacity and token readiness are
+/// already exercised by every real request.
+/// </summary>
 internal sealed class FabricSqlWarmupService(
-    FabricConnectionFactory connectionFactory,
-    FabricSegmentCatalog catalog,
+    IServiceScopeFactory scopeFactory,
     FabricRuntimeOptions runtimeOptions,
     ILogger<FabricSqlWarmupService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await WarmAsync(stoppingToken);
+        await WarmStartupAsync(stoppingToken);
 
         using var timer = new PeriodicTimer(runtimeOptions.WarmupInterval);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            await WarmAsync(stoppingToken);
+            await WarmSqlAsync(stoppingToken);
         }
     }
 
-    private async Task WarmAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Runs the immediate startup iteration. Internal (rather than private)
+    /// so tests can drive exactly this iteration without waiting on the
+    /// recurring <see cref="PeriodicTimer"/> loop in <see cref="ExecuteAsync"/>.
+    /// </summary>
+    internal async Task WarmStartupAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var provider = scope.ServiceProvider;
+        await Task.WhenAll(
+            WarmCapacityAsync(provider, cancellationToken),
+            WarmTokenAsync(provider, cancellationToken),
+            WarmSqlAsync(provider, cancellationToken));
+    }
+
+    /// <summary>
+    /// Runs a single recurring SQL-only warm-up iteration in its own DI
+    /// scope. Internal so tests can drive one iteration directly.
+    /// </summary>
+    internal async Task WarmSqlAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        await WarmSqlAsync(scope.ServiceProvider, cancellationToken);
+    }
+
+    // Each warmer resolves its own service from the DI scope *inside* this
+    // try block (rather than the caller resolving it upfront) so a
+    // constructor-time failure - e.g. a missing FABRIC_* configuration
+    // setting throwing InvalidOperationException while building the
+    // service - is caught here alongside runtime failures instead of
+    // escaping Task.WhenAll's synchronous prefix and faulting/crashing the
+    // hosted service.
+    private async Task WarmCapacityAsync(IServiceProvider provider, CancellationToken cancellationToken)
     {
         try
         {
-            await catalog.RefreshAsync(cancellationToken);
-            await using var connection = await connectionFactory.OpenAsync(cancellationToken);
-            await using var command = new SqlCommand("SELECT 1;", connection)
-            {
-                CommandTimeout = 30
-            };
-            await command.ExecuteScalarAsync(cancellationToken);
+            var capacity = provider.GetRequiredService<IFabricCapacityReadiness>();
+            await capacity.EnsureActiveAsync(cancellationToken);
+            logger.LogInformation("Fabric capacity warm-up confirmed the capacity is ready.");
+        }
+        catch (InvalidOperationException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Fabric capacity warm-up could not initialize (missing or invalid Fabric configuration) and will be retried.");
+        }
+        catch (FabricQueryException exception)
+        {
+            // A paused or resuming capacity is expected on a cold start; the
+            // capacity check every real request performs is the actual retry
+            // mechanism, so warm-up must log and continue rather than fail
+            // process startup.
+            logger.LogWarning(
+                exception,
+                "Fabric capacity warm-up reported '{Code}' and will be retried by the next request.",
+                exception.Code);
+        }
+        catch (AuthenticationFailedException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Fabric capacity warm-up could not authenticate and will be retried.");
+        }
+        catch (HttpRequestException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Fabric capacity warm-up could not reach a dependency and will be retried.");
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "Fabric capacity warm-up timed out and will be retried.");
+        }
+    }
+
+    private async Task WarmTokenAsync(IServiceProvider provider, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var tokenWarmup = provider.GetRequiredService<IFabricTokenWarmup>();
+            await tokenWarmup.WarmTokenAsync(cancellationToken);
+            logger.LogInformation("Fabric REST API token warm-up completed.");
+        }
+        catch (InvalidOperationException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Fabric REST API token warm-up could not initialize (missing or invalid Fabric configuration) and will be retried.");
+        }
+        catch (AuthenticationFailedException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Fabric REST API token warm-up could not authenticate and will be retried.");
+        }
+        catch (HttpRequestException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Fabric REST API token warm-up could not reach a dependency and will be retried.");
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "Fabric REST API token warm-up timed out and will be retried.");
+        }
+    }
+
+    private async Task WarmSqlAsync(IServiceProvider provider, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var sqlWarmup = provider.GetRequiredService<IFabricSqlConnectivityWarmup>();
+            await sqlWarmup.WarmAsync(cancellationToken);
             logger.LogInformation(
                 "Fabric SQL warm-up completed; the catalog remains cached for {CacheMinutes} minutes.",
                 runtimeOptions.CatalogCacheDuration.TotalMinutes);

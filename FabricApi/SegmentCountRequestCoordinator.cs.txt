@@ -1,0 +1,276 @@
+#if FABRIC_API
+using System.Runtime.ExceptionServices;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+/// <summary>
+/// Orchestrates the unified, optimistic <c>/api/segment-counts</c> endpoint:
+/// <list type="bullet">
+/// <item>Starts capacity readiness and count evaluation concurrently so an
+/// active-capacity ARM call never adds serial latency to a query that would
+/// have succeeded anyway.</item>
+/// <item>Capacity readiness is inspected first: an unavailable/paused/
+/// resuming capacity - or the caller cancelling - is surfaced immediately
+/// and never delayed behind however long the concurrently started
+/// evaluation takes (e.g. a full SQL command timeout). The now-pointless
+/// evaluation is cancelled via its own linked <see cref="CancellationTokenSource"/>
+/// and its eventual outcome is still observed in the background so a fault
+/// there is never left as an unobserved task exception, but that
+/// observation never delays the response.</item>
+/// <item>On the normal successful SQL path, returns immediately with
+/// <see cref="SegmentCountResponse.AddedTables"/> empty and
+/// <see cref="SegmentCountResponse.CatalogReady"/> true, then hands the
+/// request's required tables to the background validation queue instead of
+/// reconciling them inline.</item>
+/// <item>If evaluation fails only because required Dataverse tables are
+/// missing from the Fabric catalog, reconciles exactly those tables and
+/// retries evaluation exactly once with no further catch, so any other
+/// failure (including a second miss) propagates unmodified.</item>
+/// <item>If capacity was not immediately known-active and this call had to
+/// resume/wait for it, the concurrently started evaluation may have failed
+/// only because the capacity was not ready yet; in that case (and only that
+/// case) evaluation is retried exactly once immediately after capacity
+/// readiness succeeds, before the missing-table classification above is
+/// applied to whatever failure remains.</item>
+/// </list>
+/// </summary>
+internal sealed class SegmentCountRequestCoordinator
+{
+    private readonly Func<CancellationToken, Task<bool>> ensureCapacityActiveAsync;
+    private readonly Func<SegmentCountRequest, CancellationToken, Task<SegmentCountResponse>> evaluateAsync;
+    private readonly Func<IEnumerable<string>, CancellationToken, Task<IReadOnlyList<string>>>
+        getMissingDataverseTablesAsync;
+    private readonly Func<IReadOnlyCollection<string>, CancellationToken, Task<FabricDependencyResponse>>
+        reconcileAsync;
+    private readonly ISegmentDependencyValidationQueue validationQueue;
+
+    public SegmentCountRequestCoordinator(
+        IFabricCapacityReadiness capacity,
+        FabricSegmentCountService countService,
+        FabricSegmentCatalog catalog,
+        FabricDependencyReconciler reconciler,
+        ISegmentDependencyValidationQueue validationQueue)
+        : this(
+            capacity.EnsureActiveAsync,
+            countService.EvaluateAsync,
+            catalog.GetMissingDataverseTablesAsync,
+            reconciler.ReconcileAsync,
+            validationQueue)
+    {
+    }
+
+    /// <summary>
+    /// Test-friendly constructor accepting fakes for each collaborator so the
+    /// coordinator's concurrency/priority/retry-once logic can be verified
+    /// without a real Fabric capacity, SQL catalog, or Dataverse shortcut
+    /// dependency.
+    /// </summary>
+    internal SegmentCountRequestCoordinator(
+        Func<CancellationToken, Task<bool>> ensureCapacityActiveAsync,
+        Func<SegmentCountRequest, CancellationToken, Task<SegmentCountResponse>> evaluateAsync,
+        Func<IEnumerable<string>, CancellationToken, Task<IReadOnlyList<string>>>
+            getMissingDataverseTablesAsync,
+        Func<IReadOnlyCollection<string>, CancellationToken, Task<FabricDependencyResponse>> reconcileAsync,
+        ISegmentDependencyValidationQueue validationQueue)
+    {
+        this.ensureCapacityActiveAsync = ensureCapacityActiveAsync;
+        this.evaluateAsync = evaluateAsync;
+        this.getMissingDataverseTablesAsync = getMissingDataverseTablesAsync;
+        this.reconcileAsync = reconcileAsync;
+        this.validationQueue = validationQueue;
+    }
+
+    public async Task<SegmentCountResponse> HandleAsync(
+        SegmentCountRequest request,
+        CancellationToken cancellationToken)
+    {
+        var capacityTask = ensureCapacityActiveAsync(cancellationToken);
+
+        // The optimistic evaluation gets its own linked cancellation source
+        // so it can be stopped the moment capacity is known to have failed
+        // or the caller cancelled, without ever needing to wait for it to
+        // run to completion first (e.g. a full SQL command timeout).
+        var evaluateCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var evaluateTask = evaluateAsync(request, evaluateCancellation.Token);
+
+        // Capacity is the more actionable failure/cancellation and must
+        // never be delayed behind the concurrently started evaluation -
+        // inspect it first, before ever awaiting evaluateTask.
+        await AwaitWithoutThrowingAsync(capacityTask);
+
+        if (capacityTask.IsCanceled || capacityTask.IsFaulted)
+        {
+            // The evaluation is now pointless: cancel it and let it wind
+            // down on its own. Its eventual outcome is still observed (so a
+            // subsequent fault never becomes an unobserved task exception)
+            // but that observation must not delay this response.
+            evaluateCancellation.Cancel();
+            ObserveAndDisposeInBackground(evaluateTask, evaluateCancellation);
+
+            // Re-awaiting an already-completed task rethrows the original
+            // exception (OperationCanceledException or the real capacity
+            // failure) with its original type and stack trace preserved,
+            // exactly as it was produced - no manual unwrapping needed.
+            await capacityTask;
+        }
+
+        try
+        {
+            await AwaitWithoutThrowingAsync(evaluateTask);
+
+            if (evaluateTask.IsCanceled)
+            {
+                // Propagate cancellation explicitly rather than
+                // dereferencing a null Exception on a task that is
+                // cancelled, not faulted.
+                await evaluateTask;
+            }
+
+            if (evaluateTask.IsCompletedSuccessfully)
+            {
+                var response = evaluateTask.Result;
+                response.AddedTables = [];
+                response.CatalogReady = true;
+                validationQueue.Enqueue(request.RequiredDataverseTables);
+                return response;
+            }
+
+            var evaluateFailure = Unwrap(evaluateTask.Exception!);
+
+            // If capacity was not immediately known-active and this same
+            // call had to resume/wait for it to become active, the SQL
+            // evaluation that started concurrently may have failed only
+            // because the capacity was not yet ready - not because of a
+            // genuine query problem. Retry evaluation exactly once, now
+            // that capacity is confirmed active, before applying
+            // missing-table classification. Do not retry merely because ARM
+            // was checked: when capacity was already active (served from
+            // cache or found active on the very first check),
+            // capacityTask.Result is false and this block is skipped
+            // entirely, preserving prior behavior unchanged.
+            if (capacityTask.IsCompletedSuccessfully && capacityTask.Result)
+            {
+                var retryAfterCapacityTask = evaluateAsync(request, cancellationToken);
+                await AwaitWithoutThrowingAsync(retryAfterCapacityTask);
+                if (retryAfterCapacityTask.IsCanceled)
+                {
+                    await retryAfterCapacityTask;
+                }
+
+                if (retryAfterCapacityTask.IsCompletedSuccessfully)
+                {
+                    var response = retryAfterCapacityTask.Result;
+                    response.AddedTables = [];
+                    response.CatalogReady = true;
+                    validationQueue.Enqueue(request.RequiredDataverseTables);
+                    return response;
+                }
+
+                evaluateFailure = Unwrap(retryAfterCapacityTask.Exception!);
+            }
+
+            var missingTables = await GetMissingRequiredTablesAsync(
+                evaluateFailure,
+                request,
+                cancellationToken);
+            if (missingTables.Count == 0)
+            {
+                // Not a missing-Dataverse-table condition (or no requested
+                // table is actually missing) - rethrow untouched rather than
+                // masking an unrelated error such as an invalid column name.
+                throw Rethrow(evaluateFailure);
+            }
+
+            var reconciliation = await reconcileAsync(missingTables, cancellationToken);
+
+            // Retry exactly once, with no catch: any failure here (including
+            // the same missing-table condition recurring) propagates as-is.
+            var retried = await evaluateAsync(request, cancellationToken);
+            retried.AddedTables = reconciliation.AddedTables;
+            retried.CatalogReady = reconciliation.CatalogReady;
+
+            // The retry itself just proved the full requested set queryable, so
+            // record it as validated instead of re-enqueueing redundant work.
+            validationQueue.MarkValidated(request.RequiredDataverseTables);
+            return retried;
+        }
+        finally
+        {
+            // evaluateTask has already completed by every path reaching
+            // this finally block (the only path that leaves it still
+            // running - the capacity failure/cancellation branch above -
+            // returns before this try block via the rethrown exception), so
+            // disposing here is always safe.
+            evaluateCancellation.Dispose();
+        }
+    }
+
+    private async Task<IReadOnlyList<string>> GetMissingRequiredTablesAsync(
+        Exception evaluateFailure,
+        SegmentCountRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (evaluateFailure is not SegmentQueryException { Code: "invalid_identifier" } ||
+            request.RequiredDataverseTables.Count == 0)
+        {
+            return [];
+        }
+
+        return await getMissingDataverseTablesAsync(
+            request.RequiredDataverseTables,
+            cancellationToken);
+    }
+
+    private static async Task AwaitWithoutThrowingAsync(Task task)
+    {
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Observed via task.IsFaulted/task.Exception by the caller;
+            // swallowed here only so awaiting both tasks never short-circuits
+            // on whichever one faults first.
+        }
+    }
+
+    /// <summary>
+    /// Attaches a continuation that runs once <paramref name="task"/>
+    /// settles - regardless of outcome - so an eventual fault on a
+    /// no-longer-awaited task is always observed (never surfacing as an
+    /// unobserved task exception) and the linked
+    /// <paramref name="cancellation"/> source is disposed only once the
+    /// task is genuinely done using it. Fire-and-forget in the sense that
+    /// nothing awaits this continuation, but nothing about the task itself
+    /// is left unobserved or leaked.
+    /// </summary>
+    private static void ObserveAndDisposeInBackground(Task task, CancellationTokenSource cancellation)
+    {
+        task.ContinueWith(
+            static (completed, state) =>
+            {
+                // Touching Exception marks a fault observed; it is a no-op
+                // (null) for a task that completed successfully or was
+                // cancelled.
+                _ = completed.Exception;
+                ((CancellationTokenSource)state!).Dispose();
+            },
+            cancellation,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private static Exception Unwrap(AggregateException aggregate) =>
+        aggregate.InnerExceptions.Count == 1
+            ? aggregate.InnerExceptions[0]
+            : aggregate;
+
+    private static Exception Rethrow(Exception exception)
+    {
+        ExceptionDispatchInfo.Capture(exception).Throw();
+        return exception;
+    }
+}
+#endif

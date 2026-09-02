@@ -4,11 +4,10 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Azure.Core;
-using Azure.Identity;
 
 namespace CustomerInsightsSegmentSankey.FabricApi;
 
-internal sealed class FabricCapacityService
+internal sealed class FabricCapacityService : IFabricCapacityReadiness
 {
     private const string ArmScope = "https://management.azure.com/.default";
     private const string ApiVersion = "2023-11-01";
@@ -19,13 +18,27 @@ internal sealed class FabricCapacityService
 
     private readonly HttpClient httpClient;
     private readonly TokenCredential credential;
+    private readonly FabricCapacityReadinessCache readinessCache;
     private readonly string capacityResourceId;
     private readonly Func<TimeSpan, CancellationToken, Task> delay;
 
-    public FabricCapacityService(HttpClient httpClient)
+    /// <summary>
+    /// Production constructor. <paramref name="credential"/> and
+    /// <paramref name="readinessCache"/> are resolved from DI as singletons
+    /// (see <c>Program.cs</c>) so the Fabric REST/ARM token cache inside
+    /// <paramref name="credential"/> and the short-TTL active-capacity
+    /// readiness cache are both shared across every transient
+    /// <see cref="FabricCapacityService"/> instance, including the one used
+    /// by <see cref="FabricSqlWarmupService"/> startup warm-up.
+    /// </summary>
+    public FabricCapacityService(
+        HttpClient httpClient,
+        TokenCredential credential,
+        FabricCapacityReadinessCache readinessCache)
         : this(
             httpClient,
-            new DefaultAzureCredential(),
+            credential,
+            readinessCache,
             ReadRequiredSetting("FABRIC_CAPACITY_RESOURCE_ID"),
             static (duration, cancellationToken) => Task.Delay(duration, cancellationToken))
     {
@@ -34,24 +47,34 @@ internal sealed class FabricCapacityService
     internal FabricCapacityService(
         HttpClient httpClient,
         TokenCredential credential,
+        FabricCapacityReadinessCache readinessCache,
         string capacityResourceId,
         Func<TimeSpan, CancellationToken, Task> delay)
     {
         this.httpClient = httpClient;
         this.credential = credential;
+        this.readinessCache = readinessCache;
         this.capacityResourceId = NormalizeResourceId(capacityResourceId);
         this.delay = delay;
     }
 
-    public async Task EnsureActiveAsync(CancellationToken cancellationToken)
+    public async Task<bool> EnsureActiveAsync(CancellationToken cancellationToken)
     {
+        if (readinessCache.IsRecentlyConfirmedActive(capacityResourceId))
+        {
+            return false;
+        }
+
         var token = await credential.GetTokenAsync(
             new TokenRequestContext([ArmScope]),
             cancellationToken);
         var state = await ReadStateAsync(token.Token, cancellationToken);
         if (IsActive(state))
         {
-            return;
+            // Already active on the very first check this call made: no
+            // resume/wait was necessary, so this is not a transition.
+            readinessCache.MarkConfirmedActive(capacityResourceId);
+            return false;
         }
 
         await ResumeLock.WaitAsync(cancellationToken);
@@ -60,7 +83,13 @@ internal sealed class FabricCapacityService
             state = await ReadStateAsync(token.Token, cancellationToken);
             if (IsActive(state))
             {
-                return;
+                // The initial check (above) observed the capacity as not
+                // active, and it is active now - e.g. a concurrent caller
+                // resumed it while this call waited for the lock. From this
+                // call's perspective that is a transition a concurrently
+                // started SQL evaluation may need to retry against.
+                readinessCache.MarkConfirmedActive(capacityResourceId);
+                return true;
             }
 
             if (string.Equals(state, "Paused", StringComparison.OrdinalIgnoreCase))
@@ -81,7 +110,8 @@ internal sealed class FabricCapacityService
                 state = await ReadStateAsync(token.Token, cancellationToken);
                 if (IsActive(state))
                 {
-                    return;
+                    readinessCache.MarkConfirmedActive(capacityResourceId);
+                    return true;
                 }
                 if (!IsStarting(state) && !string.Equals(
                         state,

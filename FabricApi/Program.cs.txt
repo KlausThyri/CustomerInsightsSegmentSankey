@@ -1,5 +1,7 @@
 #if FABRIC_API
 using CustomerInsightsSegmentSankey.FabricApi;
+using Azure.Core;
+using Azure.Identity;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -13,10 +15,35 @@ builder.Services.AddSingleton<SegmentCountSqlCompiler>();
 builder.Services.AddSingleton<QueryTokenService>();
 builder.Services.AddSingleton<FabricSegmentCountService>();
 builder.Services.AddSingleton<FabricSegmentMemberService>();
+builder.Services.AddSingleton<IFabricSqlConnectivityWarmup, FabricSqlConnectivityWarmup>();
+// One shared credential so the Fabric REST/ARM access token it caches after
+// startup warm-up (see FabricSqlWarmupService) remains usable by the first
+// real requests instead of being discarded with a fresh credential per
+// transient FabricCapacityService/FabricDataverseShortcutService instance.
+builder.Services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
+// Short-TTL cache of the last confirmed-Active capacity state, shared across
+// every transient FabricCapacityService instance so startup warm-up and the
+// two immediate endpoint operations that race it do not each pay for a
+// separate ARM call when the capacity was just confirmed active.
+builder.Services.AddSingleton<FabricCapacityReadinessCache>();
 builder.Services.AddHttpClient<FabricDataverseShortcutService>();
 builder.Services.AddHttpClient<FabricCapacityService>();
 builder.Services.AddHttpClient();
+builder.Services.AddTransient<IFabricCapacityReadiness>(
+    sp => sp.GetRequiredService<FabricCapacityService>());
+builder.Services.AddTransient<IFabricTokenWarmup>(
+    sp => sp.GetRequiredService<FabricDataverseShortcutService>());
+builder.Services.AddTransient<FabricDependencyReconciler>();
+builder.Services.AddTransient<IFabricDependencyReconciler>(
+    sp => sp.GetRequiredService<FabricDependencyReconciler>());
+builder.Services.AddTransient<SegmentCountRequestCoordinator>();
+builder.Services.AddSingleton<SegmentDependencyValidationQueue>();
+builder.Services.AddSingleton<ISegmentDependencyValidationQueue>(
+    sp => sp.GetRequiredService<SegmentDependencyValidationQueue>());
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<SegmentDependencyValidationQueue>());
 builder.Services.AddSingleton<SegmentPreviewSetupService>();
+
 
 // The setup page polls /api/health from the Dataverse origin while it waits for
 // App Service to mount the deployed package. Only that endpoint is opened, only
@@ -70,8 +97,7 @@ app.MapPost(
     async (
         HttpRequest request,
         SegmentCountRequest input,
-        FabricCapacityService capacity,
-        FabricSegmentCountService service,
+        SegmentCountRequestCoordinator coordinator,
         ILogger<Program> logger,
         CancellationToken cancellationToken) =>
     {
@@ -88,8 +114,7 @@ app.MapPost(
 
         try
         {
-            await capacity.EnsureActiveAsync(cancellationToken);
-            return Results.Ok(await service.EvaluateAsync(input, cancellationToken));
+            return Results.Ok(await coordinator.HandleAsync(input, cancellationToken));
         }
         catch (SegmentQueryException exception)
         {
@@ -207,8 +232,7 @@ app.MapPost(
         HttpRequest request,
         FabricDependencyRequest input,
         FabricCapacityService capacity,
-        FabricDataverseShortcutService service,
-        FabricSegmentCatalog catalog,
+        FabricDependencyReconciler reconciler,
         ILogger<Program> logger,
         CancellationToken cancellationToken) =>
     {
@@ -226,18 +250,9 @@ app.MapPost(
         try
         {
             await capacity.EnsureActiveAsync(cancellationToken);
-            var result = await service.EnsureAsync(input, cancellationToken);
-            var missingTables = await catalog.GetMissingDataverseTablesAsync(
-                result.RequiredTables,
+            var result = await reconciler.ReconcileAsync(
+                input.DataverseTables ?? [],
                 cancellationToken);
-            await service.RefreshSqlMetadataAsync(
-                missingTables,
-                result.AddedTables,
-                cancellationToken);
-            await catalog.WaitForDataverseTablesAsync(
-                result.RequiredTables,
-                cancellationToken);
-            result.CatalogReady = true;
             return Results.Ok(result);
         }
         catch (FabricQueryException exception)

@@ -6,6 +6,14 @@ namespace CustomerInsightsSegmentSankey.FabricApi;
 public sealed class SegmentCountRequest
 {
     public SegmentQueryNode Query { get; set; } = new();
+
+    /// <summary>
+    /// The Dataverse tables the caller has already resolved as required to
+    /// evaluate <see cref="Query"/>. Scopes safe, optimistic dependency
+    /// reconciliation to exactly these tables instead of discovering the
+    /// full dependency set server-side.
+    /// </summary>
+    public List<string> RequiredDataverseTables { get; set; } = [];
 }
 
 public sealed class SegmentQueryNode
@@ -149,6 +157,23 @@ public sealed class SegmentCountResponse
     /// <c>/api/segment-members</c>. The token never exposes stage SQL or PII.
     /// </summary>
     public string QueryToken { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Dataverse tables that were newly added to Fabric while reconciling a
+    /// dependency that was absent from the catalog. Empty on the common
+    /// optimistic path, where every table in
+    /// <see cref="SegmentCountRequest.RequiredDataverseTables"/> was already
+    /// present.
+    /// </summary>
+    public List<string> AddedTables { get; set; } = [];
+
+    /// <summary>
+    /// True once the Fabric catalog is confirmed ready for every table in
+    /// <see cref="SegmentCountRequest.RequiredDataverseTables"/>. Always true
+    /// on a successful response; present so older callers can detect a
+    /// stale/incompatible deployment if it is ever false.
+    /// </summary>
+    public bool CatalogReady { get; set; }
 }
 
 public sealed class SegmentCountStage

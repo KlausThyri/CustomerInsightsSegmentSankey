@@ -1,0 +1,86 @@
+#if FABRIC_API
+using System.Text.Json;
+using CustomerInsightsSegmentSankey.FabricApi;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+/// <summary>
+/// Locks in the exact wire shape of the first-load performance contract
+/// additions - <see cref="SegmentCountRequest.RequiredDataverseTables"/>,
+/// <see cref="SegmentCountResponse.AddedTables"/>, and
+/// <see cref="SegmentCountResponse.CatalogReady"/> - as consumed by
+/// CustomApi's <c>FabricSegmentCountClient</c>. ASP.NET Core's minimal API
+/// serializes with <see cref="JsonSerializerDefaults.Web"/> (camelCase, no
+/// extra converters), so these tests reproduce that exact serializer
+/// configuration rather than assuming it.
+/// </summary>
+public sealed class SegmentCountModelsSerializationTests
+{
+    private static readonly JsonSerializerOptions WebDefaults = new(JsonSerializerDefaults.Web);
+
+    [Fact]
+    public void SegmentCountRequest_RequiredDataverseTables_RoundTripsAsCamelCaseArray()
+    {
+        var request = new SegmentCountRequest { RequiredDataverseTables = ["contact", "account"] };
+
+        var json = JsonSerializer.Serialize(request, WebDefaults);
+        using var document = JsonDocument.Parse(json);
+        var array = document.RootElement.GetProperty("requiredDataverseTables");
+
+        Assert.Equal(JsonValueKind.Array, array.ValueKind);
+        Assert.Equal(["contact", "account"], array.EnumerateArray().Select(e => e.GetString()));
+
+        var roundTripped = JsonSerializer.Deserialize<SegmentCountRequest>(json, WebDefaults);
+        Assert.Equal(["contact", "account"], roundTripped!.RequiredDataverseTables);
+    }
+
+    [Fact]
+    public void SegmentCountRequest_RequiredDataverseTables_DefaultsToAnEmptyArray()
+    {
+        var json = JsonSerializer.Serialize(new SegmentCountRequest(), WebDefaults);
+
+        using var document = JsonDocument.Parse(json);
+        var array = document.RootElement.GetProperty("requiredDataverseTables");
+
+        Assert.Equal(JsonValueKind.Array, array.ValueKind);
+        Assert.Equal(0, array.GetArrayLength());
+    }
+
+    [Fact]
+    public void SegmentCountResponse_FastPath_HasCatalogReadyTrueAndEmptyAddedTables()
+    {
+        // The common, optimistic response shape: every requested table was
+        // already present, so nothing needed to be added, and the catalog
+        // must be reported ready so CustomApi's client does not throw.
+        var response = new SegmentCountResponse
+        {
+            CatalogReady = true,
+            AddedTables = []
+        };
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(response, WebDefaults));
+        var root = document.RootElement;
+
+        Assert.True(root.GetProperty("catalogReady").GetBoolean());
+        Assert.Equal(JsonValueKind.Array, root.GetProperty("addedTables").ValueKind);
+        Assert.Equal(0, root.GetProperty("addedTables").GetArrayLength());
+    }
+
+    [Fact]
+    public void SegmentCountResponse_ReconciledPath_ReportsTheAddedTables()
+    {
+        var response = new SegmentCountResponse
+        {
+            CatalogReady = true,
+            AddedTables = ["msdynci_customerprofile"]
+        };
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(response, WebDefaults));
+        var array = document.RootElement.GetProperty("addedTables");
+
+        Assert.Equal(JsonValueKind.Array, array.ValueKind);
+        Assert.Equal(["msdynci_customerprofile"], array.EnumerateArray().Select(e => e.GetString()));
+    }
+}
+#endif

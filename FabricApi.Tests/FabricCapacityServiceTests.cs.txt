@@ -18,13 +18,19 @@ public sealed class FabricCapacityServiceTests
         var handler = new SequenceHandler(Response(HttpStatusCode.OK, "Active"));
         var service = CreateService(handler);
 
-        await service.EnsureActiveAsync(CancellationToken.None);
+        var transitioned = await service.EnsureActiveAsync(CancellationToken.None);
 
         Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Get, handler.Requests[0].Method);
         Assert.Equal(
             "https://management.azure.com" + ResourceId + "?api-version=2023-11-01",
             handler.Requests[0].Uri);
+
+        // Already active on the very first check: this call did not need to
+        // resume/wait, so it must not report a transition. A concurrently
+        // started SQL evaluate task that failed for an unrelated reason must
+        // not be retried merely because this call ran.
+        Assert.False(transitioned);
     }
 
     [Fact]
@@ -38,13 +44,20 @@ public sealed class FabricCapacityServiceTests
             Response(HttpStatusCode.OK, "Active"));
         var service = CreateService(handler);
 
-        await service.EnsureActiveAsync(CancellationToken.None);
+        var transitioned = await service.EnsureActiveAsync(CancellationToken.None);
 
         Assert.Equal(HttpMethod.Post, handler.Requests[2].Method);
         Assert.EndsWith(
             "/resume?api-version=2023-11-01",
             handler.Requests[2].Uri,
             StringComparison.Ordinal);
+
+        // The capacity was paused when this call started and became active
+        // only after this call resumed and waited for it: a concurrently
+        // started SQL evaluate task may have failed only because the
+        // capacity was not ready, so this must report a transition so the
+        // coordinator knows a retry is warranted.
+        Assert.True(transitioned);
     }
 
     [Fact]
@@ -79,10 +92,93 @@ public sealed class FabricCapacityServiceTests
         Assert.Contains("Setup Center", error.Message, StringComparison.Ordinal);
     }
 
-    private static FabricCapacityService CreateService(SequenceHandler handler) =>
+    [Fact]
+    public async Task EnsureActiveAsync_ReusesARecentlyConfirmedActiveResultWithoutCallingArmAgain()
+    {
+        var readinessCache = new FabricCapacityReadinessCache();
+        var handler = new SequenceHandler(Response(HttpStatusCode.OK, "Active"));
+        var service = CreateService(handler, readinessCache);
+
+        var first = await service.EnsureActiveAsync(CancellationToken.None);
+        var second = await service.EnsureActiveAsync(CancellationToken.None);
+
+        // Only the first call actually reached ARM; the second was served
+        // entirely from the shared readiness cache.
+        Assert.Single(handler.Requests);
+
+        // Neither call resumed/waited for the capacity, so neither reports
+        // a transition.
+        Assert.False(first);
+        Assert.False(second);
+    }
+
+    [Fact]
+    public async Task EnsureActiveAsync_SharesCachedReadinessAcrossSeparateServiceInstances()
+    {
+        // Mirrors production: FabricSqlWarmupService's startup warm-up and
+        // the two immediate endpoint operations each resolve their own
+        // transient FabricCapacityService, but all share the one singleton
+        // FabricCapacityReadinessCache instance.
+        var readinessCache = new FabricCapacityReadinessCache();
+        var warmup = CreateService(new SequenceHandler(Response(HttpStatusCode.OK, "Active")), readinessCache);
+        await warmup.EnsureActiveAsync(CancellationToken.None);
+
+        // A handler that throws if ever invoked proves the second instance
+        // never made an ARM call at all.
+        var request = CreateService(new SequenceHandler(), readinessCache);
+        await request.EnsureActiveAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task EnsureActiveAsync_DoesNotCacheAPausedOrStartingResultForRetry()
+    {
+        var readinessCache = new FabricCapacityReadinessCache();
+        var responses = new List<HttpResponseMessage>
+        {
+            Response(HttpStatusCode.OK, "Paused"),
+            Response(HttpStatusCode.OK, "Paused"),
+            new(HttpStatusCode.Accepted)
+        };
+        responses.AddRange(Enumerable.Range(0, 6).Select(_ => Response(HttpStatusCode.OK, "Resuming")));
+        var service = CreateService(new SequenceHandler(responses.ToArray()), readinessCache);
+
+        await Assert.ThrowsAsync<FabricQueryException>(
+            () => service.EnsureActiveAsync(CancellationToken.None));
+
+        // A capacity that never reached Active must never be cached: the
+        // next attempt (even from a different service instance sharing the
+        // cache) has to perform the real ARM check again rather than
+        // silently reporting readiness.
+        var retryHandler = new SequenceHandler(Response(HttpStatusCode.OK, "Active"));
+        var retry = CreateService(retryHandler, readinessCache);
+        await retry.EnsureActiveAsync(CancellationToken.None);
+
+        Assert.Single(retryHandler.Requests);
+    }
+
+    [Fact]
+    public async Task EnsureActiveAsync_RechecksArmAfterTheReadinessCacheEntryExpires()
+    {
+        var now = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var readinessCache = new FabricCapacityReadinessCache(() => now);
+        var firstHandler = new SequenceHandler(Response(HttpStatusCode.OK, "Active"));
+        await CreateService(firstHandler, readinessCache).EnsureActiveAsync(CancellationToken.None);
+
+        now += FabricCapacityReadinessCache.Ttl + TimeSpan.FromSeconds(1);
+
+        var secondHandler = new SequenceHandler(Response(HttpStatusCode.OK, "Active"));
+        await CreateService(secondHandler, readinessCache).EnsureActiveAsync(CancellationToken.None);
+
+        Assert.Single(secondHandler.Requests);
+    }
+
+    private static FabricCapacityService CreateService(
+        SequenceHandler handler,
+        FabricCapacityReadinessCache? readinessCache = null) =>
         new(
             new HttpClient(handler),
             new StaticTokenCredential(),
+            readinessCache ?? new FabricCapacityReadinessCache(),
             ResourceId,
             static (_, _) => Task.CompletedTask);
 

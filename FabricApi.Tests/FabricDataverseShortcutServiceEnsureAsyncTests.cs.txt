@@ -1,0 +1,309 @@
+#if FABRIC_API
+using System.Text;
+using Azure.Core;
+using CustomerInsightsSegmentSankey.FabricApi;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+/// <summary>
+/// Covers <see cref="FabricDataverseShortcutService.EnsureAsync"/> and
+/// <see cref="FabricDataverseShortcutService.GetExistingAsync"/> behavior
+/// that depends on the internal shortcut-listing helpers: concurrency
+/// between the serving and source shortcut list calls, early stop once
+/// every requested table is found, exact parent-path filtering, and the
+/// full-list behavior still used by callers that request everything.
+/// </summary>
+public sealed class FabricDataverseShortcutServiceEnsureAsyncTests
+{
+    private const string WorkspaceId = "ws1";
+    private const string ServingLakehouseId = "serving-lake";
+    private const string DataverseLakehouseId = "source-lake";
+
+    [Fact]
+    public async Task EnsureAsync_lists_serving_and_source_targets_concurrently()
+    {
+        var handler = new ConcurrencyProbeHandler(
+            servingResponses: [ShortcutsPage([ServingShortcut("account"), ServingShortcut("contact")], null)],
+            sourceResponses: [ShortcutsPage([SourceShortcut("account"), SourceShortcut("contact")], null)]);
+        var service = CreateService(handler);
+
+        var response = await service.EnsureAsync(
+            new FabricDependencyRequest { DataverseTables = ["account", "contact"] },
+            CancellationToken.None);
+
+        Assert.Empty(response.AddedTables);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task EnsureAsync_stops_paginating_the_serving_list_once_every_table_is_found()
+    {
+        // Page 1 has a decoy "account" shortcut at the wrong parent path (must be
+        // excluded) plus the real "contact"; page 2 has the real "account". A
+        // third page exists in the underlying data but must never be requested
+        // once both required tables are found on page 2.
+        var handler = new ConcurrencyProbeHandler(
+            servingResponses:
+            [
+                ShortcutsPage(
+                    [ShortcutAtPath("account", "Tables/dataverse/archive"), ServingShortcut("contact")],
+                    "serving-page-2"),
+                ShortcutsPage([ServingShortcut("account")], "serving-page-3"),
+                ShortcutsPage([], null)
+            ],
+            sourceResponses: [ShortcutsPage([SourceShortcut("account"), SourceShortcut("contact")], null)]);
+        var service = CreateService(handler);
+
+        var response = await service.EnsureAsync(
+            new FabricDependencyRequest { DataverseTables = ["account", "contact"] },
+            CancellationToken.None);
+
+        Assert.Empty(response.AddedTables);
+        Assert.Equal(2, handler.ServingRequestCount);
+    }
+
+    [Fact]
+    public async Task EnsureAsync_stops_paginating_the_source_list_once_every_table_is_found()
+    {
+        var handler = new ConcurrencyProbeHandler(
+            servingResponses: [ShortcutsPage([ServingShortcut("account"), ServingShortcut("contact")], null)],
+            sourceResponses:
+            [
+                ShortcutsPage(
+                    [ShortcutAtPath("account", "Tables/archive"), SourceShortcut("contact")],
+                    "source-page-2"),
+                ShortcutsPage([SourceShortcut("account")], "source-page-3"),
+                ShortcutsPage([], null)
+            ]);
+        var service = CreateService(handler);
+
+        var response = await service.EnsureAsync(
+            new FabricDependencyRequest { DataverseTables = ["account", "contact"] },
+            CancellationToken.None);
+
+        Assert.Empty(response.AddedTables);
+        Assert.Equal(2, handler.SourceRequestCount);
+    }
+
+    [Fact]
+    public async Task GetExistingAsync_walks_every_page_for_full_list_callers()
+    {
+        var handler = new ConcurrencyProbeHandler(
+            servingResponses:
+            [
+                ShortcutsPage([ServingShortcut("account")], "serving-page-2"),
+                ShortcutsPage([ServingShortcut("contact")], null)
+            ],
+            sourceResponses: []);
+        var service = CreateService(handler);
+
+        var existing = await service.GetExistingAsync(CancellationToken.None);
+
+        Assert.Equal(2, handler.ServingRequestCount);
+        Assert.Contains("account", existing);
+        Assert.Contains("contact", existing);
+    }
+
+    [Fact]
+    public async Task EnsureAsync_ignores_serving_shortcuts_outside_the_exact_parent_path()
+    {
+        // Only a decoy at the wrong path exists for "contact"; because it is
+        // filtered out, EnsureAsync must still see "contact" as needing to be
+        // (re)created rather than treating the decoy as already present.
+        var handler = new ConcurrencyProbeHandler(
+            servingResponses:
+            [
+                ShortcutsPage(
+                    [ServingShortcut("account"), ShortcutAtPath("contact", "Tables/dataverse/archive")],
+                    null)
+            ],
+            sourceResponses: [ShortcutsPage([SourceShortcut("account"), SourceShortcut("contact")], null)]);
+        var createHandler = new CreateCapturingDecorator(handler);
+        var service = CreateService(createHandler);
+
+        var response = await service.EnsureAsync(
+            new FabricDependencyRequest { DataverseTables = ["account", "contact"] },
+            CancellationToken.None);
+
+        Assert.Equal(["contact"], response.AddedTables);
+        Assert.Equal(["account"], response.ExistingTables);
+    }
+
+    private static FabricDataverseShortcutService CreateService(HttpMessageHandler handler) =>
+        new(
+            new HttpClient(handler),
+            new StaticTokenCredential(),
+            WorkspaceId,
+            ServingLakehouseId,
+            DataverseLakehouseId,
+            "sql1");
+
+    private static string ServingShortcut(string table) => ShortcutAtPath(table, "Tables/dataverse", withTarget: true);
+
+    private static string SourceShortcut(string table) => ShortcutAtPath(table, "Tables", withTarget: true);
+
+    private static string ShortcutAtPath(string table, string path, bool withTarget = false)
+    {
+        var target = withTarget
+            ? $$"""
+                ,
+                "target": {
+                  "type": "Dataverse",
+                  "dataverse": {
+                    "connectionId": "11111111-1111-1111-1111-111111111111",
+                    "deltaLakeFolder": "managed/{{table}}",
+                    "environmentDomain": "https://contoso.crm4.dynamics.com",
+                    "tableName": "{{table}}"
+                  }
+                }
+                """
+            : "";
+        return $$"""
+            {
+              "path": "{{path}}",
+              "name": "{{table}}"{{target}}
+            }
+            """;
+    }
+
+    private static HttpResponseMessage ShortcutsPage(
+        IReadOnlyList<string> shortcuts,
+        string? continuationToken)
+    {
+        var continuation = continuationToken is null
+            ? ""
+            : $"""
+              ,"continuationToken":"{continuationToken}"
+              """;
+        var body =
+            $$"""
+            {
+              "value": [{{string.Join(",", shortcuts)}}]{{continuation}}
+            }
+            """;
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        };
+    }
+
+    private sealed class StaticTokenCredential : TokenCredential
+    {
+        public override AccessToken GetToken(
+            TokenRequestContext requestContext,
+            CancellationToken cancellationToken) =>
+            new("token", DateTimeOffset.MaxValue);
+
+        public override ValueTask<AccessToken> GetTokenAsync(
+            TokenRequestContext requestContext,
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(new AccessToken("token", DateTimeOffset.MaxValue));
+    }
+
+    /// <summary>
+    /// Serves canned serving/source shortcut list pages while proving the two
+    /// lists are actually requested concurrently: the first request to each
+    /// side waits (with a short timeout) for the first request to the other
+    /// side to arrive before responding, so a regression to serial listing
+    /// fails fast with a <see cref="TimeoutException"/> instead of silently
+    /// passing or hanging indefinitely.
+    /// </summary>
+    private sealed class ConcurrencyProbeHandler(
+        IReadOnlyList<HttpResponseMessage> servingResponses,
+        IReadOnlyList<HttpResponseMessage> sourceResponses) : HttpMessageHandler
+    {
+        private readonly Queue<HttpResponseMessage> serving = new(servingResponses);
+        private readonly Queue<HttpResponseMessage> source = new(sourceResponses);
+        private readonly TaskCompletionSource firstServingArrived =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource firstSourceArrived =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private bool servingSeen;
+        private bool sourceSeen;
+
+        public List<string> Requests { get; } = [];
+
+        public int ServingRequestCount => Requests.Count(uri => IsServingUri(uri));
+
+        public int SourceRequestCount => Requests.Count(uri => IsSourceUri(uri));
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri!.ToString();
+            lock (Requests)
+            {
+                Requests.Add(uri);
+            }
+
+            if (IsServingUri(uri))
+            {
+                if (!servingSeen)
+                {
+                    servingSeen = true;
+                    firstServingArrived.TrySetResult();
+                    if (source.Count > 0)
+                    {
+                        await WaitForConcurrentArrivalAsync(firstSourceArrived.Task);
+                    }
+                }
+
+                return serving.Dequeue();
+            }
+
+            if (!sourceSeen)
+            {
+                sourceSeen = true;
+                firstSourceArrived.TrySetResult();
+                if (serving.Count > 0)
+                {
+                    await WaitForConcurrentArrivalAsync(firstServingArrived.Task);
+                }
+            }
+
+            return source.Dequeue();
+        }
+
+        private static async Task WaitForConcurrentArrivalAsync(Task otherArrived)
+        {
+            var completed = await Task.WhenAny(otherArrived, Task.Delay(TimeSpan.FromSeconds(2)));
+            if (completed != otherArrived)
+            {
+                throw new TimeoutException(
+                    "Expected the serving and source shortcut lists to be requested concurrently.");
+            }
+        }
+
+        private static bool IsServingUri(string uri) => uri.Contains($"/items/{ServingLakehouseId}/");
+
+        private static bool IsSourceUri(string uri) => uri.Contains($"/items/{DataverseLakehouseId}/");
+    }
+
+    /// <summary>
+    /// Wraps another handler and answers shortcut-create POST requests with
+    /// success, so tests exercising the "table needs to be added" path do not
+    /// also need to script create-shortcut responses.
+    /// </summary>
+    private sealed class CreateCapturingDecorator(HttpMessageHandler inner) : HttpMessageHandler
+    {
+        private readonly HttpMessageInvoker innerInvoker = new(inner, disposeHandler: false);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Post)
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.Created)
+                {
+                    Content = new StringContent("{}", Encoding.UTF8, "application/json")
+                };
+            }
+
+            return await innerInvoker.SendAsync(request, cancellationToken);
+        }
+    }
+}
+#endif

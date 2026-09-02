@@ -1,0 +1,313 @@
+#if FABRIC_API
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+/// <summary>
+/// Covers <see cref="FabricSqlWarmupService"/>: the startup iteration warms
+/// capacity, token, and SQL connectivity concurrently; a paused/resuming
+/// capacity (or any other transient failure) is logged and swallowed rather
+/// than crashing process startup; and the recurring iteration only touches
+/// SQL connectivity.
+/// </summary>
+public sealed class FabricSqlWarmupServiceTests
+{
+    [Fact]
+    public async Task WarmStartupAsync_warms_capacity_token_and_sql_concurrently()
+    {
+        var capacity = new GatedCapacityReadiness();
+        var token = new GatedTokenWarmup();
+        var sql = new GatedSqlWarmup();
+        var service = CreateService(capacity, token, sql, out _);
+
+        var startupTask = service.WarmStartupAsync(CancellationToken.None);
+
+        // Every warmer must have started before any of them is allowed to
+        // complete - proving the three run concurrently rather than
+        // serially. Each gate blocks until this call releases it.
+        await WhenAllStarted(capacity.Started, token.Started, sql.Started);
+
+        capacity.Gate.SetResult();
+        token.Gate.SetResult();
+        sql.Gate.SetResult();
+
+        await startupTask;
+
+        Assert.Equal(1, capacity.CallCount);
+        Assert.Equal(1, token.CallCount);
+        Assert.Equal(1, sql.CallCount);
+    }
+
+    [Fact]
+    public async Task WarmStartupAsync_logs_and_swallows_a_paused_capacity_failure()
+    {
+        var capacity = new FailingCapacityReadiness(
+            new FabricQueryException("capacity_paused", "The Fabric capacity is paused."));
+        var token = new ImmediateTokenWarmup();
+        var sql = new ImmediateSqlWarmup();
+        var logger = new RecordingLogger<FabricSqlWarmupService>();
+        var service = CreateService(capacity, token, sql, out _, logger);
+
+        await service.WarmStartupAsync(CancellationToken.None);
+
+        Assert.Contains(logger.Warnings, message => message.Contains("capacity_paused"));
+        Assert.Equal(1, token.CallCount);
+        Assert.Equal(1, sql.CallCount);
+    }
+
+    [Fact]
+    public async Task WarmStartupAsync_logs_and_swallows_a_faulted_token_warmup()
+    {
+        var capacity = new ImmediateCapacityReadiness();
+        var token = new FailingTokenWarmup(new HttpRequestException("no route to host"));
+        var sql = new ImmediateSqlWarmup();
+        var logger = new RecordingLogger<FabricSqlWarmupService>();
+        var service = CreateService(capacity, token, sql, out _, logger);
+
+        await service.WarmStartupAsync(CancellationToken.None);
+
+        Assert.Contains(logger.Warnings, message => message.Contains("token"));
+        Assert.Equal(1, capacity.CallCount);
+        Assert.Equal(1, sql.CallCount);
+    }
+
+    [Fact]
+    public async Task WarmStartupAsync_logs_and_swallows_a_capacity_warmer_that_fails_to_resolve_from_di()
+    {
+        // Mirrors the real bug: FabricCapacityService's constructor throws
+        // InvalidOperationException synchronously (missing FABRIC_* config)
+        // *while being resolved*, before any WarmXAsync body ever runs. The
+        // resolution itself - not just the warm call - must be inside the
+        // per-warmer try/catch so this cannot fault WarmStartupAsync or
+        // prevent the other warmers from completing.
+        var token = new ImmediateTokenWarmup();
+        var sql = new ImmediateSqlWarmup();
+        var logger = new RecordingLogger<FabricSqlWarmupService>();
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IFabricCapacityReadiness>(_ =>
+            throw new InvalidOperationException(
+                "The required app setting 'FABRIC_CAPACITY_RESOURCE_ID' is missing."));
+        services.AddSingleton<IFabricTokenWarmup>(token);
+        services.AddSingleton<IFabricSqlConnectivityWarmup>(sql);
+        var provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        var runtimeOptions = new FabricRuntimeOptions(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build());
+        var service = new FabricSqlWarmupService(scopeFactory, runtimeOptions, logger);
+
+        await service.WarmStartupAsync(CancellationToken.None);
+
+        Assert.Contains(
+            logger.Warnings,
+            message => message.Contains("missing or invalid Fabric configuration"));
+        Assert.Equal(1, token.CallCount);
+        Assert.Equal(1, sql.CallCount);
+    }
+
+    [Fact]
+    public async Task WarmStartupAsync_logs_and_swallows_a_token_warmer_that_fails_to_resolve_from_di()
+    {
+        // Same scenario as the capacity resolution-failure test above, but
+        // for FabricDataverseShortcutService's constructor throwing on a
+        // different missing FABRIC_* setting.
+        var capacity = new ImmediateCapacityReadiness();
+        var sql = new ImmediateSqlWarmup();
+        var logger = new RecordingLogger<FabricSqlWarmupService>();
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IFabricCapacityReadiness>(capacity);
+        services.AddSingleton<IFabricTokenWarmup>(_ =>
+            throw new InvalidOperationException(
+                "The required app setting 'FABRIC_WORKSPACE_ID' is missing."));
+        services.AddSingleton<IFabricSqlConnectivityWarmup>(sql);
+        var provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        var runtimeOptions = new FabricRuntimeOptions(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build());
+        var service = new FabricSqlWarmupService(scopeFactory, runtimeOptions, logger);
+
+        await service.WarmStartupAsync(CancellationToken.None);
+
+        Assert.Contains(
+            logger.Warnings,
+            message => message.Contains("missing or invalid Fabric configuration"));
+        Assert.Equal(1, capacity.CallCount);
+        Assert.Equal(1, sql.CallCount);
+    }
+
+    [Fact]
+    public async Task WarmSqlAsync_only_touches_sql_connectivity()
+    {
+        var capacity = new ImmediateCapacityReadiness();
+        var token = new ImmediateTokenWarmup();
+        var sql = new ImmediateSqlWarmup();
+        var service = CreateService(capacity, token, sql, out _);
+
+        await service.WarmSqlAsync(CancellationToken.None);
+
+        Assert.Equal(0, capacity.CallCount);
+        Assert.Equal(0, token.CallCount);
+        Assert.Equal(1, sql.CallCount);
+    }
+
+    private static async Task WhenAllStarted(params Task[] started) =>
+        await Task.WhenAll(started).WaitAsync(TimeSpan.FromSeconds(5));
+
+    private static FabricSqlWarmupService CreateService(
+        IFabricCapacityReadiness capacity,
+        IFabricTokenWarmup token,
+        IFabricSqlConnectivityWarmup sql,
+        out IServiceScopeFactory scopeFactory,
+        ILogger<FabricSqlWarmupService>? logger = null)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(capacity);
+        services.AddSingleton(token);
+        services.AddSingleton(sql);
+        var provider = services.BuildServiceProvider();
+        scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        var runtimeOptions = new FabricRuntimeOptions(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build());
+
+        return new FabricSqlWarmupService(
+            scopeFactory,
+            runtimeOptions,
+            logger ?? NullLogger<FabricSqlWarmupService>.Instance);
+    }
+
+    private sealed class GatedCapacityReadiness : IFabricCapacityReadiness
+    {
+        private readonly TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Gate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Started => started.Task;
+
+        public int CallCount { get; private set; }
+
+        public async Task<bool> EnsureActiveAsync(CancellationToken cancellationToken)
+        {
+            CallCount++;
+            started.TrySetResult();
+            await Gate.Task;
+            return false;
+        }
+    }
+
+    private sealed class GatedTokenWarmup : IFabricTokenWarmup
+    {
+        private readonly TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Gate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Started => started.Task;
+
+        public int CallCount { get; private set; }
+
+        public async Task WarmTokenAsync(CancellationToken cancellationToken)
+        {
+            CallCount++;
+            started.TrySetResult();
+            await Gate.Task;
+        }
+    }
+
+    private sealed class GatedSqlWarmup : IFabricSqlConnectivityWarmup
+    {
+        private readonly TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Gate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Started => started.Task;
+
+        public int CallCount { get; private set; }
+
+        public async Task WarmAsync(CancellationToken cancellationToken)
+        {
+            CallCount++;
+            started.TrySetResult();
+            await Gate.Task;
+        }
+    }
+
+    private sealed class ImmediateCapacityReadiness : IFabricCapacityReadiness
+    {
+        public int CallCount { get; private set; }
+
+        public Task<bool> EnsureActiveAsync(CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult(false);
+        }
+    }
+
+    private sealed class ImmediateTokenWarmup : IFabricTokenWarmup
+    {
+        public int CallCount { get; private set; }
+
+        public Task WarmTokenAsync(CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ImmediateSqlWarmup : IFabricSqlConnectivityWarmup
+    {
+        public int CallCount { get; private set; }
+
+        public Task WarmAsync(CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FailingCapacityReadiness(Exception exception) : IFabricCapacityReadiness
+    {
+        public Task<bool> EnsureActiveAsync(CancellationToken cancellationToken) =>
+            Task.FromException<bool>(exception);
+    }
+
+    private sealed class FailingTokenWarmup(Exception exception) : IFabricTokenWarmup
+    {
+        public Task WarmTokenAsync(CancellationToken cancellationToken) => Task.FromException(exception);
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Warning)
+            {
+                lock (Warnings)
+                {
+                    Warnings.Add(formatter(state, exception));
+                }
+            }
+        }
+    }
+}
+#endif

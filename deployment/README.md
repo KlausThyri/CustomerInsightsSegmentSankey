@@ -95,6 +95,17 @@ an automatic resume and shows **Starting Fabric capacity** progress. A
 permission error is not hidden; rerun Setup so the capacity-scoped Contributor
 assignment can be restored.
 
+For normal previews, the Dataverse plug-in sends one optimized count request
+that already includes the required Dataverse tables. Capacity readiness and SQL
+evaluation start concurrently, and a successful query does not wait for Fabric
+shortcut listing. Only a confirmed missing-table failure causes the API to find
+and create or repair the requested shortcuts, refresh SQL metadata, and retry
+once. Source and Serving shortcut pages are read concurrently and stop as soon
+as all requested tables are found. Successful target validation continues in a
+deduplicated background queue. The Web App also warms its shared Fabric token,
+capacity readiness, and SQL connection at startup to reduce the first preview
+after an application restart.
+
 If **Refresh status** reports that the Azure Web App blocks public HTTPS access,
 run **Install everything** again. Dataverse plug-ins call the API from
 Microsoft-managed infrastructure, so the Web App endpoint must have **Public

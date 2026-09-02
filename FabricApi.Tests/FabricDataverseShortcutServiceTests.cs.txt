@@ -249,6 +249,29 @@ public sealed class FabricDataverseShortcutServiceTests
             FabricDataverseShortcutService.IsRootSourceShortcut(json.RootElement));
     }
 
+    [Theory]
+    [InlineData("Tables/dataverse", true)]
+    [InlineData("Tables/dataverse/", true)]
+    [InlineData("/Tables/dataverse", true)]
+    [InlineData("Tables", false)]
+    [InlineData("Tables/dataverse/archive", false)]
+    public void Only_exact_serving_folder_shortcuts_are_recognized(
+        string path,
+        bool expected)
+    {
+        using var json = JsonDocument.Parse(
+            $$"""
+            {
+              "path": "{{path}}",
+              "name": "listmember"
+            }
+            """);
+
+        Assert.Equal(
+            expected,
+            FabricDataverseShortcutService.IsServingShortcut(json.RootElement));
+    }
+
     [Fact]
     public async Task Serving_shortcut_copies_exact_source_target()
     {

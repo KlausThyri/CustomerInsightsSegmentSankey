@@ -42,6 +42,118 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 events.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList());
         }
 
+        public FabricDependencyStatus Resolve(FabricSegmentCountApiRequest request)
+        {
+            if (request == null || request.Query == null)
+            {
+                throw new InvalidPluginExecutionException(
+                    "The Fabric segment request does not contain a query.");
+            }
+
+            var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var events = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            ResolveBuiltQuery(request.Query, tables, events);
+            var orderedTables = tables
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (orderedTables.Count > MaximumAutoAddedTables)
+            {
+                throw new InvalidPluginExecutionException(
+                    "The segment requires " + orderedTables.Count.ToString() +
+                    " Dataverse tables; at most " +
+                    MaximumAutoAddedTables.ToString() +
+                    " can be provisioned automatically in one request.");
+            }
+
+            var link = RetrieveActiveFabricLink();
+            tracing.Trace(
+                "Derived {0} Dataverse table(s) and {1} event table(s) from the built request.",
+                orderedTables.Count,
+                events.Count);
+            return new FabricDependencyStatus(
+                link.Name,
+                orderedTables,
+                new List<string>(),
+                events.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList());
+        }
+
+        private static void ResolveBuiltQuery(
+            FabricSegmentQueryRequest query,
+            ISet<string> tables,
+            ISet<string> events)
+        {
+            ResolveBuiltOperand(query.FirstOperand, tables, events);
+            foreach (var operation in query.SetOperations ??
+                new List<FabricSegmentSetOperationRequest>())
+            {
+                ResolveBuiltOperand(operation.Operand, tables, events);
+            }
+        }
+
+        private static void ResolveBuiltOperand(
+            FabricSegmentOperandRequest operand,
+            ISet<string> tables,
+            ISet<string> events)
+        {
+            if (operand == null)
+            {
+                return;
+            }
+
+            AddName(tables, operand.ProfileEntity);
+            AddName(events, operand.EventLogicalName);
+            ResolveBuiltCondition(operand.Filter, tables);
+            foreach (var step in operand.Steps ??
+                new List<FabricSegmentFilterStepRequest>())
+            {
+                AddName(tables, step.RelatedEntity);
+                ResolveBuiltCondition(step.Condition, tables);
+                foreach (var relationship in step.Relationships ??
+                    new List<FabricRelationshipHopRequest>())
+                {
+                    AddName(tables, relationship.RelatedEntity);
+                    AddName(tables, relationship.IntersectEntity);
+                }
+            }
+
+            if (operand.Query != null)
+            {
+                ResolveBuiltQuery(operand.Query, tables, events);
+            }
+        }
+
+        private static void ResolveBuiltCondition(
+            FabricSegmentConditionRequest condition,
+            ISet<string> tables)
+        {
+            if (condition == null)
+            {
+                return;
+            }
+
+            if (string.Equals(
+                condition.Kind,
+                "consent",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                tables.Add(ConsentEntityName);
+            }
+
+            foreach (var child in condition.Children ??
+                new List<FabricSegmentConditionRequest>())
+            {
+                ResolveBuiltCondition(child, tables);
+            }
+        }
+
+        private static void AddName(ISet<string> values, string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                values.Add(value.Trim());
+            }
+        }
+
         private FabricLinkDescriptor RetrieveActiveFabricLink()
         {
             var query = new QueryExpression("synapselinkprofile")

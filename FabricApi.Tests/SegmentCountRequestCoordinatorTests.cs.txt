@@ -1,0 +1,589 @@
+#if FABRIC_API
+using CustomerInsightsSegmentSankey.FabricApi;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+/// <summary>
+/// Covers <see cref="SegmentCountRequestCoordinator"/>'s orchestration of the
+/// unified, optimistic <c>/api/segment-counts</c> endpoint using the
+/// Func-based test constructor: concurrency of capacity/evaluate, capacity
+/// failures taking priority, the fast-path enqueueing background
+/// validation, the missing-table retry-once path, unrelated errors not
+/// being masked, and a second miss propagating unmodified.
+/// </summary>
+public sealed class SegmentCountRequestCoordinatorTests
+{
+    [Fact]
+    public async Task HandleAsync_runs_capacity_and_evaluate_concurrently()
+    {
+        var capacityStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var evaluateStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task<bool> EnsureCapacityActiveAsync(CancellationToken ct)
+        {
+            capacityStarted.TrySetResult();
+            await WaitForOtherAsync(evaluateStarted.Task);
+            return false;
+        }
+
+        async Task<SegmentCountResponse> EvaluateAsync(SegmentCountRequest r, CancellationToken ct)
+        {
+            evaluateStarted.TrySetResult();
+            await WaitForOtherAsync(capacityStarted.Task);
+            return new SegmentCountResponse();
+        }
+
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            EnsureCapacityActiveAsync,
+            EvaluateAsync,
+            (_, _) => throw new InvalidOperationException("not expected"),
+            (_, _) => throw new InvalidOperationException("not expected"),
+            queue);
+
+        var response = await coordinator.HandleAsync(
+            new SegmentCountRequest { RequiredDataverseTables = ["account"] },
+            CancellationToken.None);
+
+        Assert.True(response.CatalogReady);
+        Assert.Empty(response.AddedTables);
+        Assert.Equal(["account"], queue.Enqueued);
+    }
+
+    [Fact]
+    public async Task HandleAsync_surfaces_capacity_failure_over_a_concurrent_evaluate_failure()
+    {
+        var capacityError = new FabricQueryException("capacity_starting", "Capacity is starting.");
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            _ => throw capacityError,
+            (_, _) => throw new InvalidOperationException("evaluate failed too"),
+            (_, _) => throw new InvalidOperationException("not expected"),
+            (_, _) => throw new InvalidOperationException("not expected"),
+            queue);
+
+        var error = await Assert.ThrowsAsync<FabricQueryException>(
+            () => coordinator.HandleAsync(new SegmentCountRequest(), CancellationToken.None));
+
+        Assert.Same(capacityError, error);
+    }
+
+    [Fact]
+    public async Task HandleAsync_reconciles_missing_tables_and_retries_evaluation_exactly_once()
+    {
+        var attempts = 0;
+        async Task<SegmentCountResponse> EvaluateAsync(SegmentCountRequest r, CancellationToken ct)
+        {
+            attempts++;
+            if (attempts == 1)
+            {
+                throw new SegmentQueryException("invalid_identifier", "Unknown table 'newtable'.");
+            }
+
+            return await Task.FromResult(new SegmentCountResponse());
+        }
+
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            _ => Task.FromResult(false),
+            EvaluateAsync,
+            (_, _) => Task.FromResult<IReadOnlyList<string>>(["newtable"]),
+            (tables, _) => Task.FromResult(new FabricDependencyResponse
+            {
+                RequiredTables = tables.ToList(),
+                AddedTables = tables.ToList(),
+                CatalogReady = true
+            }),
+            queue);
+
+        var response = await coordinator.HandleAsync(
+            new SegmentCountRequest { RequiredDataverseTables = ["newtable"] },
+            CancellationToken.None);
+
+        Assert.Equal(2, attempts);
+        Assert.True(response.CatalogReady);
+        Assert.Equal(["newtable"], response.AddedTables);
+        Assert.Empty(queue.Enqueued);
+        Assert.Equal(["newtable"], queue.Validated);
+    }
+
+    [Fact]
+    public async Task HandleAsync_does_not_mask_unrelated_invalid_identifier_errors()
+    {
+        var columnError = new SegmentQueryException("invalid_identifier", "Unknown column 'oops'.");
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            _ => Task.FromResult(false),
+            (_, _) => throw columnError,
+            (_, _) => Task.FromResult<IReadOnlyList<string>>([]),
+            (_, _) => throw new InvalidOperationException("reconcile should not run"),
+            queue);
+
+        var error = await Assert.ThrowsAsync<SegmentQueryException>(
+            () => coordinator.HandleAsync(
+                new SegmentCountRequest { RequiredDataverseTables = ["account"] },
+                CancellationToken.None));
+
+        Assert.Same(columnError, error);
+    }
+
+    [Fact]
+    public async Task HandleAsync_does_not_reconcile_when_no_tables_were_requested()
+    {
+        var error = new SegmentQueryException("invalid_identifier", "Unknown table.");
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            _ => Task.FromResult(false),
+            (_, _) => throw error,
+            (_, _) => throw new InvalidOperationException("should not be called"),
+            (_, _) => throw new InvalidOperationException("should not be called"),
+            queue);
+
+        var thrown = await Assert.ThrowsAsync<SegmentQueryException>(
+            () => coordinator.HandleAsync(
+                new SegmentCountRequest { RequiredDataverseTables = [] },
+                CancellationToken.None));
+
+        Assert.Same(error, thrown);
+    }
+
+    [Fact]
+    public async Task HandleAsync_propagates_a_second_miss_after_the_single_retry_unmodified()
+    {
+        var secondFailure = new SegmentQueryException("invalid_identifier", "Still missing.");
+        var attempts = 0;
+        async Task<SegmentCountResponse> EvaluateAsync(SegmentCountRequest r, CancellationToken ct)
+        {
+            attempts++;
+            await Task.Yield();
+            throw attempts == 1
+                ? new SegmentQueryException("invalid_identifier", "Unknown table 'newtable'.")
+                : secondFailure;
+        }
+
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            _ => Task.FromResult(false),
+            EvaluateAsync,
+            (_, _) => Task.FromResult<IReadOnlyList<string>>(["newtable"]),
+            (tables, _) => Task.FromResult(new FabricDependencyResponse
+            {
+                RequiredTables = tables.ToList(),
+                CatalogReady = true
+            }),
+            queue);
+
+        var error = await Assert.ThrowsAsync<SegmentQueryException>(
+            () => coordinator.HandleAsync(
+                new SegmentCountRequest { RequiredDataverseTables = ["newtable"] },
+                CancellationToken.None));
+
+        Assert.Same(secondFailure, error);
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public async Task HandleAsync_retries_once_after_a_capacity_transition_and_returns_the_retry_success()
+    {
+        // The concurrently started evaluate can fail with *any* kind of
+        // error (not just a missing-table SegmentQueryException) when the
+        // capacity was not ready yet - this must be discarded and retried
+        // once, purely because the capacity ensure call reported a
+        // non-active-to-active transition.
+        var attempts = 0;
+        async Task<SegmentCountResponse> EvaluateAsync(SegmentCountRequest r, CancellationToken ct)
+        {
+            attempts++;
+            await Task.Yield();
+            if (attempts == 1)
+            {
+                throw new InvalidOperationException("SQL was not ready while capacity resumed.");
+            }
+
+            return new SegmentCountResponse();
+        }
+
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            _ => Task.FromResult(true),
+            EvaluateAsync,
+            (_, _) => throw new InvalidOperationException(
+                "should not classify - the capacity-transition retry succeeded"),
+            (_, _) => throw new InvalidOperationException(
+                "should not reconcile - the capacity-transition retry succeeded"),
+            queue);
+
+        var response = await coordinator.HandleAsync(
+            new SegmentCountRequest { RequiredDataverseTables = ["account"] },
+            CancellationToken.None);
+
+        Assert.Equal(2, attempts);
+        Assert.True(response.CatalogReady);
+        Assert.Empty(response.AddedTables);
+        Assert.Equal(["account"], queue.Enqueued);
+        Assert.Empty(queue.Validated);
+    }
+
+    [Fact]
+    public async Task HandleAsync_continues_missing_table_reconciliation_when_the_capacity_transition_retry_still_fails()
+    {
+        // First attempt fails for an unrelated reason (discarded because
+        // capacity transitioned); the capacity-transition retry (second
+        // attempt) then hits a genuine missing-table condition, so the
+        // existing reconcile-and-retry-once pipeline must still run
+        // normally on top of that outcome.
+        var attempts = 0;
+        async Task<SegmentCountResponse> EvaluateAsync(SegmentCountRequest r, CancellationToken ct)
+        {
+            attempts++;
+            await Task.Yield();
+            return attempts switch
+            {
+                1 => throw new InvalidOperationException("SQL was not ready while capacity resumed."),
+                2 => throw new SegmentQueryException("invalid_identifier", "Unknown table 'newtable'."),
+                _ => new SegmentCountResponse()
+            };
+        }
+
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            _ => Task.FromResult(true),
+            EvaluateAsync,
+            (_, _) => Task.FromResult<IReadOnlyList<string>>(["newtable"]),
+            (tables, _) => Task.FromResult(new FabricDependencyResponse
+            {
+                RequiredTables = tables.ToList(),
+                AddedTables = tables.ToList(),
+                CatalogReady = true
+            }),
+            queue);
+
+        var response = await coordinator.HandleAsync(
+            new SegmentCountRequest { RequiredDataverseTables = ["newtable"] },
+            CancellationToken.None);
+
+        Assert.Equal(3, attempts);
+        Assert.True(response.CatalogReady);
+        Assert.Equal(["newtable"], response.AddedTables);
+        Assert.Empty(queue.Enqueued);
+        Assert.Equal(["newtable"], queue.Validated);
+    }
+
+    [Fact]
+    public async Task HandleAsync_does_not_mask_an_unrelated_error_from_the_capacity_transition_retry()
+    {
+        var unrelatedError = new InvalidOperationException("boom");
+        async Task<SegmentCountResponse> EvaluateAsync(SegmentCountRequest r, CancellationToken ct)
+        {
+            await Task.Yield();
+            throw unrelatedError;
+        }
+
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            _ => Task.FromResult(true),
+            EvaluateAsync,
+            (_, _) => throw new InvalidOperationException(
+                "should not classify a non-SegmentQueryException failure"),
+            (_, _) => throw new InvalidOperationException("reconcile should not run"),
+            queue);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => coordinator.HandleAsync(
+                new SegmentCountRequest { RequiredDataverseTables = ["account"] },
+                CancellationToken.None));
+
+        Assert.Same(unrelatedError, error);
+    }
+
+    [Fact]
+    public async Task HandleAsync_does_not_retry_evaluate_merely_because_capacity_was_already_active()
+    {
+        // capacityTask.Result is false (no transition, e.g. served from the
+        // readiness cache or already Active): the capacity-transition retry
+        // must not run at all, so evaluate is attempted exactly once before
+        // falling through to (non-)missing-table classification, exactly as
+        // before this change.
+        var attempts = 0;
+        var error = new InvalidOperationException("boom");
+        async Task<SegmentCountResponse> EvaluateAsync(SegmentCountRequest r, CancellationToken ct)
+        {
+            attempts++;
+            await Task.Yield();
+            throw error;
+        }
+
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            _ => Task.FromResult(false),
+            EvaluateAsync,
+            (_, _) => Task.FromResult<IReadOnlyList<string>>([]),
+            (_, _) => throw new InvalidOperationException("reconcile should not run"),
+            queue);
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => coordinator.HandleAsync(
+                new SegmentCountRequest { RequiredDataverseTables = ["account"] },
+                CancellationToken.None));
+
+        Assert.Same(error, thrown);
+        Assert.Equal(1, attempts);
+    }
+
+    [Fact]
+    public async Task HandleAsync_surfaces_capacity_failure_immediately_without_waiting_for_a_blocked_evaluate()
+    {
+        // The evaluate fake never completes on its own within this test -
+        // it only resolves once its own (linked) cancellation token is
+        // cancelled - simulating a slow SQL command blocked until its own
+        // timeout. Capacity, the more actionable failure, must be surfaced
+        // immediately rather than waiting for that evaluation to run to
+        // completion first.
+        var capacityError = new FabricQueryException("capacity_paused", "The Fabric capacity is paused.");
+        var evaluateCompletedAfterCancellation =
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task<bool> EnsureCapacityActiveAsync(CancellationToken ct)
+        {
+            await Task.Yield();
+            throw capacityError;
+        }
+
+        async Task<SegmentCountResponse> EvaluateAsync(SegmentCountRequest r, CancellationToken ct)
+        {
+            try
+            {
+                await Task.Delay(Timeout.Infinite, ct);
+            }
+            finally
+            {
+                evaluateCompletedAfterCancellation.TrySetResult();
+            }
+
+            return new SegmentCountResponse();
+        }
+
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            EnsureCapacityActiveAsync,
+            EvaluateAsync,
+            (_, _) => throw new InvalidOperationException("should not classify"),
+            (_, _) => throw new InvalidOperationException("should not reconcile"),
+            queue);
+
+        var handleTask = coordinator.HandleAsync(
+            new SegmentCountRequest { RequiredDataverseTables = ["account"] },
+            CancellationToken.None);
+
+        var completed = await Task.WhenAny(handleTask, Task.Delay(TimeSpan.FromSeconds(2)));
+        Assert.Same(handleTask, completed);
+
+        var error = await Assert.ThrowsAsync<FabricQueryException>(() => handleTask);
+        Assert.Same(capacityError, error);
+
+        // The blocked evaluate must have actually been cancelled (not left
+        // running forever) as a result of the capacity failure.
+        await evaluateCompletedAfterCancellation.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task HandleAsync_propagates_request_cancellation_of_capacity_without_a_null_reference_exception()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        async Task<bool> EnsureCapacityActiveAsync(CancellationToken ct)
+        {
+            await Task.Yield();
+            ct.ThrowIfCancellationRequested();
+            return false;
+        }
+
+        var evaluateCalls = 0;
+        async Task<SegmentCountResponse> EvaluateAsync(SegmentCountRequest r, CancellationToken ct)
+        {
+            evaluateCalls++;
+            await Task.Delay(Timeout.Infinite, ct);
+            return new SegmentCountResponse();
+        }
+
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            EnsureCapacityActiveAsync,
+            EvaluateAsync,
+            (_, _) => throw new InvalidOperationException("should not classify"),
+            (_, _) => throw new InvalidOperationException("should not reconcile"),
+            queue);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => coordinator.HandleAsync(
+                new SegmentCountRequest { RequiredDataverseTables = ["account"] },
+                cts.Token));
+
+        Assert.Equal(1, evaluateCalls);
+    }
+
+    [Fact]
+    public async Task HandleAsync_propagates_evaluate_cancellation_without_a_null_reference_exception()
+    {
+        // Capacity succeeds even though the caller is about to cancel (a
+        // legitimate race), and the concurrently started evaluation
+        // observes that cancellation and completes as Cancelled rather than
+        // Faulted - this must surface as an OperationCanceledException, not
+        // a NullReferenceException from dereferencing a null Task.Exception.
+        using var cts = new CancellationTokenSource();
+
+        async Task<bool> EnsureCapacityActiveAsync(CancellationToken ct)
+        {
+            await Task.Yield();
+            return false;
+        }
+
+        async Task<SegmentCountResponse> EvaluateAsync(SegmentCountRequest r, CancellationToken ct)
+        {
+            await Task.Yield();
+            cts.Cancel();
+            ct.ThrowIfCancellationRequested();
+            return new SegmentCountResponse();
+        }
+
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            EnsureCapacityActiveAsync,
+            EvaluateAsync,
+            (_, _) => throw new InvalidOperationException("should not classify"),
+            (_, _) => throw new InvalidOperationException("should not reconcile"),
+            queue);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => coordinator.HandleAsync(
+                new SegmentCountRequest { RequiredDataverseTables = ["account"] },
+                cts.Token));
+    }
+
+    [Fact]
+    public async Task HandleAsync_propagates_cancellation_from_the_post_capacity_retry()
+    {
+        using var cts = new CancellationTokenSource();
+        var evaluateCalls = 0;
+
+        async Task<SegmentCountResponse> EvaluateAsync(
+            SegmentCountRequest request,
+            CancellationToken cancellationToken)
+        {
+            evaluateCalls++;
+            await Task.Yield();
+            if (evaluateCalls == 1)
+            {
+                throw new InvalidOperationException("Capacity was not ready for SQL.");
+            }
+
+            cts.Cancel();
+            cancellationToken.ThrowIfCancellationRequested();
+            return new SegmentCountResponse();
+        }
+
+        var coordinator = new SegmentCountRequestCoordinator(
+            _ => Task.FromResult(true),
+            EvaluateAsync,
+            (_, _) => throw new InvalidOperationException("should not classify"),
+            (_, _) => throw new InvalidOperationException("should not reconcile"),
+            new FakeQueue());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => coordinator.HandleAsync(
+                new SegmentCountRequest { RequiredDataverseTables = ["account"] },
+                cts.Token));
+        Assert.Equal(2, evaluateCalls);
+    }
+
+    [Fact]
+    public async Task HandleAsync_does_not_leave_the_abandoned_evaluate_tasks_fault_unobserved()
+    {
+        // Simulates evaluate discovering a genuine failure (not just a
+        // clean cancellation) only after the coordinator already gave up on
+        // it because capacity failed first. That fault must be observed by
+        // the coordinator itself so it never surfaces as an
+        // UnobservedTaskException once the abandoned task is garbage
+        // collected.
+        var capacityError = new FabricQueryException("capacity_paused", "The Fabric capacity is paused.");
+
+        async Task<bool> EnsureCapacityActiveAsync(CancellationToken ct)
+        {
+            await Task.Yield();
+            throw capacityError;
+        }
+
+        async Task<SegmentCountResponse> EvaluateAsync(SegmentCountRequest r, CancellationToken ct)
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Yield();
+            }
+
+            throw new InvalidOperationException("Simulated SQL failure discovered after cancellation.");
+        }
+
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            EnsureCapacityActiveAsync,
+            EvaluateAsync,
+            (_, _) => throw new InvalidOperationException("should not classify"),
+            (_, _) => throw new InvalidOperationException("should not reconcile"),
+            queue);
+
+        Exception? unobserved = null;
+        void OnUnobserved(object? sender, UnobservedTaskExceptionEventArgs e)
+        {
+            unobserved = e.Exception;
+            e.SetObserved();
+        }
+
+        TaskScheduler.UnobservedTaskException += OnUnobserved;
+        try
+        {
+            var thrown = await Assert.ThrowsAsync<FabricQueryException>(
+                () => coordinator.HandleAsync(
+                    new SegmentCountRequest { RequiredDataverseTables = ["account"] },
+                    CancellationToken.None));
+            Assert.Same(capacityError, thrown);
+
+            // Give the abandoned evaluate task time to actually fault and be
+            // observed by the coordinator's own background continuation.
+            await Task.Delay(TimeSpan.FromMilliseconds(200));
+
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= OnUnobserved;
+        }
+
+        Assert.Null(unobserved);
+    }
+
+    private static async Task WaitForOtherAsync(Task otherStarted)
+    {
+        var completed = await Task.WhenAny(otherStarted, Task.Delay(TimeSpan.FromSeconds(2)));
+        if (completed != otherStarted)
+        {
+            throw new TimeoutException(
+                "Expected capacity readiness and count evaluation to run concurrently.");
+        }
+    }
+
+    private sealed class FakeQueue : ISegmentDependencyValidationQueue
+    {
+        public List<string> Enqueued { get; } = [];
+
+        public List<string> Validated { get; } = [];
+
+        public void Enqueue(IReadOnlyCollection<string> tables) => Enqueued.AddRange(tables);
+
+        public void MarkValidated(IReadOnlyCollection<string> tables) => Validated.AddRange(tables);
+    }
+}
+#endif

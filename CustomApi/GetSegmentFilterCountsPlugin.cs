@@ -33,14 +33,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             var segmentId = (Guid)context.InputParameters["klth_segmentid"];
             tracing.Trace("Calculating demographic MQL filter counts for segment {0}.", segmentId);
 
-            var dependencies = new FabricTableDependencyResolver(
-                service,
-                tracing).Resolve(segmentId);
-            dependencies.SetAddedTables(
-                new FabricDependencyProvisioningClient(service, tracing)
-                    .EnsureDataverseTables(dependencies.RequiredTables));
             var result = new FabricSegmentCountClient(service, tracing)
-                .Evaluate(segmentId, dependencies);
+                .Evaluate(segmentId);
             context.OutputParameters["klth_resultjson"] = Serialize(result);
         }
 

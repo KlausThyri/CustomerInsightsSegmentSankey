@@ -32,11 +32,18 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             this.tracing = tracing;
         }
 
-        public FilterCountResult Evaluate(
-            Guid segmentDefinitionId,
-            FabricDependencyStatus dependencies)
+        public FilterCountResult Evaluate(Guid segmentDefinitionId)
         {
-            var apiUrl = ReadEnvironmentVariable(ApiUrlVariable);
+            var settings = EnvironmentVariableReader.ReadMany(
+                service,
+                new[]
+                {
+                    ApiUrlVariable,
+                    ApiKeyVariable,
+                    BusinessUnitScopingVariable
+                },
+                new[] { ApiUrlVariable, ApiKeyVariable });
+            var apiUrl = settings[ApiUrlVariable];
             Uri behavioralEndpoint;
             if (!Uri.TryCreate(apiUrl, UriKind.Absolute, out behavioralEndpoint) ||
                 behavioralEndpoint.Scheme != Uri.UriSchemeHttps)
@@ -50,12 +57,17 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             var requestPayload = new FabricSegmentRequestBuilder(service)
                 .Build(
                     segmentDefinitionId,
-                    ReadBusinessUnitScopingEnabled());
+                    ReadBusinessUnitScopingEnabled(
+                        settings[BusinessUnitScopingVariable]));
+            var dependencies = new FabricTableDependencyResolver(service, tracing)
+                .Resolve(requestPayload);
+            requestPayload.RequiredDataverseTables =
+                dependencies.RequiredTables.ToList();
             using (var request = new HttpRequestMessage(HttpMethod.Post, endpoint))
             {
                 request.Headers.Add(
                     "x-api-key",
-                    ReadEnvironmentVariable(ApiKeyVariable));
+                    settings[ApiKeyVariable]);
                 request.Content = new StringContent(
                     Serialize(requestPayload),
                     Encoding.UTF8,
@@ -85,6 +97,16 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     }
 
                     var result = Deserialize<FabricSegmentCountApiResponse>(responseBody);
+                    if (!result.CatalogReady)
+                    {
+                        throw new InvalidPluginExecutionException(
+                            "The deployed Fabric API is older than the installed Segment Preview " +
+                            "solution and does not support optimized dependency repair. Open Setup " +
+                            "Center and run Install everything to update the API, then retry.");
+                    }
+
+                    dependencies.SetAddedTables(
+                        result.AddedTables ?? new List<string>());
                     if (result.Stages == null || result.Stages.Count == 0)
                     {
                         throw new InvalidPluginExecutionException(
@@ -123,17 +145,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             }
         }
 
-        private string ReadEnvironmentVariable(string schemaName)
+        private static bool ReadBusinessUnitScopingEnabled(string value)
         {
-            return EnvironmentVariableReader.Read(service, schemaName, true);
-        }
-
-        private bool ReadBusinessUnitScopingEnabled()
-        {
-            var value = EnvironmentVariableReader.Read(
-                service,
-                BusinessUnitScopingVariable,
-                false);
             if (value == null ||
                 string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
             {
@@ -974,6 +987,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
     {
         [DataMember(Name = "query", Order = 1)]
         public FabricSegmentQueryRequest Query { get; set; }
+
+        [DataMember(Name = "requiredDataverseTables", Order = 2)]
+        public List<string> RequiredDataverseTables { get; set; }
     }
 
     [DataContract]
@@ -1185,6 +1201,12 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "queryToken", Order = 4)]
         public string QueryToken { get; set; }
+
+        [DataMember(Name = "addedTables", Order = 5)]
+        public List<string> AddedTables { get; set; }
+
+        [DataMember(Name = "catalogReady", Order = 6)]
+        public bool CatalogReady { get; set; }
     }
 
     [DataContract]

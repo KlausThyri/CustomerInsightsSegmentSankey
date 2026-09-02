@@ -1,0 +1,44 @@
+#if FABRIC_API
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+/// <summary>
+/// Idempotent Fabric Dataverse-table reconciliation: ensures every requested
+/// table has a Fabric shortcut, refreshes SQL metadata for whatever was
+/// newly added, and waits for the Fabric SQL catalog to expose it. Extracted
+/// from the original inline <c>/api/fabric-dependencies</c> handler so the
+/// exact same logic can also be run from the optimistic
+/// <c>/api/segment-counts</c> retry path and from background validation,
+/// without duplicating behavior.
+/// </summary>
+internal interface IFabricDependencyReconciler
+{
+    Task<FabricDependencyResponse> ReconcileAsync(
+        IReadOnlyCollection<string> tables,
+        CancellationToken cancellationToken);
+}
+
+internal sealed class FabricDependencyReconciler(
+    FabricDataverseShortcutService shortcutService,
+    FabricSegmentCatalog catalog) : IFabricDependencyReconciler
+{
+    public async Task<FabricDependencyResponse> ReconcileAsync(
+        IReadOnlyCollection<string> tables,
+        CancellationToken cancellationToken)
+    {
+        var request = new FabricDependencyRequest { DataverseTables = tables.ToList() };
+        var result = await shortcutService.EnsureAsync(request, cancellationToken);
+        var missingTables = await catalog.GetMissingDataverseTablesAsync(
+            result.RequiredTables,
+            cancellationToken);
+        await shortcutService.RefreshSqlMetadataAsync(
+            missingTables,
+            result.AddedTables,
+            cancellationToken);
+        await catalog.WaitForDataverseTablesAsync(
+            result.RequiredTables,
+            cancellationToken);
+        result.CatalogReady = true;
+        return result;
+    }
+}
+#endif

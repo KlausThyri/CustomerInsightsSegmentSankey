@@ -1,0 +1,195 @@
+#if FABRIC_API
+using System.Threading.Channels;
+using System.Collections.Concurrent;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+/// <summary>
+/// Accepts Dataverse table sets that a successful <c>/api/segment-counts</c>
+/// response already proved queryable on the fast path, and validates them
+/// against the Fabric catalog safely in the background so a later request
+/// for the same tables can skip reconciliation once the TTL confirms it is
+/// still fresh. Enqueuing never blocks or affects an already-returned
+/// response.
+/// </summary>
+internal interface ISegmentDependencyValidationQueue
+{
+    /// <summary>
+    /// Schedules background validation for <paramref name="tables"/> unless
+    /// they were already validated within the debounce window or are
+    /// currently in flight.
+    /// </summary>
+    void Enqueue(IReadOnlyCollection<string> tables);
+
+    /// <summary>
+    /// Marks <paramref name="tables"/> as freshly validated without
+    /// scheduling background work, for callers (such as the segment-count
+    /// reconciliation retry) that already proved the tables queryable
+    /// through other means.
+    /// </summary>
+    void MarkValidated(IReadOnlyCollection<string> tables);
+}
+
+/// <summary>
+/// Singleton hosted background queue implementing
+/// <see cref="ISegmentDependencyValidationQueue"/>. Deduplicates/debounces
+/// identical table sets for <see cref="SuccessTtl"/>, runs reconciliation
+/// through a fresh DI scope per batch (so the transient
+/// <see cref="FabricDependencyReconciler"/> and its underlying
+/// <see cref="HttpClient"/> are never captured for the app's lifetime),
+/// logs failures explicitly instead of masking them, and shuts down
+/// cleanly by draining the channel before stopping.
+/// </summary>
+internal sealed class SegmentDependencyValidationQueue(
+    IServiceScopeFactory scopeFactory,
+    ILogger<SegmentDependencyValidationQueue> logger)
+    : BackgroundService, ISegmentDependencyValidationQueue
+{
+    internal static readonly TimeSpan SuccessTtl = TimeSpan.FromMinutes(5);
+
+    private readonly Channel<IReadOnlyList<string>> channel =
+        Channel.CreateUnbounded<IReadOnlyList<string>>(
+            new UnboundedChannelOptions { SingleReader = true });
+    private readonly ConcurrentDictionary<string, DateTimeOffset> lastSuccessAt =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> pending =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public void Enqueue(IReadOnlyCollection<string> tables)
+    {
+        var due = ClaimDueTables(tables);
+        if (due.Count == 0)
+        {
+            return;
+        }
+
+        // TryWrite never blocks: the channel is unbounded, so a slow or
+        // stalled background consumer can never add latency to the request
+        // that just returned a successful response.
+        if (!channel.Writer.TryWrite(due))
+        {
+            // Only possible once the writer has already been completed by a
+            // concurrent StopAsync (the app is shutting down). Release the
+            // claim so the "pending" dictionary never leaks an entry that
+            // will now never be processed or removed.
+            foreach (var table in due)
+            {
+                pending.TryRemove(table, out _);
+            }
+        }
+    }
+
+    public void MarkValidated(IReadOnlyCollection<string> tables)
+    {
+        var validatedAt = DateTimeOffset.UtcNow;
+        foreach (var table in tables)
+        {
+            if (string.IsNullOrWhiteSpace(table))
+            {
+                continue;
+            }
+
+            lastSuccessAt[table.Trim()] = validatedAt;
+        }
+    }
+
+    /// <summary>
+    /// Atomically claims every table in <paramref name="tables"/> that is
+    /// not within the success TTL and not already claimed by a concurrent
+    /// caller, via <see cref="ConcurrentDictionary{TKey,TValue}.TryAdd"/> -
+    /// never a separate "contains, then set" pair of steps, which would let
+    /// two concurrent <see cref="Enqueue"/> calls for the same table both
+    /// win the check and enqueue duplicate background work.
+    /// </summary>
+    private List<string> ClaimDueTables(IReadOnlyCollection<string> tables)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var due = new List<string>();
+        foreach (var raw in tables)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            var table = raw.Trim();
+            if (lastSuccessAt.TryGetValue(table, out var validatedAt) &&
+                now - validatedAt < SuccessTtl)
+            {
+                continue;
+            }
+
+            if (pending.TryAdd(table, 0))
+            {
+                due.Add(table);
+            }
+        }
+
+        return due;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var reader = channel.Reader;
+        try
+        {
+            // Only the "wait for the next batch" boundary observes
+            // cancellation; a batch that has already been dequeued always
+            // runs to completion via ProcessBatchAsync's own
+            // CancellationToken.None, so host shutdown never aborts
+            // in-flight reconciliation mid-way.
+            while (await reader.WaitToReadAsync(stoppingToken))
+            {
+                while (reader.TryRead(out var tables))
+                {
+                    await ProcessBatchAsync(tables);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Expected during a graceful shutdown; StopAsync already
+            // completed the channel writer so nothing further is lost.
+        }
+    }
+
+    private async Task ProcessBatchAsync(IReadOnlyList<string> tables)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var reconciler = scope.ServiceProvider.GetRequiredService<IFabricDependencyReconciler>();
+            await reconciler.ReconcileAsync(tables, CancellationToken.None);
+            MarkValidated(tables);
+        }
+        catch (Exception exception)
+        {
+            // Background validation must never crash the host or surface to
+            // any already-returned response; log explicitly so the failure
+            // is observable, and leave the tables out of lastSuccessAt so a
+            // subsequent real request can retry reconciliation inline.
+            logger.LogWarning(
+                exception,
+                "Background Fabric dependency validation failed for tables: {Tables}.",
+                string.Join(", ", tables));
+        }
+        finally
+        {
+            foreach (var table in tables)
+            {
+                pending.TryRemove(table, out _);
+            }
+        }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        // Complete the writer first so any batch still sitting in the
+        // channel is drained by the read loop above before ExecuteAsync
+        // observes cancellation, giving already-enqueued work a chance to
+        // finish rather than being discarded.
+        channel.Writer.TryComplete();
+        await base.StopAsync(cancellationToken);
+    }
+}
+#endif

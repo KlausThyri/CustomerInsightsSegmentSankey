@@ -1,0 +1,52 @@
+#if FABRIC_API
+using System.Collections.Concurrent;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+/// <summary>
+/// Singleton, short-TTL cache of the last time a specific Fabric capacity was
+/// confirmed <c>Active</c>. Shared across every transient
+/// <see cref="FabricCapacityService"/> instance so the startup warm-up and
+/// the immediate <c>/api/segment-counts</c>/<c>/api/segment-members</c>
+/// operations that race it do not each pay for a separate ARM round trip
+/// when the capacity was just confirmed active moments earlier.
+/// </summary>
+/// <remarks>
+/// Only a confirmed <c>Active</c> state is ever cached; a paused, resuming,
+/// starting, or failed capacity is never cached; every such call performs
+/// (and, where applicable, waits out) the real ARM check every time, so the
+/// existing actionable paused/resuming/error semantics in
+/// <see cref="FabricCapacityService.EnsureActiveAsync"/> are fully preserved.
+/// </remarks>
+internal sealed class FabricCapacityReadinessCache(Func<DateTimeOffset>? utcNow = null)
+{
+    /// <summary>
+    /// Deliberately short: long enough to remove duplicate ARM calls that
+    /// race within the same handful of seconds (startup warm-up plus the
+    /// first real requests), short enough that a capacity pausing shortly
+    /// after being observed active is re-checked well within any reasonable
+    /// user-facing interaction.
+    /// </summary>
+    internal static readonly TimeSpan Ttl = TimeSpan.FromSeconds(30);
+
+    private readonly Func<DateTimeOffset> utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> confirmedActiveAt =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when <paramref name="capacityResourceId"/> was confirmed
+    /// <c>Active</c> within the last <see cref="Ttl"/>.
+    /// </summary>
+    public bool IsRecentlyConfirmedActive(string capacityResourceId) =>
+        confirmedActiveAt.TryGetValue(capacityResourceId, out var confirmedAt) &&
+        utcNow() - confirmedAt < Ttl;
+
+    /// <summary>
+    /// Records that <paramref name="capacityResourceId"/> was just confirmed
+    /// <c>Active</c>. Must only be called after a real, successful ARM
+    /// readiness check - never speculatively.
+    /// </summary>
+    public void MarkConfirmedActive(string capacityResourceId) =>
+        confirmedActiveAt[capacityResourceId] = utcNow();
+}
+#endif

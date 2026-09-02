@@ -1,0 +1,27 @@
+#if FABRIC_API
+using Microsoft.Data.SqlClient;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+/// <summary>
+/// Default <see cref="IFabricSqlConnectivityWarmup"/> implementation that
+/// refreshes the Fabric segment catalog and confirms SQL connectivity,
+/// exactly matching the checks the original <see cref="FabricSqlWarmupService"/>
+/// performed inline.
+/// </summary>
+internal sealed class FabricSqlConnectivityWarmup(
+    FabricConnectionFactory connectionFactory,
+    FabricSegmentCatalog catalog) : IFabricSqlConnectivityWarmup
+{
+    public async Task WarmAsync(CancellationToken cancellationToken)
+    {
+        await catalog.RefreshAsync(cancellationToken);
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("SELECT 1;", connection)
+        {
+            CommandTimeout = 30
+        };
+        await command.ExecuteScalarAsync(cancellationToken);
+    }
+}
+#endif

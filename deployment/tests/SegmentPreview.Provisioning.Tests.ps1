@@ -975,3 +975,38 @@ Describe 'Resume fact hydration' {
             Should -BeLessThan $content.IndexOf('Already completed in an earlier run')
     }
 }
+
+Describe 'Segment count fast path' {
+    BeforeAll {
+        $script:CountPlugin = Get-Content -LiteralPath (
+            Join-Path $script:RepositoryRoot 'CustomApi\GetSegmentFilterCountsPlugin.cs') -Raw
+        $script:CountClient = Get-Content -LiteralPath (
+            Join-Path $script:RepositoryRoot 'CustomApi\FabricSegmentCountClient.cs') -Raw
+    }
+
+    It 'uses one optimized Azure API call instead of provisioning first' {
+        $script:CountPlugin | Should -Not -Match 'FabricDependencyProvisioningClient'
+        $script:CountPlugin | Should -Match 'FabricSegmentCountClient'
+        $script:CountClient | Should -Match 'requiredDataverseTables'
+        $script:CountClient | Should -Match 'new Uri\(behavioralEndpoint, "segment-counts"\)'
+    }
+
+    It 'derives dependencies from the already-built request' {
+        $script:CountClient | Should -Match 'FabricTableDependencyResolver\(service, tracing\)'
+        $script:CountClient | Should -Match 'Resolve\(requestPayload\)'
+    }
+
+    It 'loads all runtime environment settings in one batch' {
+        $script:CountClient | Should -Match 'EnvironmentVariableReader\.ReadMany'
+        $reader = Get-Content -LiteralPath (
+            Join-Path $script:RepositoryRoot 'CustomApi\EnvironmentVariableReader.cs') -Raw
+        $reader | Should -Match 'ConditionOperator\.In'
+        $reader | Should -Match 'requiredSchemaNames'
+    }
+
+    It 'requires the unified API to confirm catalog readiness' {
+        $script:CountClient | Should -Match 'result\.CatalogReady'
+        $script:CountClient | Should -Match 'result\.AddedTables'
+        $script:CountClient | Should -Match 'optimized dependency repair'
+    }
+}

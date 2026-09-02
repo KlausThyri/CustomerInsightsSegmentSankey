@@ -1,5 +1,6 @@
 #if FABRIC_API
 using System.Reflection;
+using Azure.Core;
 using Microsoft.Data.SqlClient;
 
 namespace CustomerInsightsSegmentSankey.FabricApi;
@@ -25,13 +26,16 @@ internal sealed class SegmentPreviewSetupService
     ];
 
     private readonly IHttpClientFactory httpClientFactory;
+    private readonly TokenCredential credential;
     private readonly ILogger<SegmentPreviewSetupService> logger;
 
     public SegmentPreviewSetupService(
         IHttpClientFactory httpClientFactory,
+        TokenCredential credential,
         ILogger<SegmentPreviewSetupService> logger)
     {
         this.httpClientFactory = httpClientFactory;
+        this.credential = credential;
         this.logger = logger;
     }
 
@@ -96,7 +100,8 @@ internal sealed class SegmentPreviewSetupService
         try
         {
             shortcuts = await new FabricDataverseShortcutService(
-                    httpClientFactory.CreateClient(nameof(FabricDataverseShortcutService)))
+                    httpClientFactory.CreateClient(nameof(FabricDataverseShortcutService)),
+                    credential)
                 .GetExistingAsync(cancellationToken);
             response.Components.Add(Component(
                 "managed-identity",
@@ -203,7 +208,8 @@ internal sealed class SegmentPreviewSetupService
             ? configuredTables
             : ReadRequiredDataverseTables();
         var dependencies = await new FabricDataverseShortcutService(
-                httpClientFactory.CreateClient(nameof(FabricDataverseShortcutService)))
+                httpClientFactory.CreateClient(nameof(FabricDataverseShortcutService)),
+                credential)
             .EnsureAsync(
                 new FabricDependencyRequest { DataverseTables = tables },
                 cancellationToken);
