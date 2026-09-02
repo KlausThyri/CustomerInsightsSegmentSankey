@@ -5353,6 +5353,8 @@ test("a resumed run recovers the earlier key from the Web App and writes it agai
         "fabric-discovery": true,
         "azure-infra": true,
         "fabric-notebook": true,
+        "fabric-permissions": true,
+        "fabric-connection-permissions": true,
         "azure-app": true
       },
       facts: {
@@ -5403,6 +5405,18 @@ test("a resumed run recovers the earlier key from the Web App and writes it agai
   const role = direct.calls.find((call) => call.kind === "ensureWorkspaceRoleAssignment");
   assert.equal(role.principalId, "99999999-8888-7777-6666-555555555555");
   assert.equal(role.workspaceId, VALID_TARGET.fabricWorkspaceId);
+  const capacityRole = direct.calls.find(
+    (call) => call.kind === "ensureCapacityRoleAssignment"
+  );
+  assert.equal(capacityRole.principalId, "99999999-8888-7777-6666-555555555555");
+  assert.equal(
+    capacityRole.capacityResourceId,
+    VALID_TARGET.fabricCapacityResourceId
+  );
+  assert.ok(
+    direct.calls.some((call) => call.kind === "ensureConnectionRoleAssignment"),
+    "Dataverse connection access must also be revalidated"
+  );
 });
 
 test("a resumed pre-package run redeploys Azure so the current API package is installed", async () => {

@@ -82,7 +82,9 @@ permissions, generates the server-side API key, writes the Dataverse environment
 variable values, and verifies the result. It is idempotent and resumable: close
 the page and reopen it and completed steps are skipped. During an update, steps
 that must refresh definitions are rerun safely while already-correct
-per-table shortcuts are left untouched.
+per-table shortcuts are left untouched. Fabric workspace, capacity, and
+Dataverse-connection permissions are revalidated idempotently on every run, so
+an older completion record cannot hide a newly required role assignment.
 
 The two steps that look as if they need a build machine do not. The bootstrap
 notebook ships **inside the solution** as a Jupyter definition, so the browser

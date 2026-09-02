@@ -70,7 +70,8 @@ a customer installation.
    Preview** so the new web resources are loaded.
 4. Press **Install everything** again. Setup reads the existing resource
    identities from `klth_SetupConfiguration` and updates the deployment in
-   place.
+   place. Workspace, capacity, and Dataverse-connection permissions are checked
+   again even when an older run recorded those steps as complete.
 
 The update path is incremental. Before the bootstrap notebook runs, Setup
 compares every required root Dataverse shortcut with the corresponding

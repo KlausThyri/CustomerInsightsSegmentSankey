@@ -722,6 +722,8 @@
     "secret",
     "fabric-discovery",
     "fabric-notebook",
+    "fabric-permissions",
+    "fabric-connection-permissions",
     "verify"
   ];
 
