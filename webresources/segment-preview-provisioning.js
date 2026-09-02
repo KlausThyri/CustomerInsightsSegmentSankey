@@ -651,12 +651,19 @@
     var digest = usingOverride ? parsed.sha256 : api.sha256;
     var source = usingOverride ? ENV.apiPackageUrl : "payload";
     var template = api.packageUrlTemplate || null;
+    var releaseMatch = String(candidate || "").match(
+      /\/releases\/download\/v?([^/]+)\//i
+    );
+    var deploymentVersion = releaseMatch
+      ? releaseMatch[1]
+      : (payload && payload.contentVersion) || version;
 
     function unusable(hint) {
       return {
         configured: false,
         url: null,
         version: version,
+        deploymentVersion: deploymentVersion,
         sha256: null,
         source: usingOverride ? source : null,
         template: template,
@@ -693,6 +700,7 @@
       configured: true,
       url: String(candidate).trim(),
       version: version,
+      deploymentVersion: deploymentVersion,
       sha256: String(digest).trim().toLowerCase(),
       source: source,
       template: template,
@@ -989,6 +997,7 @@
     "principalId",
     "packageUrl",
     "packageVersion",
+    "packageDeploymentVersion",
     "packageSha256",
     "packageBlobUrl"
   ];
@@ -1046,6 +1055,8 @@
       principalId: source.principalId,
       packageUrl: source.apiPackage && source.apiPackage.url,
       packageVersion: source.apiPackage && source.apiPackage.version,
+      packageDeploymentVersion:
+        source.apiPackage && source.apiPackage.deploymentVersion,
       packageSha256: source.apiPackage && source.apiPackage.sha256,
       packageBlobUrl: source.packageBlobUrl
     };
@@ -3720,13 +3731,14 @@
 
     var desiredPackage = resolveApiPackage(payload, settings.apiPackageUrl);
     if (
-      mode === "direct" &&
+      mode !== "manual" &&
       desiredPackage.configured &&
       completed["azure-infra"] &&
       (
         !completed["azure-app"] ||
         facts.packageSha256 !== desiredPackage.sha256 ||
-        facts.packageVersion !== desiredPackage.version
+        facts.packageVersion !== desiredPackage.version ||
+        facts.packageDeploymentVersion !== desiredPackage.deploymentVersion
       )
     ) {
       forceRerun(

@@ -841,6 +841,7 @@ Describe 'Browser-only notebook and API deployment' {
         $script:Engine | Should -Match 'packageCopy\.exitCode\s*!==\s*0'
         $script:Engine | Should -Match 'package-copy container failed with exit code'
         $script:Engine | Should -Match 'Waiting for Azure to verify and copy the API package'
+        $script:Engine | Should -Match 'packageDeploymentVersion'
     }
 
     It 'reports when App Service blocks the public Dataverse endpoint' {

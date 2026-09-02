@@ -98,7 +98,9 @@ own managed identity — no shared access signature, nothing that expires. Nothi
 is built, downloaded or executed on your machine. Setup now waits for the
 package-copy container's real process exit code, retries one transient copy
 failure automatically, and never reports the Azure step complete when the blob
-is missing.
+is missing. Resume state also records the Solution release that attempted the
+copy, so importing an updated Solution reruns package deployment even when the
+Fabric API version and ZIP digest intentionally remain unchanged.
 
 **Everything stays yours.** The Entra application, the Azure resource group, Web
 App, storage account and Application Insights, the Fabric workspace and lakehouse,

@@ -250,7 +250,11 @@ container once after a failed attempt and surfaces the exit status and available
 container log if the retry also fails. Only then does the later `azure-app` step
 read the settings back, restart the Web App, and poll `/api/health` for about five
 minutes until the API really answers — the blob mount and the role assignment
-both take effect asynchronously. To make that poll
+both take effect asynchronously. The persisted resume facts include the package
+release identifier parsed from the GitHub asset URL. A newer Solution therefore
+reruns `azure-infra` and `azure-app` even when the API assembly version and digest
+are unchanged, rather than trusting a failed copy recorded by an earlier release.
+To make that poll
 possible the API allows cross-origin `GET` requests on `/api/health` only, and
 only from the origins in its own `DATAVERSE_ENVIRONMENT_URL` setting; every other
 endpoint stays unreachable from a browser.
