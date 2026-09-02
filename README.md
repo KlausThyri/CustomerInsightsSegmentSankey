@@ -95,7 +95,10 @@ pinned release URL and its SHA-256 to the Azure deployment, which downloads the
 ZIP, checks the digest, and stores it as an immutable blob in a private storage
 account in **your own resource group**. The Web App then reads that blob with its
 own managed identity — no shared access signature, nothing that expires. Nothing
-is built, downloaded or executed on your machine.
+is built, downloaded or executed on your machine. Setup now waits for the
+package-copy container's real process exit code, retries one transient copy
+failure automatically, and never reports the Azure step complete when the blob
+is missing.
 
 **Everything stays yours.** The Entra application, the Azure resource group, Web
 App, storage account and Application Insights, the Fabric workspace and lakehouse,

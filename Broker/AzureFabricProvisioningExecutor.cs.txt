@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Security.Cryptography;
 
 namespace CustomerInsightsSegmentSankey.Broker;
@@ -16,9 +18,19 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
     private const string ArmRoot = "https://management.azure.com";
     private const string ArmApiVersion = "2021-04-01";
     private const string WebApiVersion = "2022-03-01";
+    private const string ContainerApiVersion = "2023-05-01";
     private const string FabricRoot = "https://api.fabric.microsoft.com/v1";
     private const string ArmScope = "https://management.azure.com/.default";
     private const string FabricScope = "https://api.fabric.microsoft.com/.default";
+
+    /// <summary>Attempts/delay mirror the browser engine's waitForPackageCopy defaults (7 minutes).</summary>
+    private const int PackageCopyAttempts = 210;
+    private static readonly TimeSpan PackageCopyPollDelay = TimeSpan.FromSeconds(2);
+    private const int PackageCopyLogCharacterLimit = 4000;
+
+    /// <summary>Attempts/delay mirror the browser engine's HEALTH_ATTEMPTS/HEALTH_DELAY_MS defaults (5 minutes).</summary>
+    private const int HealthAttempts = 60;
+    private static readonly TimeSpan HealthPollDelay = TimeSpan.FromSeconds(5);
 
     private readonly ITokenClient _tokens;
     private readonly HttpClient _http;
@@ -560,6 +572,12 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
                     }
                 }
 
+                // The template deploys a container group that downloads and verifies the
+                // package into the customer's own storage account. A Web App can only be
+                // trusted to run that package once Azure itself reports the copy finished
+                // cleanly, so this is checked before the deployment is ever reported done.
+                await VerifyPackageCopyAsync(context, subscriptionId, resourceGroup, webAppName, cancellationToken).ConfigureAwait(false);
+
                 ApplyDeploymentOutputs(context.Outputs, webAppName);
                 return StepOutcome.Succeeded("The Azure infrastructure was deployed.",
                     new Dictionary<string, string?>
@@ -579,6 +597,182 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
 
         throw new InvalidOperationException("The Azure deployment did not finish within the expected time.");
     }
+
+    /// <summary>
+    /// Waits for the '&lt;webAppName&gt;-package-copy' container instance to reach a
+    /// terminal state, retries once by restarting the container group, and fails
+    /// with a bounded, sanitized tail of its logs if the retry does not exit 0.
+    /// </summary>
+    private async Task VerifyPackageCopyAsync(
+        ProvisioningContext context,
+        string subscriptionId,
+        string resourceGroup,
+        string webAppName,
+        CancellationToken cancellationToken)
+    {
+        var containerGroupName = webAppName + "-package-copy";
+        var path = ContainerGroupPath(subscriptionId, resourceGroup, containerGroupName);
+
+        var copy = await WaitForPackageCopyAsync(context, path, containerGroupName, null, cancellationToken).ConfigureAwait(false);
+        if (copy.ExitCode != 0)
+        {
+            if (!DateTimeOffset.TryParse(
+                    copy.StartTime,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal,
+                    out _))
+            {
+                throw new InvalidOperationException(
+                    "Azure did not return a valid start time for the failed package-copy container, so Setup cannot verify a retry safely.");
+            }
+
+            await RestartContainerGroupAsync(context, path, cancellationToken).ConfigureAwait(false);
+            copy = await WaitForPackageCopyAsync(context, path, containerGroupName, copy.StartTime, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (copy.ExitCode != 0)
+        {
+            string logs;
+            try
+            {
+                logs = await GetPackageCopyLogsAsync(context, path, cancellationToken).ConfigureAwait(false);
+            }
+            catch (ProvisioningRequestException exception)
+            {
+                logs = "Container logs could not be read: " + exception.Message;
+            }
+
+            throw new InvalidOperationException(
+                "The Azure package-copy container failed with exit code " +
+                (copy.ExitCode?.ToString(CultureInfo.InvariantCulture) ?? "unknown") +
+                (copy.DetailStatus.Length > 0 ? " (" + copy.DetailStatus + ")" : string.Empty) +
+                ". The Web App was not marked ready because its API package blob may be missing. " +
+                "Inspect the '" + containerGroupName + "' container group in resource group " + resourceGroup + "." +
+                (logs.Length > 0 ? Environment.NewLine + logs : string.Empty));
+        }
+    }
+
+    private static string ContainerGroupPath(string subscriptionId, string resourceGroup, string containerGroupName) =>
+        "/subscriptions/" + subscriptionId + "/resourceGroups/" + Uri.EscapeDataString(resourceGroup) +
+        "/providers/Microsoft.ContainerInstance/containerGroups/" + Uri.EscapeDataString(containerGroupName);
+
+    private async Task<PackageCopyState> GetPackageCopyStateAsync(ProvisioningContext context, string path, CancellationToken cancellationToken)
+    {
+        var response = await ArmAsync(context, HttpMethod.Get, path, null, ContainerApiVersion, cancellationToken).ConfigureAwait(false);
+        var currentState = default(JsonElement);
+        if (response.ValueKind == JsonValueKind.Object &&
+            response.TryGetProperty("properties", out var properties) &&
+            properties.TryGetProperty("containers", out var containers) &&
+            containers.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var container in containers.EnumerateArray())
+            {
+                if (string.Equals(Text(container, "name"), "copy", StringComparison.OrdinalIgnoreCase) &&
+                    container.TryGetProperty("properties", out var containerProperties) &&
+                    containerProperties.TryGetProperty("instanceView", out var instanceView) &&
+                    instanceView.ValueKind == JsonValueKind.Object &&
+                    instanceView.TryGetProperty("currentState", out var state) &&
+                    state.ValueKind == JsonValueKind.Object)
+                {
+                    currentState = state;
+                    break;
+                }
+            }
+        }
+
+        if (currentState.ValueKind != JsonValueKind.Object)
+        {
+            return new PackageCopyState(string.Empty, null, string.Empty, string.Empty);
+        }
+
+        var exitCode = currentState.TryGetProperty("exitCode", out var exitCodeElement) && exitCodeElement.ValueKind == JsonValueKind.Number
+            ? exitCodeElement.GetInt32()
+            : (int?)null;
+
+        return new PackageCopyState(
+            Text(currentState, "state") ?? string.Empty,
+            exitCode,
+            Text(currentState, "detailStatus") ?? string.Empty,
+            Text(currentState, "startTime") ?? string.Empty);
+    }
+
+    /// <summary>
+    /// Polls until the copy container reports a terminated state. When
+    /// <paramref name="startedAfter"/> is supplied (the Azure-reported startTime
+    /// from the run being retried) a terminated state is only accepted once the
+    /// container reports a newer Azure-observed startTime, so a stale terminal
+    /// state left over from the failed run can never be mistaken for the retry -
+    /// without ever comparing against the broker's own clock.
+    /// </summary>
+    private async Task<PackageCopyState> WaitForPackageCopyAsync(
+        ProvisioningContext context,
+        string path,
+        string containerGroupName,
+        string? startedAfter,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; attempt <= PackageCopyAttempts; attempt++)
+        {
+            try
+            {
+                var latest = await GetPackageCopyStateAsync(context, path, cancellationToken).ConfigureAwait(false);
+                var isTerminated = string.Equals(latest.State, "Terminated", StringComparison.OrdinalIgnoreCase);
+                var isCurrentRun = startedAfter is null || IsNewerStartTime(latest.StartTime, startedAfter);
+                if (isTerminated && isCurrentRun)
+                {
+                    return latest;
+                }
+            }
+            catch (ProvisioningRequestException exception) when (
+                exception.StatusCode == HttpStatusCode.TooManyRequests ||
+                (int)exception.StatusCode >= 500)
+            {
+            }
+            catch (HttpRequestException)
+            {
+            }
+
+            if (attempt < PackageCopyAttempts)
+            {
+                await Task.Delay(PackageCopyPollDelay, _time, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        throw new InvalidOperationException(
+            "Azure did not report a terminal state for package-copy container '" + containerGroupName +
+            "' within " + (int)Math.Round(PackageCopyAttempts * PackageCopyPollDelay.TotalSeconds) + " seconds.");
+    }
+
+    private static bool IsNewerStartTime(string candidate, string previous) =>
+        DateTimeOffset.TryParse(candidate, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var candidateTime) &&
+        DateTimeOffset.TryParse(previous, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var previousTime) &&
+        candidateTime > previousTime;
+
+    private async Task RestartContainerGroupAsync(ProvisioningContext context, string path, CancellationToken cancellationToken) =>
+        await ArmAsync(context, HttpMethod.Post, path + "/restart", null, ContainerApiVersion, cancellationToken).ConfigureAwait(false);
+
+    private async Task<string> GetPackageCopyLogsAsync(ProvisioningContext context, string path, CancellationToken cancellationToken)
+    {
+        var response = await ArmAsync(context, HttpMethod.Get, path + "/containers/copy/logs?tail=100", null, ContainerApiVersion, cancellationToken)
+            .ConfigureAwait(false);
+        var content = response.ValueKind == JsonValueKind.Object ? Text(response, "content") : null;
+        return SanitizeContainerLogs(content ?? string.Empty);
+    }
+
+    /// <summary>Bounds the log tail and strips any SAS-bearing URL query string before it can reach an error message.</summary>
+    private static string SanitizeContainerLogs(string logs)
+    {
+        if (string.IsNullOrEmpty(logs)) return string.Empty;
+        var sanitized = Regex.Replace(
+            logs,
+            @"(https?://[^\s""']+?)\?[^\s""')]*",
+            "$1",
+            RegexOptions.None,
+            TimeSpan.FromSeconds(1));
+        return sanitized.Length > PackageCopyLogCharacterLimit ? sanitized[^PackageCopyLogCharacterLimit..] : sanitized;
+    }
+
+    private sealed record PackageCopyState(string State, int? ExitCode, string DetailStatus, string StartTime);
 
     private async Task<StepOutcome> ConfigureWebAppAsync(ProvisioningContext context, CancellationToken cancellationToken)
     {
@@ -619,14 +813,138 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
         var blobUrl = applied.TryGetValue(RunFromPackageSetting, out var deployed) ? deployed : null;
         context.Outputs["packageBlobUrl"] = blobUrl;
 
+        // Settings alone do not prove the API runs: the blob mount and the role
+        // assignment that lets the site read it both propagate asynchronously, so
+        // this waits for the API's own public health endpoint, then for the same
+        // process to accept the key Azure just applied, before the step succeeds.
+        var apiBaseUrl = context.Outputs.TryGetValue("apiBaseUrl", out var reportedBaseUrl) && !string.IsNullOrWhiteSpace(reportedBaseUrl)
+            ? reportedBaseUrl!
+            : NormalizeApiBaseUrl(webAppName + ".azurewebsites.net");
+
+        var health = await PollApiHealthAsync(apiBaseUrl, cancellationToken).ConfigureAwait(false);
+        if (!health.Ok)
+        {
+            throw new InvalidOperationException(
+                "The API package was deployed but " + apiBaseUrl.TrimEnd('/') + "/health did not answer within " +
+                FormatMinutes(HealthAttempts, HealthPollDelay) + " minutes (" + (health.Error ?? "no response") + "). " +
+                "App Service may still be mounting the package or the storage role assignment may not have propagated. " +
+                "Wait a few minutes and install again; the step is safe to repeat.");
+        }
+
+        // The API key is never written to a log or an exception message here.
+        var apiKey = context.Request.Secrets?.BehavioralApiKey ?? string.Empty;
+        var keyCheck = await PollApiKeyCheckAsync(apiBaseUrl, apiKey, cancellationToken).ConfigureAwait(false);
+        if (!keyCheck.Ok)
+        {
+            throw new InvalidOperationException(
+                "The API package is running, but the active Web App process did not accept the API key that Azure applied within " +
+                FormatMinutes(HealthAttempts, HealthPollDelay) + " minutes (" + (keyCheck.Error ?? "no response") + "). " +
+                "App Service may still be recycling an older worker. Wait a few minutes and install again; the provisioning " +
+                "service will reuse the existing key instead of rotating it.");
+        }
+
         return StepOutcome.Succeeded(
             "The Web App runs API package " + (Trim(package.Version) ?? package.ResolvedBlobName) +
-            " from the customer's own storage account and was restarted.",
+            " from the customer's own storage account, was restarted, answered /health after " + health.Attempts +
+            (health.Attempts == 1 ? " attempt, and" : " attempts, and") + " accepted its API key after " + keyCheck.Attempts +
+            (keyCheck.Attempts == 1 ? " attempt." : " attempts."),
             new Dictionary<string, string?>
             {
                 ["principalId"] = context.Outputs.TryGetValue("principalId", out var value) ? value : null,
                 ["packageBlobUrl"] = blobUrl
             });
+    }
+
+    private static string FormatMinutes(int attempts, TimeSpan delay) =>
+        Math.Round(attempts * delay.TotalSeconds / 60, MidpointRounding.AwayFromZero).ToString(CultureInfo.InvariantCulture);
+
+    private sealed record ApiProbeResult(bool Ok, int Attempts, string? Error);
+
+    /// <summary>
+    /// Polls the deployed API until it answers its own health endpoint. A Web App
+    /// that has just been restarted needs time to mount the package blob, so a
+    /// first failure means "not ready yet" rather than "broken".
+    /// </summary>
+    private async Task<ApiProbeResult> PollApiHealthAsync(string apiBaseUrl, CancellationToken cancellationToken)
+    {
+        var url = apiBaseUrl.TrimEnd('/') + "/health";
+        string? lastError = null;
+        for (var attempt = 1; attempt <= HealthAttempts; attempt++)
+        {
+            if (attempt > 1)
+            {
+                await Task.Delay(HealthPollDelay, _time, cancellationToken).ConfigureAwait(false);
+            }
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                if (response.IsSuccessStatusCode)
+                {
+                    return new ApiProbeResult(true, attempt, null);
+                }
+
+                lastError = "HTTP " + (int)response.StatusCode;
+            }
+            catch (HttpRequestException exception)
+            {
+                lastError = exception.Message;
+            }
+        }
+
+        return new ApiProbeResult(false, HealthAttempts, lastError);
+    }
+
+    /// <summary>
+    /// Waits until the active Web App process accepts the key Azure just applied.
+    /// The unauthenticated health endpoint can still be served by an older warm
+    /// worker while App Service is recycling after a settings change, so this
+    /// checks /setup/key-check separately with the same API key header the
+    /// Dataverse plugin sends, and never logs the key itself.
+    /// </summary>
+    private async Task<ApiProbeResult> PollApiKeyCheckAsync(string apiBaseUrl, string apiKey, CancellationToken cancellationToken)
+    {
+        var url = apiBaseUrl.TrimEnd('/') + "/setup/key-check";
+        string? lastError = null;
+        for (var attempt = 1; attempt <= HealthAttempts; attempt++)
+        {
+            if (attempt > 1)
+            {
+                await Task.Delay(HealthPollDelay, _time, cancellationToken).ConfigureAwait(false);
+            }
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+                using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                if (response.IsSuccessStatusCode)
+                {
+                    var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        using var document = JsonDocument.Parse(text);
+                        if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                            document.RootElement.TryGetProperty("apiKeyAccepted", out var accepted) &&
+                            accepted.ValueKind == JsonValueKind.True)
+                        {
+                            return new ApiProbeResult(true, attempt, null);
+                        }
+                    }
+                }
+
+                lastError = "HTTP " + (int)response.StatusCode;
+            }
+            catch (HttpRequestException exception)
+            {
+                lastError = exception.Message;
+            }
+        }
+
+        return new ApiProbeResult(false, HealthAttempts, lastError);
     }
 
     internal const string RunFromPackageSetting = "WEBSITE_RUN_FROM_PACKAGE";

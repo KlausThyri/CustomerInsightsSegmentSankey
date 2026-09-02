@@ -1,0 +1,478 @@
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using CustomerInsightsSegmentSankey.Broker;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.Broker.Tests;
+
+/// <summary>
+/// Exercises the broker-side equivalent of the direct browser package-copy and
+/// health/key-check validation: <see cref="AzureFabricProvisioningExecutor"/> must
+/// never report the Web App ready unless Azure itself reports a clean package
+/// copy, a live /health response, and an /setup/key-check that accepts the key
+/// the service just deployed. All Azure Resource Manager and public API calls are
+/// faked so no network access or real subscription is required.
+/// </summary>
+public sealed class AzureFabricProvisioningExecutorTests
+{
+    private const string Sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private const string SubscriptionId = "11111111-1111-1111-1111-111111111111";
+    private const string ResourceGroup = "segment-preview-rg";
+    private const string WebAppName = "segment-preview";
+
+    /// <summary>Speeds up every retry/poll loop by collapsing its due time to zero, without skipping cancellation checks.</summary>
+    private sealed class InstantTimeProvider : TimeProvider
+    {
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            base.CreateTimer(callback, state, TimeSpan.Zero, period);
+    }
+
+    private sealed class FakeTokenClient : ITokenClient
+    {
+        public string BuildAuthorizeUrl(BrokerSession session) => "https://login.microsoftonline.com/authorize";
+
+        public Task<TokenResult> RedeemCodeAsync(BrokerSession session, string code, CancellationToken cancellationToken) =>
+            Task.FromResult(new TokenResult("access", "refresh", "admin@contoso.com", "tenant-1", DateTimeOffset.UtcNow.AddHours(1)));
+
+        public Task<TokenResult> AcquireForScopeAsync(BrokerSession session, string scope, CancellationToken cancellationToken) =>
+            Task.FromResult(new TokenResult("access", "refresh", "admin@contoso.com", "tenant-1", DateTimeOffset.UtcNow.AddHours(1)));
+    }
+
+    private sealed class FakeArmTemplateSource : IArmTemplateSource
+    {
+        private readonly JsonDocument _document = JsonDocument.Parse("{\"resources\":[]}");
+        public JsonElement? Read() => _document.RootElement;
+    }
+
+    /// <summary>Routes every outbound HTTP call to a per-test callback and always honours cancellation, like a real handler.</summary>
+    private sealed class RoutingHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, HttpResponseMessage> _route;
+
+        public RoutingHandler(Func<HttpRequestMessage, HttpResponseMessage> route) => _route = route;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(_route(request));
+        }
+    }
+
+    private static HttpResponseMessage JsonResponse(HttpStatusCode status, object body) =>
+        new(status) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
+
+    private static AzureFabricProvisioningExecutor CreateExecutor(Func<HttpRequestMessage, HttpResponseMessage> route, TimeProvider? time = null) =>
+        new(new FakeTokenClient(), new HttpClient(new RoutingHandler(route)), new FakeArmTemplateSource(), time ?? new InstantTimeProvider());
+
+    private static ProvisioningContext CreateContext(ApiPackage package, string apiKey = "correct-key") => new()
+    {
+        Session = new BrokerSession(),
+        Request = new StartRunRequest
+        {
+            Azure = new AzureTarget { SubscriptionId = SubscriptionId, ResourceGroup = ResourceGroup, WebAppName = WebAppName },
+            Fabric = new FabricTarget { DataverseLakehouseId = "lakehouse-1" },
+            ApiPackage = package,
+            Secrets = new RunSecrets { BehavioralApiKey = apiKey }
+        }
+    };
+
+    private static ApiPackage Package() => new()
+    {
+        Url = "https://contoso.example.com/api.zip",
+        Sha256 = Sha256,
+        BlobName = "api-1.0.0.zip",
+        Version = "1.0.0"
+    };
+
+    /// <summary>Handles the resource-group check and the ARM template deployment, common to every azure-infra test.</summary>
+    private static HttpResponseMessage? HandleDeploymentInfrastructure(HttpRequestMessage request)
+    {
+        var path = request.RequestUri!.AbsolutePath;
+        if (request.Method == HttpMethod.Get &&
+            path.Contains("/resourcegroups/", StringComparison.OrdinalIgnoreCase) &&
+            !path.Contains("/providers/", StringComparison.OrdinalIgnoreCase))
+        {
+            return JsonResponse(HttpStatusCode.OK, new { id = path });
+        }
+
+        if (path.Contains("/providers/Microsoft.Resources/deployments/", StringComparison.OrdinalIgnoreCase))
+        {
+            if (request.Method == HttpMethod.Put)
+            {
+                return JsonResponse(HttpStatusCode.Accepted, new { properties = new { provisioningState = "Accepted" } });
+            }
+
+            if (request.Method == HttpMethod.Get)
+            {
+                return JsonResponse(HttpStatusCode.OK, new
+                {
+                    properties = new
+                    {
+                        provisioningState = "Succeeded",
+                        outputs = new { webAppUrl = new { value = "https://" + WebAppName + ".azurewebsites.net" } }
+                    }
+                });
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsContainerGroupPath(HttpRequestMessage request) =>
+        request.RequestUri!.AbsolutePath.Contains("/providers/Microsoft.ContainerInstance/containerGroups/", StringComparison.OrdinalIgnoreCase);
+
+    private static HttpResponseMessage ContainerGroupState(string state, int? exitCode, string startTime, string detailStatus = "Completed") =>
+        JsonResponse(HttpStatusCode.OK, new
+        {
+            properties = new
+            {
+                containers = new object[]
+                {
+                    new
+                    {
+                        name = "copy",
+                        properties = new
+                        {
+                            instanceView = new
+                            {
+                                currentState = new
+                                {
+                                    state,
+                                    exitCode,
+                                    detailStatus,
+                                    startTime,
+                                    finishTime = startTime
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+    [Fact]
+    public async Task DeployAzureAsync_Succeeds_WhenPackageCopyExitsZeroOnFirstAttempt()
+    {
+        var executor = CreateExecutor(request =>
+        {
+            var common = HandleDeploymentInfrastructure(request);
+            if (common is not null) return common;
+
+            if (IsContainerGroupPath(request) && request.Method == HttpMethod.Get)
+            {
+                return ContainerGroupState("Terminated", 0, "2024-01-01T00:00:00Z");
+            }
+
+            throw new InvalidOperationException("Unexpected request: " + request.Method + " " + request.RequestUri);
+        });
+
+        var context = CreateContext(Package());
+        var outcome = await executor.ExecuteAsync("azure-infra", context, CancellationToken.None);
+
+        Assert.Equal("succeeded", outcome.Status);
+        Assert.Equal("https://" + WebAppName + ".azurewebsites.net/api/", context.Outputs["apiBaseUrl"]);
+    }
+
+    [Fact]
+    public async Task DeployAzureAsync_ToleratesTransientArmFailure_WhilePollingPackageCopy()
+    {
+        var statusReads = 0;
+        var executor = CreateExecutor(request =>
+        {
+            var common = HandleDeploymentInfrastructure(request);
+            if (common is not null) return common;
+
+            if (IsContainerGroupPath(request) && request.Method == HttpMethod.Get)
+            {
+                statusReads++;
+                return statusReads == 1
+                    ? JsonResponse(HttpStatusCode.ServiceUnavailable, new { message = "Starting" })
+                    : ContainerGroupState("Terminated", 0, "2024-01-01T00:00:00Z");
+            }
+
+            throw new InvalidOperationException("Unexpected request: " + request.Method + " " + request.RequestUri);
+        });
+
+        var context = CreateContext(Package());
+        var outcome = await executor.ExecuteAsync("azure-infra", context, CancellationToken.None);
+
+        Assert.Equal("succeeded", outcome.Status);
+        Assert.Equal(2, statusReads);
+    }
+
+    [Fact]
+    public async Task DeployAzureAsync_RestartsCopyContainerOnce_WhenFirstAttemptFailsThenSucceeds()
+    {
+        var restarts = 0;
+        var restartedSuccessfully = false;
+        var executor = CreateExecutor(request =>
+        {
+            var common = HandleDeploymentInfrastructure(request);
+            if (common is not null) return common;
+
+            if (IsContainerGroupPath(request))
+            {
+                if (request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath.EndsWith("/restart", StringComparison.OrdinalIgnoreCase))
+                {
+                    restarts++;
+                    restartedSuccessfully = true;
+                    return new HttpResponseMessage(HttpStatusCode.NoContent);
+                }
+
+                if (request.Method == HttpMethod.Get)
+                {
+                    return restartedSuccessfully
+                        ? ContainerGroupState("Terminated", 0, "2024-01-01T00:05:00Z")
+                        : ContainerGroupState("Terminated", 1, "2024-01-01T00:00:00Z", "Error");
+                }
+            }
+
+            throw new InvalidOperationException("Unexpected request: " + request.Method + " " + request.RequestUri);
+        });
+
+        var context = CreateContext(Package());
+        var outcome = await executor.ExecuteAsync("azure-infra", context, CancellationToken.None);
+
+        Assert.Equal("succeeded", outcome.Status);
+        Assert.Equal(1, restarts);
+    }
+
+    [Fact]
+    public async Task DeployAzureAsync_DoesNotRestart_WhenFailedCopyHasNoValidAzureStartTime()
+    {
+        var restarts = 0;
+        var executor = CreateExecutor(request =>
+        {
+            var common = HandleDeploymentInfrastructure(request);
+            if (common is not null) return common;
+
+            if (IsContainerGroupPath(request))
+            {
+                if (request.Method == HttpMethod.Post)
+                {
+                    restarts++;
+                    return new HttpResponseMessage(HttpStatusCode.NoContent);
+                }
+
+                if (request.Method == HttpMethod.Get)
+                {
+                    return ContainerGroupState("Terminated", 1, string.Empty, "Error");
+                }
+            }
+
+            throw new InvalidOperationException("Unexpected request: " + request.Method + " " + request.RequestUri);
+        });
+
+        var context = CreateContext(Package());
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => executor.ExecuteAsync("azure-infra", context, CancellationToken.None));
+
+        Assert.Contains("valid start time", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, restarts);
+    }
+
+    [Fact]
+    public async Task DeployAzureAsync_ThrowsWithSanitizedBoundedLogs_WhenCopyFailsPermanently()
+    {
+        var attempt = 0;
+        var secretQueryString = "?sig=super-secret-signature-should-not-leak&se=2024-01-01";
+        var longLine = new string('x', 5000);
+        var executor = CreateExecutor(request =>
+        {
+            var common = HandleDeploymentInfrastructure(request);
+            if (common is not null) return common;
+
+            if (IsContainerGroupPath(request))
+            {
+                var path = request.RequestUri!.AbsolutePath;
+                if (request.Method == HttpMethod.Post && path.EndsWith("/restart", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.NoContent);
+                }
+
+                if (request.Method == HttpMethod.Get && path.Contains("/logs", StringComparison.OrdinalIgnoreCase))
+                {
+                    return JsonResponse(HttpStatusCode.OK, new
+                    {
+                        content = longLine + " https://store.blob.core.windows.net/segment-preview-api/api.zip" + secretQueryString
+                    });
+                }
+
+                if (request.Method == HttpMethod.Get)
+                {
+                    attempt++;
+                    // Every attempt reports a newer Azure-observed start time, so the
+                    // retry is never mistaken for the stale first run, yet exit code
+                    // 1 never changes: the copy fails permanently.
+                    var startTime = "2024-01-01T00:0" + attempt + ":00Z";
+                    return ContainerGroupState("Terminated", 1, startTime, "Error");
+                }
+            }
+
+            throw new InvalidOperationException("Unexpected request: " + request.Method + " " + request.RequestUri);
+        });
+
+        var context = CreateContext(Package());
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => executor.ExecuteAsync("azure-infra", context, CancellationToken.None));
+
+        Assert.Contains("exit code 1", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("super-secret-signature-should-not-leak", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("?sig=", exception.Message, StringComparison.Ordinal);
+        Assert.True(exception.Message.Length < longLine.Length + 500, "The error message must bound the container log tail.");
+    }
+
+    [Fact]
+    public async Task DeployAzureAsync_PropagatesCancellation_WhilePollingPackageCopy()
+    {
+        using var cts = new CancellationTokenSource();
+        var executor = CreateExecutor(request =>
+        {
+            var common = HandleDeploymentInfrastructure(request);
+            if (common is not null) return common;
+
+            if (IsContainerGroupPath(request) && request.Method == HttpMethod.Get)
+            {
+                // The copy container never reaches a terminal state; cancel once the
+                // caller starts waiting so the poll loop's delay observes it instead
+                // of relying on a client-side wall-clock timeout.
+                cts.Cancel();
+                return ContainerGroupState("Running", null, string.Empty);
+            }
+
+            throw new InvalidOperationException("Unexpected request: " + request.Method + " " + request.RequestUri);
+        });
+
+        var context = CreateContext(Package());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.ExecuteAsync("azure-infra", context, cts.Token));
+    }
+
+    private static HttpResponseMessage? HandleWebAppInfrastructure(HttpRequestMessage request, ApiPackage package, string apiKey)
+    {
+        var path = request.RequestUri!.AbsolutePath;
+        if (!path.Contains("/providers/Microsoft.Web/sites/", StringComparison.OrdinalIgnoreCase)) return null;
+
+        if (request.Method == HttpMethod.Post && path.EndsWith("/config/appsettings/list", StringComparison.OrdinalIgnoreCase))
+        {
+            return JsonResponse(HttpStatusCode.OK, new
+            {
+                properties = new Dictionary<string, string>
+                {
+                    ["WEBSITE_RUN_FROM_PACKAGE"] = "https://store.blob.core.windows.net/segment-preview-api/" + package.ResolvedBlobName,
+                    ["WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID"] = "SystemAssigned",
+                    ["SEGMENT_PREVIEW_PACKAGE_SHA256"] = package.Sha256!.ToLowerInvariant(),
+                    ["BEHAVIORAL_API_KEY"] = apiKey
+                }
+            });
+        }
+
+        if (request.Method == HttpMethod.Post && path.EndsWith("/restart", StringComparison.OrdinalIgnoreCase))
+        {
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+
+        if (request.Method == HttpMethod.Get)
+        {
+            return JsonResponse(HttpStatusCode.OK, new { identity = new { principalId = "22222222-3333-4444-5555-666666666666" } });
+        }
+
+        return null;
+    }
+
+    [Fact]
+    public async Task ConfigureWebAppAsync_Succeeds_AfterHealthAndKeyCheckAnswer()
+    {
+        const string apiKey = "correct-key";
+        var healthCalls = 0;
+        var keyCheckCalls = 0;
+        var executor = CreateExecutor(request =>
+        {
+            var common = HandleWebAppInfrastructure(request, Package(), apiKey);
+            if (common is not null) return common;
+
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/health")
+            {
+                healthCalls++;
+                return healthCalls < 2 ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) : new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            if (path == "/api/setup/key-check")
+            {
+                keyCheckCalls++;
+                var accepted = keyCheckCalls >= 2 && request.Headers.TryGetValues("x-api-key", out var values) && values.Contains(apiKey);
+                return accepted
+                    ? JsonResponse(HttpStatusCode.OK, new { apiKeyAccepted = true })
+                    : JsonResponse(HttpStatusCode.OK, new { apiKeyAccepted = false });
+            }
+
+            throw new InvalidOperationException("Unexpected request: " + request.Method + " " + request.RequestUri);
+        });
+
+        var context = CreateContext(Package(), apiKey);
+        var outcome = await executor.ExecuteAsync("azure-app", context, CancellationToken.None);
+
+        Assert.Equal("succeeded", outcome.Status);
+        Assert.Equal(2, healthCalls);
+        Assert.Equal(2, keyCheckCalls);
+        Assert.Contains("2 attempts", outcome.Message);
+    }
+
+    [Fact]
+    public async Task ConfigureWebAppAsync_ThrowsActionableError_WhenHealthNeverAnswers()
+    {
+        const string apiKey = "correct-key";
+        var executor = CreateExecutor(request =>
+        {
+            var common = HandleWebAppInfrastructure(request, Package(), apiKey);
+            if (common is not null) return common;
+
+            if (request.RequestUri!.AbsolutePath == "/api/health")
+            {
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            }
+
+            throw new InvalidOperationException("Unexpected request: " + request.Method + " " + request.RequestUri);
+        });
+
+        var context = CreateContext(Package(), apiKey);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => executor.ExecuteAsync("azure-app", context, CancellationToken.None));
+
+        Assert.Contains("health did not answer", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("HTTP 503", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ConfigureWebAppAsync_ThrowsActionableError_AndNeverLogsApiKey_WhenKeyCheckNeverAccepted()
+    {
+        const string apiKey = "top-secret-key-value";
+        var executor = CreateExecutor(request =>
+        {
+            var common = HandleWebAppInfrastructure(request, Package(), apiKey);
+            if (common is not null) return common;
+
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/health")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            if (path == "/api/setup/key-check")
+            {
+                return JsonResponse(HttpStatusCode.OK, new { apiKeyAccepted = false });
+            }
+
+            throw new InvalidOperationException("Unexpected request: " + request.Method + " " + request.RequestUri);
+        });
+
+        var context = CreateContext(Package(), apiKey);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => executor.ExecuteAsync("azure-app", context, CancellationToken.None));
+
+        Assert.Contains("did not accept the API key", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(apiKey, exception.Message, StringComparison.Ordinal);
+    }
+}

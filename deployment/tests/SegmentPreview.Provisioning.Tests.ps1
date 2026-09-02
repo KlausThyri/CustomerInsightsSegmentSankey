@@ -835,6 +835,14 @@ Describe 'Browser-only notebook and API deployment' {
         $script:Engine | Should -Match 'HEALTH_DELAY_MS'
     }
 
+    It 'requires the package-copy command to succeed and retries it once' {
+        $script:Engine | Should -Match 'waitForPackageCopy'
+        $script:Engine | Should -Match 'restartContainerGroup'
+        $script:Engine | Should -Match 'packageCopy\.exitCode\s*!==\s*0'
+        $script:Engine | Should -Match 'package-copy container failed with exit code'
+        $script:Engine | Should -Match 'Waiting for Azure to verify and copy the API package'
+    }
+
     It 'reports when App Service blocks the public Dataverse endpoint' {
         $plugin = Get-Content -LiteralPath (
             Join-Path $script:BrowserRoot 'CustomApi\ManageSegmentPreviewSetupPlugin.cs') -Raw

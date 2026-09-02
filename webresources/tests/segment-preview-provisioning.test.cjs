@@ -1273,6 +1273,171 @@ test("direct client creates a missing Resource Group in the requested location",
   assert.equal(group.location, "westeurope");
 });
 
+test("direct client waits for the package-copy exit code and exposes retry diagnostics", async () => {
+  const containerBody = (state, exitCode) => ({
+    properties: {
+      containers: [{
+        name: "copy",
+        properties: {
+          instanceView: {
+            currentState: {
+              state,
+              exitCode,
+              detailStatus: exitCode === 0 ? "Completed" : "Error",
+              startTime: "2026-09-02T12:17:16Z"
+            }
+          }
+        }
+      }]
+    }
+  });
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.init.method === "GET" && !request.url.includes("/logs?"),
+      respond: () => jsonResponse(200, containerBody("Running", null))
+    },
+    {
+      match: (request) => request.init.method === "GET" && !request.url.includes("/logs?"),
+      respond: () => jsonResponse(200, containerBody("Terminated", 1))
+    },
+    {
+      match: (request) => request.init.method === "POST" && request.url.includes("/restart?"),
+      respond: () => jsonResponse(200, {})
+    },
+    {
+      match: (request) => request.init.method === "GET" && !request.url.includes("/logs?"),
+      respond: () => jsonResponse(200, containerBody("Terminated", 1))
+    },
+    {
+      match: (request) => request.init.method === "GET" && !request.url.includes("/logs?"),
+      respond: () => jsonResponse(200, {
+        properties: {
+          containers: [{
+            name: "copy",
+            properties: {
+              instanceView: {
+                currentState: {
+                  state: "Running",
+                  detailStatus: "Running",
+                  startTime: "2026-09-02T12:18:20Z"
+                }
+              }
+            }
+          }]
+        }
+      })
+    },
+    {
+      match: (request) => request.init.method === "GET" && !request.url.includes("/logs?"),
+      respond: () => jsonResponse(200, {
+        properties: {
+          containers: [{
+            name: "copy",
+            properties: {
+              instanceView: {
+                currentState: {
+                  state: "Terminated",
+                  exitCode: 0,
+                  detailStatus: "Completed",
+                  startTime: "2026-09-02T12:18:20Z"
+                }
+              }
+            }
+          }]
+        }
+      })
+    },
+    {
+      match: (request) => request.init.method === "GET" && request.url.includes("/containers/copy/logs?"),
+      respond: () => jsonResponse(200, { content: "upload failed" })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: immediateTimer
+  });
+
+  const state = await direct.waitForPackageCopy(
+    "sub",
+    "rg",
+    "segment-preview-package-copy",
+    { attempts: 2, delayMs: 1 }
+  );
+  assert.equal(state.exitCode, 1);
+  assert.equal(state.attempts, 2);
+  await direct.restartContainerGroup("sub", "rg", "segment-preview-package-copy");
+  const retryState = await direct.waitForPackageCopy(
+    "sub",
+    "rg",
+    "segment-preview-package-copy",
+    {
+      attempts: 3,
+      delayMs: 1,
+      startedAfter: "2026-09-02T12:17:16Z"
+    }
+  );
+  assert.equal(retryState.exitCode, 0);
+  assert.equal(retryState.attempts, 3);
+  assert.equal(
+    await direct.packageCopyLogs("sub", "rg", "segment-preview-package-copy"),
+    "upload failed"
+  );
+  assert.match(fetchImpl.calls[0].url, /Microsoft\.ContainerInstance\/containerGroups/);
+  assert.match(fetchImpl.calls[2].url, /\/restart\?api-version=2023-05-01/);
+  assert.match(fetchImpl.calls[6].url, /\/containers\/copy\/logs\?tail=100&api-version=2023-05-01/);
+});
+
+test("direct package-copy polling tolerates a transient ARM failure", async () => {
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.init.method === "GET",
+      respond: () => jsonResponse(503, { message: "Service unavailable" })
+    },
+    {
+      match: (request) => request.init.method === "GET",
+      respond: () => jsonResponse(200, {
+        properties: {
+          containers: [{
+            name: "copy",
+            properties: {
+              instanceView: {
+                currentState: {
+                  state: "Terminated",
+                  exitCode: 0,
+                  detailStatus: "Completed",
+                  startTime: "2026-09-02T12:18:20Z"
+                }
+              }
+            }
+          }]
+        }
+      })
+    }
+  ]);
+  const delays = [];
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: (callback, milliseconds) => {
+      delays.push(milliseconds);
+      callback();
+    }
+  });
+
+  const state = await direct.waitForPackageCopy(
+    "sub",
+    "rg",
+    "segment-preview-package-copy",
+    { attempts: 2, delayMs: 2000 }
+  );
+
+  assert.equal(state.exitCode, 0);
+  assert.equal(state.attempts, 2);
+  assert.equal(fetchImpl.calls.length, 2);
+  assert.deepEqual(delays, [2000]);
+});
+
 test("direct client resolves the Azure resource behind a Fabric capacity", async () => {
   const subscriptionId = "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6";
   const capacityId = "22222222-2222-2222-2222-222222222222";
@@ -2335,6 +2500,38 @@ test("direct client waits between authenticated API key-check attempts", async (
   assert.equal(result.attempts, 2);
   assert.deepEqual(delays, [7000]);
   assert.equal(fetchImpl.calls[1].init.headers["x-api-key"], "stable-key");
+});
+
+test("direct health polling does not multiply its retry budget", async () => {
+  const delays = [];
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.url.endsWith("/api/health"),
+      respond: () => jsonResponse(503, { message: "Starting" })
+    },
+    {
+      match: (request) => request.url.endsWith("/api/health"),
+      respond: () => jsonResponse(200, { status: "ok" })
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token",
+    timer: (callback, milliseconds) => {
+      delays.push(milliseconds);
+      callback();
+    }
+  });
+
+  const result = await direct.apiHealth("https://api.example.com/api/", {
+    attempts: 2,
+    delayMs: 7000
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.attempts, 2);
+  assert.equal(fetchImpl.calls.length, 2);
+  assert.deepEqual(delays, [7000]);
 });
 
 test("shortcut discovery explains the missing OneLake delegated permission", async () => {
@@ -3429,6 +3626,7 @@ function directHarness(options = {}) {
   const calls = [];
   let lakehouseListCall = 0;
   let lakehouseDetailsCall = 0;
+  let packageCopyCheck = 0;
   const notebooks = options.notebooks || [];
   const schedules = options.schedules || [];
   const appSettings = Object.assign({}, options.appSettings || {});
@@ -3722,6 +3920,35 @@ function directHarness(options = {}) {
     async restartWebApp(subscriptionId, resourceGroup, webAppName) {
       calls.push({ kind: "restartWebApp", subscriptionId, resourceGroup, webAppName });
       return true;
+    },
+    async waitForPackageCopy(subscriptionId, resourceGroup, containerGroupName, config) {
+      calls.push({
+        kind: "waitForPackageCopy",
+        subscriptionId,
+        resourceGroup,
+        containerGroupName,
+        config
+      });
+      const exitCodes = options.packageCopyExitCodes || [0];
+      const selected = Math.min(packageCopyCheck, exitCodes.length - 1);
+      const exitCode = exitCodes[selected];
+      const startTimes =
+        options.packageCopyStartTimes ||
+        ["2026-09-02T12:17:16Z", "2026-09-02T12:18:20Z"];
+      packageCopyCheck += 1;
+      return {
+        state: "Terminated",
+        exitCode,
+        detailStatus: exitCode === 0 ? "Completed" : "Error",
+        startTime: startTimes[Math.min(selected, startTimes.length - 1)]
+      };
+    },
+    async restartContainerGroup(subscriptionId, resourceGroup, containerGroupName) {
+      calls.push({ kind: "restartContainerGroup", subscriptionId, resourceGroup, containerGroupName });
+    },
+    async packageCopyLogs(subscriptionId, resourceGroup, containerGroupName) {
+      calls.push({ kind: "packageCopyLogs", subscriptionId, resourceGroup, containerGroupName });
+      return options.packageCopyLogs || "Package copy failed.";
     },
     async apiHealth(baseUrl, config) {
       calls.push({ kind: "apiHealth", baseUrl, config });
@@ -4592,10 +4819,80 @@ test("the direct run has Azure copy the verified package into the customer's own
   assert.equal(settings.SEGMENT_PREVIEW_PACKAGE_SHA256, digest);
   const restart = direct.calls.find((call) => call.kind === "restartWebApp");
   assert.ok(restart, "the Web App must be restarted so it picks the package up");
+  const packageCheck = direct.calls.find((call) => call.kind === "waitForPackageCopy");
+  assert.ok(packageCheck, "Setup must verify the package-copy command's exit code");
   const step = result.results.find((entry) => entry.id === "azure-app");
   assert.equal(step.status, "succeeded");
   assert.doesNotMatch(step.message, /\.ps1|powershell|script|manual/i);
   assert.equal(result.facts.packageBlobUrl, settings.WEBSITE_RUN_FROM_PACKAGE);
+});
+
+test("a failed Azure package copy is restarted once and must then succeed", async () => {
+  const direct = directHarness({ packageCopyExitCodes: [1, 0] });
+  const { orchestrator } = directOrchestrator({ direct });
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  assert.equal(
+    direct.calls.filter((call) => call.kind === "waitForPackageCopy").length,
+    2
+  );
+  assert.equal(
+    direct.calls.filter((call) => call.kind === "restartContainerGroup").length,
+    1
+  );
+  const waits = direct.calls.filter((call) => call.kind === "waitForPackageCopy");
+  assert.equal(waits[1].config.startedAfter, "2026-09-02T12:17:16Z");
+});
+
+test("a package copy that fails twice stops before Web App verification", async () => {
+  const secret = "super-secret-signature-should-not-leak";
+  const direct = directHarness({
+    packageCopyExitCodes: [1, 1],
+    packageCopyLogs:
+      "The downloaded package could not be uploaded. https://store.blob.core.windows.net/packages/api.zip?sig=" +
+      secret +
+      "&se=2026-09-03 " +
+      "x".repeat(2500)
+  });
+  const { orchestrator } = directOrchestrator({ direct });
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, false);
+  const step = result.results.find((entry) => entry.id === "azure-infra");
+  assert.match(step.message, /exit code 1/i);
+  assert.doesNotMatch(step.message, new RegExp(secret));
+  assert.doesNotMatch(step.message, /\?sig=/i);
+  assert.ok(step.message.length < 2400, "the displayed container log tail must be bounded");
+  assert.equal(
+    direct.calls.filter((call) => call.kind === "restartContainerGroup").length,
+    1
+  );
+  assert.equal(
+    direct.calls.some((call) => call.kind === "restartWebApp"),
+    false
+  );
+  assert.equal(
+    direct.calls.some((call) => call.kind === "apiHealth"),
+    false
+  );
+});
+
+test("a package copy without a valid Azure start time is not restarted", async () => {
+  const direct = directHarness({
+    packageCopyExitCodes: [1],
+    packageCopyStartTimes: ["not-a-timestamp"]
+  });
+  const { orchestrator } = directOrchestrator({ direct });
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, false);
+  const step = result.results.find((entry) => entry.id === "azure-infra");
+  assert.match(step.message, /valid start time/i);
+  assert.equal(
+    direct.calls.some((call) => call.kind === "restartContainerGroup"),
+    false
+  );
 });
 
 test("an existing Resource Group location does not override the resource deployment region", async () => {

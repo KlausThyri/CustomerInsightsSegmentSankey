@@ -85,6 +85,9 @@
   /** api-version used for the Microsoft.Web control-plane calls. */
   var WEB_API_VERSION = "2022-03-01";
 
+  /** api-version used to inspect and restart the package-copy container. */
+  var CONTAINER_API_VERSION = "2023-05-01";
+
   /** Container in the customer's own storage account that holds the package. */
   var PACKAGE_CONTAINER = "segment-preview-api";
 
@@ -1286,6 +1289,10 @@
 
     async function send(request) {
       var attempt = 0;
+      var requestMaxAttempts =
+        typeof request.maxAttempts === "number" && request.maxAttempts > 0
+          ? request.maxAttempts
+          : maxAttempts;
       for (;;) {
         attempt++;
         var response = await fetchImpl(request.url, {
@@ -1307,7 +1314,7 @@
           return { status: response.status, body: payload, headers: response.headers };
         }
         var retryable = response.status === 429 || response.status >= 500;
-        if (!retryable || attempt >= maxAttempts) {
+        if (!retryable || attempt >= requestMaxAttempts) {
           var nestedMessages = collectErrorMessages(payload);
           var message =
             nestedMessages.join("\n") ||
@@ -2227,6 +2234,14 @@
 
   // ---------------------------------------------------------- direct client
 
+  function sanitizePackageCopyLogs(content) {
+    var sanitized = String(content || "").replace(
+      /(https?:\/\/[^\s"'?]+)\?[^\s"')]+/gi,
+      "$1"
+    );
+    return sanitized.slice(-2000);
+  }
+
   /**
    * Performs the Azure Resource Manager and Fabric REST calls straight from the
    * browser with delegated tokens from the tenant-registered SPA application.
@@ -2242,7 +2257,7 @@
     var armRoot = settings.armRoot || ARM_ROOT;
     var fabricRoot = settings.fabricRoot || FABRIC_ROOT;
 
-    async function arm(method, path, body, apiVersion) {
+    async function arm(method, path, body, apiVersion, maxAttempts) {
       var token = await getToken(settings.armScope || ARM_SCOPE);
       var absolute = /^https?:\/\//i.test(path);
       var separator = path.indexOf("?") > -1 ? "&" : "?";
@@ -2256,7 +2271,8 @@
           "Content-Type": "application/json; charset=utf-8",
           Authorization: "Bearer " + token
         },
-        body: body === undefined ? undefined : JSON.stringify(body)
+        body: body === undefined ? undefined : JSON.stringify(body),
+        maxAttempts: maxAttempts
       });
     }
 
@@ -3365,6 +3381,133 @@
       return true;
     }
 
+    function containerGroupPath(subscriptionId, resourceGroup, containerGroupName) {
+      return (
+        "/subscriptions/" +
+        subscriptionId +
+        "/resourcegroups/" +
+        encodeURIComponent(resourceGroup) +
+        "/providers/Microsoft.ContainerInstance/containerGroups/" +
+        encodeURIComponent(containerGroupName)
+      );
+    }
+
+    async function packageCopyState(subscriptionId, resourceGroup, containerGroupName) {
+      var response = await arm(
+        "GET",
+        containerGroupPath(subscriptionId, resourceGroup, containerGroupName),
+        undefined,
+        CONTAINER_API_VERSION,
+        1
+      );
+      var containers =
+        response &&
+        response.body &&
+        response.body.properties &&
+        response.body.properties.containers;
+      var copy = Array.isArray(containers)
+        ? containers.find(function (container) {
+            return String(container && container.name).toLowerCase() === "copy";
+          })
+        : null;
+      var state =
+        copy &&
+        copy.properties &&
+        copy.properties.instanceView &&
+        copy.properties.instanceView.currentState;
+      return {
+        state: String((state && state.state) || ""),
+        exitCode:
+          state && typeof state.exitCode === "number"
+            ? state.exitCode
+            : null,
+        detailStatus: String((state && state.detailStatus) || ""),
+        startTime: String((state && state.startTime) || ""),
+        finishTime: String((state && state.finishTime) || "")
+      };
+    }
+
+    async function waitForPackageCopy(
+      subscriptionId,
+      resourceGroup,
+      containerGroupName,
+      options
+    ) {
+      var config = options || {};
+      var attempts = config.attempts || 210;
+      var delayMs = config.delayMs || 2000;
+      var startedAfter = config.startedAfter ? Date.parse(config.startedAfter) : null;
+      if (config.startedAfter && Number.isNaN(startedAfter)) {
+        throw new Error(
+          "Azure returned an invalid start time for package-copy container '" +
+            containerGroupName +
+            "'."
+        );
+      }
+      var latest = null;
+      for (var attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+          latest = await packageCopyState(
+            subscriptionId,
+            resourceGroup,
+            containerGroupName
+          );
+        } catch (error) {
+          var status = error && error.status;
+          if (status && status !== 429 && status < 500) throw error;
+          if (attempt < attempts) await delay(delayMs, timer);
+          continue;
+        }
+        var state = latest.state.toLowerCase();
+        var startTime = latest.startTime ? Date.parse(latest.startTime) : null;
+        var isCurrentRun =
+          startedAfter === null ||
+          (startTime && !Number.isNaN(startTime) && startTime > startedAfter);
+        if (state === "terminated" && isCurrentRun) {
+          latest.attempts = attempt;
+          return latest;
+        }
+        if (attempt < attempts) await delay(delayMs, timer);
+      }
+      throw new Error(
+        "Azure did not report a terminal state for package-copy container '" +
+          containerGroupName +
+          "' within " +
+          Math.round((attempts * delayMs) / 1000) +
+          " seconds."
+      );
+    }
+
+    async function restartContainerGroup(
+      subscriptionId,
+      resourceGroup,
+      containerGroupName
+    ) {
+      await arm(
+        "POST",
+        containerGroupPath(subscriptionId, resourceGroup, containerGroupName) + "/restart",
+        undefined,
+        CONTAINER_API_VERSION
+      );
+    }
+
+    async function packageCopyLogs(
+      subscriptionId,
+      resourceGroup,
+      containerGroupName
+    ) {
+      var response = await arm(
+        "GET",
+        containerGroupPath(subscriptionId, resourceGroup, containerGroupName) +
+          "/containers/copy/logs?tail=100",
+        undefined,
+        CONTAINER_API_VERSION
+      );
+      return sanitizePackageCopyLogs(
+        response && response.body && response.body.content
+      );
+    }
+
     /**
      * Polls the deployed API until it answers its own health endpoint. A Web App
      * that has just been restarted needs time to mount the package blob, and the
@@ -3382,7 +3525,12 @@
       for (var attempt = 0; attempt < attempts; attempt++) {
         if (attempt > 0) await delay(delayMs, timer);
         try {
-          var response = await http.send({ url: url, method: "GET", headers: { Accept: "application/json" } });
+          var response = await http.send({
+            url: url,
+            method: "GET",
+            headers: { Accept: "application/json" },
+            maxAttempts: 1
+          });
           if (response.status >= 200 && response.status < 300) {
             return { ok: true, attempts: attempt + 1, status: response.status, body: response.body || null };
           }
@@ -3411,7 +3559,8 @@
           var response = await http.send({
             url: url,
             method: "GET",
-            headers: { Accept: "application/json", "x-api-key": apiKey }
+            headers: { Accept: "application/json", "x-api-key": apiKey },
+            maxAttempts: 1
           });
           if (
             response.status >= 200 &&
@@ -3471,6 +3620,9 @@
       webAppSettings: webAppSettings,
       setWebAppSettings: setWebAppSettings,
       restartWebApp: restartWebApp,
+      waitForPackageCopy: waitForPackageCopy,
+      restartContainerGroup: restartContainerGroup,
+      packageCopyLogs: packageCopyLogs,
       apiHealth: apiHealth,
       apiKeyCheck: apiKeyCheck
     };
@@ -4535,6 +4687,68 @@
           }
         }
         context.outputs = outputs || {};
+        var packageCopyName = target.webAppName + "-package-copy";
+        if (hooks.onProgress) {
+          hooks.onProgress({
+            id: "azure-infra",
+            status: "Waiting for Azure to verify and copy the API package."
+          });
+        }
+        var packageCopy = await direct.waitForPackageCopy(
+          target.subscriptionId,
+          target.resourceGroup,
+          packageCopyName
+        );
+        if (packageCopy.exitCode !== 0) {
+          if (hooks.onProgress) {
+            hooks.onProgress({
+              id: "azure-infra",
+              status:
+                "The verified package copy failed once. Retrying the Azure copy container."
+            });
+          }
+          var previousStartTime = packageCopy.startTime;
+          if (!previousStartTime || Number.isNaN(Date.parse(previousStartTime))) {
+            throw new Error(
+              "Azure did not return a valid start time for the failed package-copy container, so Setup cannot verify a retry safely."
+            );
+          }
+          await direct.restartContainerGroup(
+            target.subscriptionId,
+            target.resourceGroup,
+            packageCopyName
+          );
+          packageCopy = await direct.waitForPackageCopy(
+            target.subscriptionId,
+            target.resourceGroup,
+            packageCopyName,
+            { startedAfter: previousStartTime }
+          );
+        }
+        if (packageCopy.exitCode !== 0) {
+          var packageLogs = "";
+          try {
+            packageLogs = await direct.packageCopyLogs(
+              target.subscriptionId,
+              target.resourceGroup,
+              packageCopyName
+            );
+          } catch (logError) {
+            packageLogs =
+              "Container logs could not be read: " +
+              String((logError && logError.message) || logError);
+          }
+          packageLogs = sanitizePackageCopyLogs(packageLogs);
+          throw new Error(
+            "The Azure package-copy container failed with exit code " +
+              String(packageCopy.exitCode) +
+              (packageCopy.detailStatus
+                ? " (" + packageCopy.detailStatus + ")"
+                : "") +
+              ". The Web App was not marked ready because its API package blob may be missing." +
+              (packageLogs ? "\n" + packageLogs : "")
+          );
+        }
         var webAppUrl = outputs && outputs.webAppUrl && outputs.webAppUrl.value;
         context.apiBaseUrl = apiBaseUrl(webAppUrl || target.webAppName + ".azurewebsites.net");
         context.principalId =

@@ -243,10 +243,14 @@ Data Reader**, and sets `WEBSITE_RUN_FROM_PACKAGE` (a clean URL, no signature),
 `SEGMENT_PREVIEW_PACKAGE_VERSION` and `SEGMENT_PREVIEW_PACKAGE_SHA256`. The
 account key is never created or used: the container obtains an Entra storage
 token through its managed identity and `allowSharedKeyAccess` stays `false`. The blob name embeds the digest, so a
-repeat run is a no-op. The later `azure-app` step reads those settings back and
-fails the run if any of them is wrong, restarts the Web App, and then polls
-`/api/health` for about five minutes until the API really answers — the blob
-mount and the role assignment both take effect asynchronously. To make that poll
+repeat run is a no-op. ARM can report the container-group resource as provisioned
+even when its command later exits unsuccessfully, so Setup separately waits for
+the `copy` container's terminal state and requires exit code `0`. It restarts the
+container once after a failed attempt and surfaces the exit status and available
+container log if the retry also fails. Only then does the later `azure-app` step
+read the settings back, restart the Web App, and poll `/api/health` for about five
+minutes until the API really answers — the blob mount and the role assignment
+both take effect asynchronously. To make that poll
 possible the API allows cross-origin `GET` requests on `/api/health` only, and
 only from the origins in its own `DATAVERSE_ENVIRONMENT_URL` setting; every other
 endpoint stays unreachable from a browser.
