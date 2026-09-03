@@ -7,6 +7,7 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Diagnostics;
 using Microsoft.Xrm.Sdk;
 using Microsoft.Xrm.Sdk.Messages;
 using Microsoft.Xrm.Sdk.Metadata;
@@ -18,6 +19,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
     {
         public void Execute(IServiceProvider serviceProvider)
         {
+            var actionTimer = Stopwatch.StartNew();
             var context = (IPluginExecutionContext)serviceProvider.GetService(typeof(IPluginExecutionContext));
             var tracing = (ITracingService)serviceProvider.GetService(typeof(ITracingService));
             var factory = (IOrganizationServiceFactory)serviceProvider.GetService(typeof(IOrganizationServiceFactory));
@@ -35,6 +37,11 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
             var result = new FabricSegmentCountClient(service, tracing)
                 .Evaluate(segmentId);
+            if (result.Diagnostics != null && result.Diagnostics.TimingsMs != null)
+            {
+                result.Diagnostics.TimingsMs.DataverseAction =
+                    actionTimer.Elapsed.TotalMilliseconds;
+            }
             context.OutputParameters["klth_resultjson"] = Serialize(result);
         }
 
@@ -1436,13 +1443,15 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             bool isEstimate,
             IList<FilterCountStage> stages,
             FabricDependencyStatus fabricDependencies,
-            string evaluationToken)
+            string evaluationToken,
+            FabricSegmentDiagnostics diagnostics)
         {
             GeneratedAt = generatedAt.ToString("o");
             IsEstimate = isEstimate;
             Stages = stages;
             FabricDependencies = fabricDependencies;
             EvaluationToken = evaluationToken;
+            Diagnostics = diagnostics;
         }
 
         [DataMember(Name = "generatedAt", Order = 1)]
@@ -1459,6 +1468,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "evaluationToken", Order = 5)]
         public string EvaluationToken { get; private set; }
+
+        [DataMember(Name = "diagnostics", Order = 6, EmitDefaultValue = false)]
+        public FabricSegmentDiagnostics Diagnostics { get; private set; }
     }
 
     [DataContract]

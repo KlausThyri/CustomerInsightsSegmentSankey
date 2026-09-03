@@ -93,5 +93,46 @@ test("a response for a segment that is no longer active is discarded", () => {
   assert.match(html, /activeSegmentId && activeSegmentId !== segmentId/);
   assert.match(html, /queueMicrotask\(\(\) => \{/);
   assert.match(html, /refresh\(\{ segmentId: activeSegmentId, automatic: true \}\)/);
-  assert.match(html, /return false;\s*\}\s*render\(result,/);
+  assert.match(html, /return false;\s*\}[\s\S]{0,120}render\(result,/);
+});
+
+test("performance diagnostics are collapsed, accessible, and prepared during idle time", () => {
+  assert.match(
+    html,
+    /<details class="diagnostics" id="performance-diagnostics">/
+  );
+  assert.doesNotMatch(
+    html,
+    /<details class="diagnostics" id="performance-diagnostics" open/
+  );
+  assert.match(html, /id="diagnostics-copy-status" role="status" aria-live="polite"/);
+  assert.match(html, /window\.requestIdleCallback\(callback, \{ timeout: 1000 \}\)/);
+  assert.match(html, /scheduleIdle\(renderDiagnosticsDetails\)/);
+});
+
+test("opening diagnostics never starts another count request", () => {
+  const toggle = /addEventListener\("toggle",[\s\S]*?^      \}\);/m.exec(html);
+  assert.ok(toggle, "the diagnostics toggle handler is missing");
+  assert.doesNotMatch(toggle[0], /fetch\(|executeCountAction|refresh\(/);
+  assert.match(
+    html,
+    /Opening this section does not run another count query\./
+  );
+});
+
+test("diagnostic copies use an explicit sanitized schema and gate identifiers", () => {
+  assert.match(html, /function buildDiagnosticsReport\(includeIdentifiers, options\)/);
+  assert.match(html, /sourceTables: safeSourceTables\(server\.sourceTables\)/);
+  assert.match(html, /if \(includeIdentifiers\) \{/);
+  assert.match(html, /Include technical resource and segment IDs\?/);
+  assert.match(html, /Copy diagnostics/);
+  assert.match(html, /Copy with resource IDs/);
+  assert.match(html, /Include stage counts/);
+  assert.doesNotMatch(html, /report\.(apiKey|accessToken|connectionString|sasToken)/);
+});
+
+test("success, static, and failure paths schedule diagnostics", () => {
+  assert.match(html, /status: "succeeded"[\s\S]*?server: result\.diagnostics/);
+  assert.match(html, /status: "not_applicable"[\s\S]*?errorCode: "static_segment"/);
+  assert.match(html, /status: "failed"[\s\S]*?server: error\.diagnostics/);
 });

@@ -114,6 +114,22 @@ The API package is copied into your own storage during installation, so the runn
 system depends on no service operated by anyone else. No data and no credential
 leaves your tenant.
 
+### Performance diagnostics
+
+The bottom of the Segment Preview panel contains a collapsed **Performance
+diagnostics** section for troubleshooting large target environments. It is filled
+from measurements already collected by the normal count request and opens without
+another SQL query or network request. Formatting is deferred until the browser is
+idle, so the diagnostics do not delay the visualization.
+
+The standard copy includes browser, Dataverse action, API, capacity, catalog, SQL
+connection, SQL execution, and rendering durations; request correlation, versions,
+bounded query-complexity counters, runtime state, and logical source-table names.
+Stage counts are opt-in. Subscription, resource-group, workspace, lakehouse, and
+segment identifiers require a separate confirmation. Filter expressions and
+values, MQL, member identifiers, credentials, tokens, SAS data, and connection
+strings are never included.
+
 > **Why the environment has to be connected first.** The page provisions the
 > Azure API the product later talks to, so it cannot use that API to bootstrap
 > itself, and a Dataverse session grants no Azure or Fabric rights. Something must

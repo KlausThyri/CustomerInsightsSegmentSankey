@@ -563,6 +563,82 @@
       text-align: center;
       color: var(--cp-text-muted);
     }
+    .diagnostics {
+      margin-top: 16px;
+      border: 1px solid var(--cp-border);
+      border-radius: .625rem;
+      background: var(--cp-surface);
+      box-shadow: 0 0 2px var(--cp-border), 0 1px 2px var(--cp-border);
+    }
+    .diagnostics summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      cursor: pointer;
+      list-style: none;
+    }
+    .diagnostics summary::-webkit-details-marker { display: none; }
+    .diagnostics-title { font-weight: 600; }
+    .diagnostics-summary {
+      overflow: hidden;
+      color: var(--cp-text-muted);
+      font-size: 12px;
+      text-align: right;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .diagnostics summary::after {
+      flex: 0 0 auto;
+      color: var(--cp-text-muted);
+      content: "⌄";
+      font-size: 18px;
+      line-height: 1;
+      transition: transform .15s ease;
+    }
+    .diagnostics[open] summary::after { transform: rotate(180deg); }
+    .diagnostics-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--cp-border);
+    }
+    .diagnostics-description {
+      margin: 12px 0;
+      color: var(--cp-text-muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .diagnostics-output {
+      max-height: 360px;
+      overflow: auto;
+      margin: 0;
+      padding: 12px;
+      border: 1px solid var(--cp-border);
+      border-radius: .5rem;
+      background: var(--cp-bg-elevated);
+      color: var(--cp-text);
+      font: 11px/1.5 Consolas, "Cascadia Mono", monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .diagnostics-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .diagnostics-copy-status {
+      color: var(--cp-text-muted);
+      font-size: 12px;
+    }
+    .diagnostics-option {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--cp-text-muted);
+      font-size: 12px;
+    }
     .spinner {
       width: 18px;
       height: 18px;
@@ -587,6 +663,14 @@
       .metadata span + span::before { content: ""; margin: 0; }
       .summary { grid-template-columns: 1fr; }
       .legend { display: none; }
+      .diagnostics summary {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .diagnostics-summary {
+        max-width: 100%;
+        text-align: left;
+      }
     }
   </style>
 </head>
@@ -596,7 +680,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.72">v1.1.0.72</span>
+          <span class="app-version" aria-label="Version 1.1.0.73">v1.1.0.73</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -655,6 +739,32 @@
         </div>
       </div>
     </section>
+
+    <details class="diagnostics" id="performance-diagnostics">
+      <summary>
+        <span class="diagnostics-title">Performance diagnostics</span>
+        <span class="diagnostics-summary" id="diagnostics-summary">Available after the first request</span>
+      </summary>
+      <div class="diagnostics-body">
+        <p class="diagnostics-description">
+          Built asynchronously from measurements already collected by this request.
+          Opening this section does not run another count query. Secrets and personal
+          data are excluded from the standard report.
+        </p>
+        <pre class="diagnostics-output" id="diagnostics-output" tabindex="0">Preparing diagnostics…</pre>
+        <div class="diagnostics-actions">
+          <label class="diagnostics-option">
+            <input id="diagnostics-include-counts" type="checkbox">
+            Include stage counts
+          </label>
+          <button class="button" id="copy-diagnostics" type="button">Copy diagnostics</button>
+          <button class="button" id="copy-diagnostics-identifiers" type="button">
+            Copy with resource IDs
+          </button>
+          <span class="diagnostics-copy-status" id="diagnostics-copy-status" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+    </details>
   </main>
 
   <script>
@@ -682,7 +792,9 @@
         retrySegmentId: "",
         retryCount: 0,
         retryAfter: 0,
-        evaluationToken: ""
+        evaluationToken: "",
+        diagnostics: null,
+        diagnosticsRenderPending: false
       };
 
       function parseContext() {
@@ -934,6 +1046,195 @@
         }
       }
 
+      function finiteMetric(value) {
+        const number = Number(value);
+        return Number.isFinite(number) && number >= 0
+          ? Math.round(number * 10) / 10
+          : null;
+      }
+
+      function safeDiagnosticText(value, maximumLength) {
+        const text = String(value || "").trim();
+        return text ? text.slice(0, maximumLength || 120) : null;
+      }
+
+      function safeSourceTables(value) {
+        return Array.isArray(value)
+          ? value
+              .map(item => String(item || "").toLowerCase())
+              .filter(item => /^[a-z0-9_]{1,128}$/.test(item))
+              .slice(0, 50)
+          : [];
+      }
+
+      function selectedDiagnosticsOptions() {
+        return {
+          includeCounts: document.getElementById("diagnostics-include-counts").checked
+        };
+      }
+
+      function buildDiagnosticsReport(includeIdentifiers, options) {
+        if (!state.diagnostics) {
+          return null;
+        }
+
+        const diagnostic = state.diagnostics;
+        const server = diagnostic.server || {};
+        const timings = server.timingsMs || {};
+        const complexity = server.queryComplexity || {};
+        const runtime = server.runtime || {};
+        const report = {
+          schemaVersion: safeDiagnosticText(server.schemaVersion, 20) || "1.0",
+          capturedAtUtc:
+            safeDiagnosticText(server.capturedAtUtc, 40) || new Date().toISOString(),
+          solutionVersion: document.querySelector(".app-version")?.textContent?.replace(/^v/, "") || null,
+          apiVersion: safeDiagnosticText(server.apiVersion, 40),
+          requestId: safeDiagnosticText(server.requestId, 100),
+          status: safeDiagnosticText(diagnostic.status, 40) || "unknown",
+          errorCode: safeDiagnosticText(diagnostic.errorCode || server.errorCode, 80),
+          timingsMs: {
+            browserTotal: finiteMetric(diagnostic.browserTotalMs),
+            dataverseAction: finiteMetric(
+              timings.dataverseAction ?? diagnostic.dataverseActionMs
+            ),
+            apiTotal: finiteMetric(timings.apiTotal),
+            capacityReadiness: finiteMetric(timings.capacityReadiness),
+            catalog: finiteMetric(timings.catalog),
+            sqlConnection: finiteMetric(timings.sqlConnection),
+            sqlExecution: finiteMetric(timings.sqlExecution),
+            rendering: finiteMetric(diagnostic.renderingMs)
+          },
+          queryComplexity: {
+            stages: finiteMetric(complexity.stages),
+            profileFilters: finiteMetric(complexity.profileFilters),
+            relationshipFilters: finiteMetric(complexity.relationshipFilters),
+            consentFilters: finiteMetric(complexity.consentFilters),
+            interactionFilters: finiteMetric(complexity.interactionFilters),
+            unions: finiteMetric(complexity.unions),
+            exclusions: finiteMetric(complexity.exclusions),
+            maximumDepth: finiteMetric(complexity.maximumDepth)
+          },
+          runtime: {
+            cache: safeDiagnosticText(runtime.cache, 20),
+            coalesced: typeof runtime.coalesced === "boolean" ? runtime.coalesced : null,
+            capacityState: safeDiagnosticText(runtime.capacityState, 40),
+            businessUnitScoping:
+              typeof runtime.businessUnitScoping === "boolean"
+                ? runtime.businessUnitScoping
+                : null,
+            retries: finiteMetric(runtime.retries)
+          },
+          workload: {
+            sourceTables: safeSourceTables(server.sourceTables),
+            sourceTableCount: safeSourceTables(server.sourceTables).length,
+            resultStages: Array.isArray(diagnostic.stages)
+              ? diagnostic.stages.length
+              : null
+          }
+        };
+
+        if (options?.includeCounts && Array.isArray(diagnostic.stages)) {
+          report.result = {
+            stageCounts: diagnostic.stages.slice(0, 50).map(stage => ({
+              order: Number(stage.order),
+              count: Number(stage.count)
+            }))
+          };
+        }
+
+        if (includeIdentifiers) {
+          const identifiers = server.identifiers || {};
+          report.identifiers = {
+            segmentId: ID_PATTERN.test(String(diagnostic.segmentId || ""))
+              ? diagnostic.segmentId
+              : null,
+            subscriptionId: safeDiagnosticText(identifiers.subscriptionId, 100),
+            resourceGroup: safeDiagnosticText(identifiers.resourceGroup, 100),
+            workspaceId: safeDiagnosticText(identifiers.workspaceId, 100),
+            lakehouseId: safeDiagnosticText(identifiers.lakehouseId, 100)
+          };
+        }
+
+        return report;
+      }
+
+      function diagnosticsJson(includeIdentifiers) {
+        return JSON.stringify(
+          buildDiagnosticsReport(includeIdentifiers, selectedDiagnosticsOptions()),
+          null,
+          2
+        );
+      }
+
+      function renderDiagnosticsDetails() {
+        if (!state.diagnostics) {
+          return;
+        }
+        document.getElementById("diagnostics-output").textContent =
+          diagnosticsJson(false);
+      }
+
+      function scheduleIdle(callback) {
+        if (typeof window.requestIdleCallback === "function") {
+          window.requestIdleCallback(callback, { timeout: 1000 });
+        } else {
+          window.setTimeout(callback, 0);
+        }
+      }
+
+      function scheduleDiagnostics(diagnostic) {
+        state.diagnostics = diagnostic;
+        if (state.diagnosticsRenderPending) {
+          return;
+        }
+        state.diagnosticsRenderPending = true;
+        scheduleIdle(() => {
+          state.diagnosticsRenderPending = false;
+          const total = finiteMetric(diagnostic.browserTotalMs);
+          const sql = finiteMetric(diagnostic.server?.timingsMs?.sqlExecution);
+          const cache = safeDiagnosticText(diagnostic.server?.runtime?.cache, 20);
+          document.getElementById("diagnostics-summary").textContent =
+            (diagnostic.status === "succeeded" ? "Last request" : "Last failure") +
+            (total === null ? "" : ": " + (total / 1000).toFixed(1) + " s") +
+            (sql === null ? "" : " · Fabric SQL: " + (sql / 1000).toFixed(1) + " s") +
+            (cache ? " · Cache " + cache : "");
+          if (document.getElementById("performance-diagnostics").open) {
+            renderDiagnosticsDetails();
+          }
+        });
+      }
+
+      async function copyDiagnostics(includeIdentifiers) {
+        if (!state.diagnostics) {
+          return;
+        }
+        if (
+          includeIdentifiers &&
+          !window.confirm(
+            "Include technical resource and segment IDs? The report still excludes keys, tokens, member IDs, filter values, and personal data."
+          )
+        ) {
+          return;
+        }
+        const text = diagnosticsJson(includeIdentifiers);
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const temporary = document.createElement("textarea");
+          temporary.value = text;
+          temporary.style.position = "fixed";
+          temporary.style.opacity = "0";
+          document.body.append(temporary);
+          temporary.select();
+          document.execCommand("copy");
+          temporary.remove();
+        }
+        document.getElementById("diagnostics-copy-status").textContent =
+          includeIdentifiers
+            ? "Diagnostics with resource IDs copied."
+            : "Sanitized diagnostics copied.";
+      }
+
       function normalizeResult(payload) {
         const result = typeof payload === "string" ? JSON.parse(payload) : payload;
         if (!result || !Array.isArray(result.stages)) {
@@ -954,8 +1255,29 @@
           generatedAt: result.generatedAt || new Date().toISOString(),
           isEstimate: Boolean(result.isEstimate),
           evaluationToken: result.evaluationToken || "",
+          diagnostics:
+            result.diagnostics && typeof result.diagnostics === "object"
+              ? result.diagnostics
+              : null,
           stages: stages
         };
+      }
+
+      function extractEmbeddedDiagnostics(message) {
+        const marker = /\s*SANK_DIAGNOSTICS:([A-Za-z0-9+/=]+)\s*$/;
+        const match = marker.exec(message || "");
+        if (!match) {
+          return { message: message, diagnostics: null };
+        }
+        try {
+          return {
+            message: message.slice(0, match.index).trim(),
+            diagnostics: JSON.parse(atob(match[1]))
+          };
+        } catch (error) {
+          console.warn("Segment preview: Invalid embedded diagnostics.", error);
+          return { message: message.slice(0, match.index).trim(), diagnostics: null };
+        }
       }
 
       function translateStageLabel(label) {
@@ -1032,21 +1354,51 @@
         }
         if (!response.ok) {
           const errorBody = await response.json();
-          const message = errorBody?.error?.message ||
-            "The count provider returned HTTP " + response.status + ".";
+          const embedded = extractEmbeddedDiagnostics(
+            errorBody?.error?.message ||
+              "The count provider returned HTTP " + response.status + "."
+          );
+          const message = embedded.message;
+          const responseDiagnostics =
+            errorBody?.error?.diagnostics ||
+            errorBody?.diagnostics ||
+            embedded.diagnostics ||
+            null;
           if (
             /did not expose these tables within \d+ seconds/i.test(message) ||
             /Fabric capacity is starting automatically/i.test(message)
           ) {
-            throw /Fabric capacity is starting automatically/i.test(message)
+            const pending = /Fabric capacity is starting automatically/i.test(message)
               ? createCapacityPendingError(message)
               : createDependencyPendingError(message);
+            pending.status = response.status;
+            pending.diagnostics = responseDiagnostics;
+            pending.errorCode =
+              errorBody?.error?.code || errorBody?.code || "dependency_not_ready";
+            throw pending;
           }
-          throw new Error(message);
+          const failure = new Error(message);
+          failure.status = response.status;
+          failure.diagnostics = responseDiagnostics;
+          failure.errorCode =
+            errorBody?.error?.code || errorBody?.code || "dataverse_action_failed";
+          throw failure;
         }
 
         const body = await response.json();
-        return normalizeResult(body.klth_resultjson || body);
+        const result = normalizeResult(body.klth_resultjson || body);
+        if (!result.diagnostics) {
+          const requestId =
+            response.headers.get("x-ms-service-request-id") ||
+            response.headers.get("request-id");
+          if (requestId) {
+            result.diagnostics = {
+              schemaVersion: "1.0",
+              requestId: requestId
+            };
+          }
+        }
+        return result;
       }
 
       function render(result, elapsedMilliseconds) {
@@ -1972,11 +2324,18 @@
         state.refreshInProgress = true;
         const isNewSegment = state.renderedSegmentId !== segmentId;
         const startedAt = performance.now();
+        let dataverseActionMs = null;
         setLoading(true, isNewSegment);
         setNotice("", "");
         try {
           await updateSegmentIdentity(segmentId);
-          const result = await executeCountAction(segmentId);
+          const actionStartedAt = performance.now();
+          let result;
+          try {
+            result = await executeCountAction(segmentId);
+          } finally {
+            dataverseActionMs = performance.now() - actionStartedAt;
+          }
           const activeSegmentId = getActiveSegmentId();
           if (activeSegmentId && activeSegmentId !== segmentId) {
             state.attemptedSegmentId = "";
@@ -1987,7 +2346,17 @@
             });
             return false;
           }
+          const renderingStartedAt = performance.now();
           render(result, performance.now() - startedAt);
+          scheduleDiagnostics({
+            status: "succeeded",
+            segmentId: segmentId,
+            browserTotalMs: performance.now() - startedAt,
+            dataverseActionMs: dataverseActionMs,
+            renderingMs: performance.now() - renderingStartedAt,
+            stages: result.stages,
+            server: result.diagnostics
+          });
           state.renderedSegmentId = segmentId;
           clearAutomaticRetry();
           clearDependencyProgress();
@@ -2003,6 +2372,16 @@
             );
             document.getElementById("chart").innerHTML =
               '<div class="empty">There are no filter steps to display for this static segment.</div>';
+            scheduleDiagnostics({
+              status: "not_applicable",
+              errorCode: "static_segment",
+              segmentId: segmentId,
+              browserTotalMs: performance.now() - startedAt,
+              dataverseActionMs: dataverseActionMs,
+              renderingMs: 0,
+              stages: [],
+              server: error.diagnostics
+            });
             clearAutomaticRetry();
             clearDependencyProgress();
             return false;
@@ -2043,6 +2422,18 @@
               : " Ensure that the Custom API " + ACTION_NAME + " is deployed."),
             "error"
           );
+          scheduleDiagnostics({
+            status: "failed",
+            errorCode: error.errorCode || (
+              error.retryAutomatically ? "dependency_not_ready" : "count_failed"
+            ),
+            segmentId: segmentId,
+            browserTotalMs: performance.now() - startedAt,
+            dataverseActionMs: dataverseActionMs,
+            renderingMs: 0,
+            stages: null,
+            server: error.diagnostics
+          });
           if (isNewSegment) {
             document.getElementById("summary").hidden = true;
             document.getElementById("chart").innerHTML =
@@ -2060,6 +2451,28 @@
       setHostPaneTitle();
       document.getElementById("refresh-button").addEventListener("click", function () {
         refresh();
+      });
+      document.getElementById("performance-diagnostics").addEventListener("toggle", event => {
+        if (event.currentTarget.open) {
+          scheduleIdle(renderDiagnosticsDetails);
+        }
+      });
+      document.getElementById("diagnostics-include-counts").addEventListener("change", () => {
+        if (document.getElementById("performance-diagnostics").open) {
+          scheduleIdle(renderDiagnosticsDetails);
+        }
+      });
+      document.getElementById("copy-diagnostics").addEventListener("click", () => {
+        copyDiagnostics(false).catch(error => {
+          document.getElementById("diagnostics-copy-status").textContent =
+            "Copy failed: " + error.message;
+        });
+      });
+      document.getElementById("copy-diagnostics-identifiers").addEventListener("click", () => {
+        copyDiagnostics(true).catch(error => {
+          document.getElementById("diagnostics-copy-status").textContent =
+            "Copy failed: " + error.message;
+        });
       });
       window.setInterval(function () {
         synchronizeActiveSegment().catch(function (error) {

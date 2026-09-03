@@ -82,5 +82,81 @@ public sealed class SegmentCountModelsSerializationTests
         Assert.Equal(JsonValueKind.Array, array.ValueKind);
         Assert.Equal(["msdynci_customerprofile"], array.EnumerateArray().Select(e => e.GetString()));
     }
+
+    [Fact]
+    public void SegmentCountRequest_DoesNotAcceptOrSerializeInternalDiagnostics()
+    {
+        const string json = """
+            {
+              "query": {},
+              "requiredDataverseTables": [],
+              "diagnostics": {
+                "requestId": "caller-controlled"
+              }
+            }
+            """;
+
+        var request = JsonSerializer.Deserialize<SegmentCountRequest>(json, WebDefaults)!;
+        var serialized = JsonSerializer.Serialize(request, WebDefaults);
+
+        Assert.Equal(string.Empty, request.Diagnostics.RequestId);
+        Assert.DoesNotContain("diagnostics", serialized, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SegmentDiagnostics_ExposeOnlyBoundedComplexityWithoutFilterValues()
+    {
+        var secretFilterValue = JsonSerializer.SerializeToElement("customer@example.test");
+        var request = new SegmentCountRequest
+        {
+            Query = new SegmentQueryNode
+            {
+                BusinessUnitId = Guid.NewGuid(),
+                FirstOperand = new SegmentOperand
+                {
+                    Kind = "profile",
+                    Steps =
+                    [
+                        new SegmentFilterStep
+                        {
+                            Kind = "profile",
+                            Condition = new SegmentCondition
+                            {
+                                Kind = "and",
+                                Children =
+                                [
+                                    new SegmentCondition
+                                    {
+                                        Kind = "consent",
+                                        Value = secretFilterValue
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                SetOperations =
+                [
+                    new SegmentSetOperation
+                    {
+                        Operator = "except",
+                        Operand = new SegmentOperand { Kind = "interaction" }
+                    }
+                ]
+            }
+        };
+
+        var diagnostics = SegmentDiagnosticsFactory.Create(request, "request-123");
+        var json = JsonSerializer.Serialize(diagnostics, WebDefaults);
+
+        Assert.Equal("request-123", diagnostics.RequestId);
+        Assert.True(diagnostics.Runtime.BusinessUnitScoping);
+        Assert.Equal(1, diagnostics.QueryComplexity.ProfileFilters);
+        Assert.Equal(1, diagnostics.QueryComplexity.ConsentFilters);
+        Assert.Equal(1, diagnostics.QueryComplexity.InteractionFilters);
+        Assert.Equal(1, diagnostics.QueryComplexity.Exclusions);
+        Assert.DoesNotContain("customer@example.test", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("value", json, StringComparison.OrdinalIgnoreCase);
+    }
 }
 #endif

@@ -1,5 +1,6 @@
 #if FABRIC_API
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CustomerInsightsSegmentSankey.FabricApi;
 
@@ -14,6 +15,9 @@ public sealed class SegmentCountRequest
     /// full dependency set server-side.
     /// </summary>
     public List<string> RequiredDataverseTables { get; set; } = [];
+
+    [JsonIgnore]
+    internal SegmentPerformanceDiagnostics Diagnostics { get; set; } = new();
 }
 
 public sealed class SegmentQueryNode
@@ -174,6 +178,87 @@ public sealed class SegmentCountResponse
     /// stale/incompatible deployment if it is ever false.
     /// </summary>
     public bool CatalogReady { get; set; }
+
+    public SegmentPerformanceDiagnostics Diagnostics { get; set; } = new();
+}
+
+public sealed class SegmentPerformanceDiagnostics
+{
+    public string SchemaVersion { get; set; } = "1.0";
+
+    public DateTimeOffset CapturedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+
+    public string ApiVersion { get; set; } = string.Empty;
+
+    public string RequestId { get; set; } = string.Empty;
+
+    public string? ErrorCode { get; set; }
+
+    public SegmentDiagnosticTimings TimingsMs { get; set; } = new();
+
+    public SegmentQueryComplexity QueryComplexity { get; set; } = new();
+
+    public SegmentDiagnosticRuntime Runtime { get; set; } = new();
+
+    public List<string> SourceTables { get; set; } = [];
+
+    public SegmentDiagnosticIdentifiers Identifiers { get; set; } = new();
+}
+
+public sealed class SegmentDiagnosticTimings
+{
+    public double ApiTotal { get; set; }
+
+    public double CapacityReadiness { get; set; }
+
+    public double Catalog { get; set; }
+
+    public double SqlConnection { get; set; }
+
+    public double SqlExecution { get; set; }
+}
+
+public sealed class SegmentQueryComplexity
+{
+    public int Stages { get; set; }
+
+    public int ProfileFilters { get; set; }
+
+    public int RelationshipFilters { get; set; }
+
+    public int ConsentFilters { get; set; }
+
+    public int InteractionFilters { get; set; }
+
+    public int Unions { get; set; }
+
+    public int Exclusions { get; set; }
+
+    public int MaximumDepth { get; set; }
+}
+
+public sealed class SegmentDiagnosticRuntime
+{
+    public string Cache { get; set; } = "not_reported";
+
+    public bool Coalesced { get; set; }
+
+    public string CapacityState { get; set; } = "Unknown";
+
+    public bool BusinessUnitScoping { get; set; }
+
+    public int Retries { get; set; }
+}
+
+public sealed class SegmentDiagnosticIdentifiers
+{
+    public string? SubscriptionId { get; set; }
+
+    public string? ResourceGroup { get; set; }
+
+    public string? WorkspaceId { get; set; }
+
+    public string? LakehouseId { get; set; }
 }
 
 public sealed class SegmentCountStage

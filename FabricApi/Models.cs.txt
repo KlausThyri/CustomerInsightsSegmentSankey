@@ -11,6 +11,9 @@ public sealed class ApiError
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Detail { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SegmentPerformanceDiagnostics? Diagnostics { get; set; }
 }
 
 public sealed class FabricDependencyRequest

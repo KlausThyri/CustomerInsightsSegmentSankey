@@ -92,6 +92,12 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         {
                             message += " " + apiError.Detail;
                         }
+                        if (apiError != null && apiError.Diagnostics != null)
+                        {
+                           message += "\nSANK_DIAGNOSTICS:" +
+                               Convert.ToBase64String(
+                                   Encoding.UTF8.GetBytes(Serialize(apiError.Diagnostics)));
+                        }
 
                         throw new InvalidPluginExecutionException(message);
                     }
@@ -140,7 +146,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         false,
                         stages,
                         dependencies,
-                        result.QueryToken);
+                        result.QueryToken,
+                        result.Diagnostics);
                 }
             }
         }
@@ -1207,6 +1214,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "catalogReady", Order = 6)]
         public bool CatalogReady { get; set; }
+
+        [DataMember(Name = "diagnostics", Order = 7, EmitDefaultValue = false)]
+        public FabricSegmentDiagnostics Diagnostics { get; set; }
     }
 
     [DataContract]
@@ -1236,5 +1246,127 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "detail", Order = 3)]
         public string Detail { get; set; }
+
+        [DataMember(Name = "diagnostics", Order = 4, EmitDefaultValue = false)]
+        public FabricSegmentDiagnostics Diagnostics { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class FabricSegmentDiagnostics
+    {
+        [DataMember(Name = "schemaVersion", Order = 1)]
+        public string SchemaVersion { get; set; }
+
+        [DataMember(Name = "capturedAtUtc", Order = 2)]
+        public string CapturedAtUtc { get; set; }
+
+        [DataMember(Name = "apiVersion", Order = 3)]
+        public string ApiVersion { get; set; }
+
+        [DataMember(Name = "requestId", Order = 4)]
+        public string RequestId { get; set; }
+
+        [DataMember(Name = "errorCode", Order = 5, EmitDefaultValue = false)]
+        public string ErrorCode { get; set; }
+
+        [DataMember(Name = "timingsMs", Order = 6)]
+        public FabricSegmentDiagnosticTimings TimingsMs { get; set; }
+
+        [DataMember(Name = "queryComplexity", Order = 7)]
+        public FabricSegmentQueryComplexity QueryComplexity { get; set; }
+
+        [DataMember(Name = "runtime", Order = 8)]
+        public FabricSegmentDiagnosticRuntime Runtime { get; set; }
+
+        [DataMember(Name = "sourceTables", Order = 9)]
+        public List<string> SourceTables { get; set; }
+
+        [DataMember(Name = "identifiers", Order = 10)]
+        public FabricSegmentDiagnosticIdentifiers Identifiers { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class FabricSegmentDiagnosticTimings
+    {
+        [DataMember(Name = "apiTotal", Order = 1)]
+        public double ApiTotal { get; set; }
+
+        [DataMember(Name = "capacityReadiness", Order = 2)]
+        public double CapacityReadiness { get; set; }
+
+        [DataMember(Name = "catalog", Order = 3)]
+        public double Catalog { get; set; }
+
+        [DataMember(Name = "sqlConnection", Order = 4)]
+        public double SqlConnection { get; set; }
+
+        [DataMember(Name = "sqlExecution", Order = 5)]
+        public double SqlExecution { get; set; }
+
+        [DataMember(Name = "dataverseAction", Order = 6)]
+        public double DataverseAction { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class FabricSegmentQueryComplexity
+    {
+        [DataMember(Name = "stages", Order = 1)]
+        public int Stages { get; set; }
+
+        [DataMember(Name = "profileFilters", Order = 2)]
+        public int ProfileFilters { get; set; }
+
+        [DataMember(Name = "relationshipFilters", Order = 3)]
+        public int RelationshipFilters { get; set; }
+
+        [DataMember(Name = "consentFilters", Order = 4)]
+        public int ConsentFilters { get; set; }
+
+        [DataMember(Name = "interactionFilters", Order = 5)]
+        public int InteractionFilters { get; set; }
+
+        [DataMember(Name = "unions", Order = 6)]
+        public int Unions { get; set; }
+
+        [DataMember(Name = "exclusions", Order = 7)]
+        public int Exclusions { get; set; }
+
+        [DataMember(Name = "maximumDepth", Order = 8)]
+        public int MaximumDepth { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class FabricSegmentDiagnosticRuntime
+    {
+        [DataMember(Name = "cache", Order = 1)]
+        public string Cache { get; set; }
+
+        [DataMember(Name = "coalesced", Order = 2)]
+        public bool Coalesced { get; set; }
+
+        [DataMember(Name = "capacityState", Order = 3)]
+        public string CapacityState { get; set; }
+
+        [DataMember(Name = "businessUnitScoping", Order = 4)]
+        public bool BusinessUnitScoping { get; set; }
+
+        [DataMember(Name = "retries", Order = 5)]
+        public int Retries { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class FabricSegmentDiagnosticIdentifiers
+    {
+        [DataMember(Name = "subscriptionId", Order = 1)]
+        public string SubscriptionId { get; set; }
+
+        [DataMember(Name = "resourceGroup", Order = 2)]
+        public string ResourceGroup { get; set; }
+
+        [DataMember(Name = "workspaceId", Order = 3)]
+        public string WorkspaceId { get; set; }
+
+        [DataMember(Name = "lakehouseId", Order = 4)]
+        public string LakehouseId { get; set; }
     }
 }

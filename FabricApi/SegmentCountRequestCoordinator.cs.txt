@@ -1,4 +1,5 @@
 #if FABRIC_API
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 
 namespace CustomerInsightsSegmentSankey.FabricApi;
@@ -84,6 +85,7 @@ internal sealed class SegmentCountRequestCoordinator
         SegmentCountRequest request,
         CancellationToken cancellationToken)
     {
+        var capacityTimer = Stopwatch.StartNew();
         var capacityTask = ensureCapacityActiveAsync(cancellationToken);
 
         // The optimistic evaluation gets its own linked cancellation source
@@ -97,6 +99,8 @@ internal sealed class SegmentCountRequestCoordinator
         // never be delayed behind the concurrently started evaluation -
         // inspect it first, before ever awaiting evaluateTask.
         await AwaitWithoutThrowingAsync(capacityTask);
+        request.Diagnostics.TimingsMs.CapacityReadiness +=
+            capacityTimer.Elapsed.TotalMilliseconds;
 
         if (capacityTask.IsCanceled || capacityTask.IsFaulted)
         {
@@ -113,6 +117,7 @@ internal sealed class SegmentCountRequestCoordinator
             // exactly as it was produced - no manual unwrapping needed.
             await capacityTask;
         }
+        request.Diagnostics.Runtime.CapacityState = "Active";
 
         try
         {
@@ -131,6 +136,7 @@ internal sealed class SegmentCountRequestCoordinator
                 var response = evaluateTask.Result;
                 response.AddedTables = [];
                 response.CatalogReady = true;
+                response.Diagnostics.Runtime.CapacityState = "Active";
                 validationQueue.Enqueue(request.RequiredDataverseTables);
                 return response;
             }
@@ -150,6 +156,7 @@ internal sealed class SegmentCountRequestCoordinator
             // entirely, preserving prior behavior unchanged.
             if (capacityTask.IsCompletedSuccessfully && capacityTask.Result)
             {
+                request.Diagnostics.Runtime.Retries++;
                 var retryAfterCapacityTask = evaluateAsync(request, cancellationToken);
                 await AwaitWithoutThrowingAsync(retryAfterCapacityTask);
                 if (retryAfterCapacityTask.IsCanceled)
@@ -162,6 +169,7 @@ internal sealed class SegmentCountRequestCoordinator
                     var response = retryAfterCapacityTask.Result;
                     response.AddedTables = [];
                     response.CatalogReady = true;
+                    response.Diagnostics.Runtime.CapacityState = "Active";
                     validationQueue.Enqueue(request.RequiredDataverseTables);
                     return response;
                 }
@@ -185,9 +193,11 @@ internal sealed class SegmentCountRequestCoordinator
 
             // Retry exactly once, with no catch: any failure here (including
             // the same missing-table condition recurring) propagates as-is.
+            request.Diagnostics.Runtime.Retries++;
             var retried = await evaluateAsync(request, cancellationToken);
             retried.AddedTables = reconciliation.AddedTables;
             retried.CatalogReady = reconciliation.CatalogReady;
+            retried.Diagnostics.Runtime.CapacityState = "Active";
 
             // The retry itself just proved the full requested set queryable, so
             // record it as validated instead of re-enqueueing redundant work.

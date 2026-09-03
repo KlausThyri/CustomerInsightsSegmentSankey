@@ -3,6 +3,7 @@ using CustomerInsightsSegmentSankey.FabricApi;
 using Azure.Core;
 using Azure.Identity;
 using System.Security.Cryptography;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 
@@ -101,6 +102,7 @@ app.MapPost(
         ILogger<Program> logger,
         CancellationToken cancellationToken) =>
     {
+        var apiTimer = Stopwatch.StartNew();
         if (!HasValidApiKey(request))
         {
             return Results.Json(
@@ -111,13 +113,19 @@ app.MapPost(
                 },
                 statusCode: StatusCodes.Status401Unauthorized);
         }
-
         try
         {
-            return Results.Ok(await coordinator.HandleAsync(input, cancellationToken));
+            input.Diagnostics = SegmentDiagnosticsFactory.Create(
+                input,
+                request.HttpContext.TraceIdentifier);
+            var response = await coordinator.HandleAsync(input, cancellationToken);
+            input.Diagnostics.TimingsMs.ApiTotal = apiTimer.Elapsed.TotalMilliseconds;
+            return Results.Ok(response);
         }
         catch (SegmentQueryException exception)
         {
+            input.Diagnostics.TimingsMs.ApiTotal = apiTimer.Elapsed.TotalMilliseconds;
+            input.Diagnostics.ErrorCode = exception.Code;
             logger.LogWarning(
                 exception,
                 "Segment-count query rejected with code {Code}.",
@@ -127,12 +135,15 @@ app.MapPost(
                 {
                     Code = exception.Code,
                     Message = exception.Message,
-                    Detail = exception.Detail
+                    Detail = exception.Detail,
+                    Diagnostics = input.Diagnostics
                 },
                 statusCode: StatusCodes.Status422UnprocessableEntity);
         }
         catch (FabricQueryException exception)
         {
+            input.Diagnostics.TimingsMs.ApiTotal = apiTimer.Elapsed.TotalMilliseconds;
+            input.Diagnostics.ErrorCode = exception.Code;
             logger.LogWarning(
                 exception,
                 "Segment-count interaction rejected with code {Code}.",
@@ -142,22 +153,27 @@ app.MapPost(
                 {
                     Code = exception.Code,
                     Message = exception.Message,
-                    Detail = exception.Detail
+                    Detail = exception.Detail,
+                    Diagnostics = input.Diagnostics
                 },
                 statusCode: StatusCodes.Status422UnprocessableEntity);
         }
         catch (Exception exception)
         {
+            input.Diagnostics.TimingsMs.ApiTotal = apiTimer.Elapsed.TotalMilliseconds;
+            input.Diagnostics.ErrorCode = "execution_failed";
             logger.LogError(exception, "Segment-count execution failed.");
             return Results.Json(
                 new ApiError
                 {
                     Code = "execution_failed",
-                    Message = "The Fabric segment evaluation failed."
+                    Message = "The Fabric segment evaluation failed.",
+                    Diagnostics = input.Diagnostics
                 },
                 statusCode: StatusCodes.Status500InternalServerError);
         }
     });
+
 app.MapPost(
     "/api/segment-members",
     async (

@@ -1,4 +1,5 @@
 #if FABRIC_API
+using System.Diagnostics;
 using Microsoft.Data.SqlClient;
 
 namespace CustomerInsightsSegmentSankey.FabricApi;
@@ -13,13 +14,39 @@ internal sealed class FabricSegmentCountService(
         SegmentCountRequest request,
         CancellationToken cancellationToken)
     {
-        var snapshot = await catalog.GetSnapshotAsync(cancellationToken);
+        var catalogTimer = Stopwatch.StartNew();
+        FabricSegmentCatalogSnapshot snapshot;
+        try
+        {
+            snapshot = await catalog.GetSnapshotAsync(cancellationToken);
+        }
+        finally
+        {
+            request.Diagnostics.TimingsMs.Catalog += catalogTimer.Elapsed.TotalMilliseconds;
+        }
         var compiled = compiler.Compile(request, snapshot);
+        request.Diagnostics.QueryComplexity.Stages = compiled.Stages.Count;
+        request.Diagnostics.SourceTables = compiled.SourceTables
+            .Select(table => table.Table)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(50)
+            .ToList();
         var counts = new long[compiled.Stages.Count];
         var seen = new bool[compiled.Stages.Count];
 
-        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(compiled.Sql, connection)
+        var connectionTimer = Stopwatch.StartNew();
+        SqlConnection connection;
+        try
+        {
+            connection = await connectionFactory.OpenAsync(cancellationToken);
+        }
+        finally
+        {
+            request.Diagnostics.TimingsMs.SqlConnection +=
+                connectionTimer.Elapsed.TotalMilliseconds;
+        }
+        await using var ownedConnection = connection;
+        await using var command = new SqlCommand(compiled.Sql, ownedConnection)
         {
             CommandTimeout = 120
         };
@@ -28,18 +55,27 @@ internal sealed class FabricSegmentCountService(
             command.Parameters.Add(parameter);
         }
 
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
+        var executionTimer = Stopwatch.StartNew();
+        try
         {
-            var order = reader.GetInt32(0);
-            if (order < 0 || order >= counts.Length || seen[order])
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
             {
-                throw new InvalidOperationException(
-                    "Fabric returned an invalid segment-count stage order.");
-            }
+                var order = reader.GetInt32(0);
+                if (order < 0 || order >= counts.Length || seen[order])
+                {
+                    throw new InvalidOperationException(
+                        "Fabric returned an invalid segment-count stage order.");
+                }
 
-            counts[order] = reader.GetInt64(1);
-            seen[order] = true;
+                counts[order] = reader.GetInt64(1);
+                seen[order] = true;
+            }
+        }
+        finally
+        {
+            request.Diagnostics.TimingsMs.SqlExecution +=
+                executionTimer.Elapsed.TotalMilliseconds;
         }
 
         if (seen.Any(value => !value))
@@ -47,7 +83,6 @@ internal sealed class FabricSegmentCountService(
             throw new InvalidOperationException(
                 "Fabric did not return every requested segment-count stage.");
         }
-
         return new SegmentCountResponse
         {
             Stages = compiled.Stages
@@ -61,7 +96,8 @@ internal sealed class FabricSegmentCountService(
                 .ToList(),
             SourceTables = compiled.SourceTables.ToList(),
             GeneratedAt = DateTimeOffset.UtcNow,
-            QueryToken = tokenService.IssueQueryToken(request.Query)
+            QueryToken = tokenService.IssueQueryToken(request.Query),
+            Diagnostics = request.Diagnostics
         };
     }
 }
