@@ -5765,7 +5765,7 @@ test("a resumed pre-package run redeploys Azure so the current API package is in
   );
 });
 
-test("a new Solution release redeploys the package even when API bytes are unchanged", async () => {
+test("a new package release redeploys even when API bytes are unchanged", async () => {
   const direct = directHarness({ appSettings: { BEHAVIORAL_API_KEY: "earlier-run-key" } });
   const { orchestrator } = directOrchestrator({
     direct,
@@ -5803,7 +5803,47 @@ test("a new Solution release redeploys the package even when API bytes are uncha
   assert.equal(result.results.find((entry) => entry.id === "azure-infra").status, "succeeded");
   assert.equal(result.results.find((entry) => entry.id === "azure-app").status, "succeeded");
   assert.ok(direct.calls.some((call) => call.kind === "deployTemplate"));
-  assert.equal(result.facts.packageDeploymentVersion, payload.contentVersion);
+  assert.equal(result.facts.packageDeploymentVersion, "1.1.0.71");
+});
+
+test("a UI-only Solution update keeps the completed API package deployment", async () => {
+  const direct = directHarness({ appSettings: { BEHAVIORAL_API_KEY: "earlier-run-key" } });
+  const { orchestrator } = directOrchestrator({
+    direct,
+    settings: {
+      apiPackageUrl:
+        "https://github.com/KlausThyri/CustomerInsightsSegmentSankey/releases/download/v1.1.0.71/segment-preview-api-1.1.0.33.zip " +
+        SHIPPED_SHA,
+      completed: {
+        secret: true,
+        "fabric-discovery": true,
+        "fabric-notebook": true,
+        "azure-infra": true,
+        "azure-app": true
+      },
+      facts: {
+        workspaceId: VALID_TARGET.fabricWorkspaceId,
+        servingLakehouseId: VALID_TARGET.fabricServingLakehouseId,
+        fabricSqlServer: "contoso.datawarehouse.fabric.microsoft.com",
+        fabricSqlDatabase: "SegmentPreviewServing",
+        dataverseLakehouseId: DATAVERSE_LAKEHOUSE_ID,
+        dataverseDeltaFolder: DATAVERSE_DELTA_FOLDER,
+        capacityResourceId: VALID_TARGET.fabricCapacityResourceId,
+        apiBaseUrl: "https://segment-preview-api.azurewebsites.net/api/",
+        principalId: "99999999-8888-7777-6666-555555555555",
+        packageSha256: SHIPPED_SHA,
+        packageVersion: payload.api.version,
+        packageDeploymentVersion: "1.1.0.71"
+      }
+    }
+  });
+
+  const result = await orchestrator.run();
+
+  assert.equal(result.ok, true, JSON.stringify(result.results, null, 2));
+  assert.equal(result.results.find((entry) => entry.id === "azure-infra").status, "resumed");
+  assert.equal(result.results.find((entry) => entry.id === "azure-app").status, "resumed");
+  assert.equal(direct.calls.some((call) => call.kind === "deployTemplate"), false);
 });
 
 test("a mirrored package URL still uses the Solution release for resume invalidation", async () => {

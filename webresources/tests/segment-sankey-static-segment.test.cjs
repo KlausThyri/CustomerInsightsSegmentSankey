@@ -64,3 +64,34 @@ test("a paused Fabric capacity is retried with dedicated progress", () => {
   assert.match(html, /Starting Fabric capacity/);
   assert.match(html, /Azure is resuming the paused capacity/);
 });
+
+test("the first paint shows an accessible progressive loading skeleton", () => {
+  assert.match(
+    html,
+    /<section class="summary" id="summary" aria-label="Summary" aria-busy="true">/
+  );
+  assert.match(html, /class="metric-value loading-value"/);
+  assert.match(html, /class="loading-flow" role="status" aria-live="polite"/);
+  assert.match(html, /Loading segment structure and filter counts\./);
+  assert.match(html, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
+test("refresh keeps an existing visualization visible while counts update", () => {
+  assert.match(html, /function setLoading\(isLoading, showSkeleton\)/);
+  assert.match(html, /if \(showSkeleton\) \{\s*showLoadingSkeleton\(\);/);
+  assert.match(html, /chart\.classList\.add\("refreshing"\)/);
+  assert.match(html, /chart\.setAttribute\("inert", ""\)/);
+  assert.match(html, /pointer-events: none/);
+  assert.match(html, /setLoading\(true, isNewSegment\)/);
+  assert.match(
+    html,
+    /if \(isNewSegment\) \{\s*document\.getElementById\("summary"\)\.hidden = true;/
+  );
+});
+
+test("a response for a segment that is no longer active is discarded", () => {
+  assert.match(html, /activeSegmentId && activeSegmentId !== segmentId/);
+  assert.match(html, /queueMicrotask\(\(\) => \{/);
+  assert.match(html, /refresh\(\{ segmentId: activeSegmentId, automatic: true \}\)/);
+  assert.match(html, /return false;\s*\}\s*render\(result,/);
+});

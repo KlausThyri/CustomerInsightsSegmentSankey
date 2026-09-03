@@ -211,6 +211,15 @@
     .metric { min-width: 0; padding: 12px 14px; background: var(--cp-surface); }
     .metric-label { color: var(--cp-text-muted); font-size: 12px; }
     .metric-value { margin-top: 2px; font-size: 20px; font-weight: 600; }
+    .metric-value.loading-value {
+      width: 58%;
+      min-width: 54px;
+      height: 24px;
+      border-radius: .375rem;
+      background: var(--cp-surface-soft);
+      color: transparent;
+      animation: loading-pulse 1.4s ease-in-out infinite;
+    }
     .visualization {
       overflow: hidden;
       margin-top: 16px;
@@ -231,9 +240,76 @@
     .legend-swatch.remaining { background: var(--cp-accent); }
     .legend-swatch.removed { background: var(--cp-border-strong); }
     .chart {
+      position: relative;
       min-height: 260px;
       padding: 12px 12px 4px;
       background: var(--cp-bg-elevated);
+    }
+    .chart.refreshing .sankey-svg {
+      opacity: .62;
+      pointer-events: none;
+    }
+    .chart.refreshing::after {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      padding: 4px 8px;
+      border: 1px solid var(--cp-border);
+      border-radius: 999px;
+      background: var(--cp-panel-strong);
+      color: var(--cp-text-muted);
+      content: "Updating counts…";
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .loading-flow {
+      display: grid;
+      justify-items: center;
+      gap: 0;
+      padding: 12px 6px 24px;
+    }
+    .loading-stage {
+      width: min(338px, 82%);
+      height: 68px;
+      padding: 14px 16px;
+      border: 1px solid var(--cp-border);
+      border-radius: .625rem;
+      background: var(--cp-surface);
+    }
+    .loading-stage::before,
+    .loading-stage::after {
+      display: block;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--cp-surface-soft);
+      content: "";
+      animation: loading-pulse 1.4s ease-in-out infinite;
+    }
+    .loading-stage::before { width: 54%; }
+    .loading-stage::after {
+      width: 78%;
+      margin-top: 10px;
+      animation-delay: .12s;
+    }
+    .loading-connector {
+      width: 8px;
+      height: 34px;
+      background: var(--cp-border);
+      opacity: .7;
+      animation: loading-pulse 1.4s ease-in-out infinite;
+    }
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    @keyframes loading-pulse {
+      0%, 100% { opacity: .45; }
+      50% { opacity: 1; }
     }
     .sankey-svg { display: block; width: 100%; height: auto; overflow: visible; }
     .journey-trunk, .journey-flow, .journey-loss-flow, .journey-add-flow {
@@ -497,6 +573,15 @@
       animation: spin .8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .spinner,
+      .loading-stage::before,
+      .loading-stage::after,
+      .loading-connector,
+      .metric-value.loading-value {
+        animation: none;
+      }
+    }
     @media (max-width: 440px) {
       .app { padding-inline: 12px; }
       .metadata span + span::before { content: ""; margin: 0; }
@@ -511,7 +596,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.71">v1.1.0.71</span>
+          <span class="app-version" aria-label="Version 1.1.0.72">v1.1.0.72</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -539,18 +624,18 @@
       ></progress>
     </div>
 
-    <section class="summary" id="summary" aria-label="Zusammenfassung" hidden>
+    <section class="summary" id="summary" aria-label="Summary" aria-busy="true">
       <div class="metric">
         <div class="metric-label">Starting members</div>
-        <div class="metric-value" id="initial-count">–</div>
+        <div class="metric-value loading-value" id="initial-count" aria-label="Loading">–</div>
       </div>
       <div class="metric">
         <div class="metric-label">Result</div>
-        <div class="metric-value" id="result-count">–</div>
+        <div class="metric-value loading-value" id="result-count" aria-label="Loading">–</div>
       </div>
       <div class="metric">
         <div class="metric-label">Retention</div>
-        <div class="metric-value" id="retention">–</div>
+        <div class="metric-value loading-value" id="retention" aria-label="Loading">–</div>
       </div>
     </section>
 
@@ -560,7 +645,14 @@
         <span class="flow-note">Line width represents members</span>
       </div>
       <div class="chart" id="chart">
-        <div class="empty"><div class="spinner"></div>Loading filter counts.</div>
+        <div class="loading-flow" role="status" aria-live="polite">
+          <span class="visually-hidden">Loading segment structure and filter counts.</span>
+          <div class="loading-stage" aria-hidden="true"></div>
+          <div class="loading-connector" aria-hidden="true"></div>
+          <div class="loading-stage" aria-hidden="true"></div>
+          <div class="loading-connector" aria-hidden="true"></div>
+          <div class="loading-stage" aria-hidden="true"></div>
+        </div>
       </div>
     </section>
   </main>
@@ -686,7 +778,6 @@
         document.getElementById("segment-name").textContent = segmentName;
         if (isNewSegment) {
           state.expandedStages.clear();
-          document.getElementById("summary").hidden = true;
         }
       }
 
@@ -795,15 +886,51 @@
         return /does not contain an MQL query/i.test(String(error?.message || ""));
       }
 
-      function setLoading(isLoading) {
+      function showLoadingSkeleton() {
+        const summary = document.getElementById("summary");
+        summary.hidden = false;
+        ["initial-count", "result-count", "retention"].forEach(id => {
+          const value = document.getElementById(id);
+          value.textContent = "–";
+          value.classList.add("loading-value");
+          value.setAttribute("aria-label", "Loading");
+        });
+        document.getElementById("chart").innerHTML =
+          '<div class="loading-flow" role="status" aria-live="polite">' +
+            '<span class="visually-hidden">Loading segment structure and filter counts.</span>' +
+            '<div class="loading-stage" aria-hidden="true"></div>' +
+            '<div class="loading-connector" aria-hidden="true"></div>' +
+            '<div class="loading-stage" aria-hidden="true"></div>' +
+            '<div class="loading-connector" aria-hidden="true"></div>' +
+            '<div class="loading-stage" aria-hidden="true"></div>' +
+          '</div>';
+      }
+
+      function setLoading(isLoading, showSkeleton) {
         const button = document.getElementById("refresh-button");
+        const summary = document.getElementById("summary");
+        const chart = document.getElementById("chart");
         button.disabled = isLoading;
         document.getElementById("refresh-label").textContent =
           isLoading ? "Loading…" : "Refresh";
+        summary.setAttribute("aria-busy", String(isLoading));
+        chart.setAttribute("aria-busy", String(isLoading));
         if (isLoading) {
           document.getElementById("load-duration").textContent = "Measuring load time…";
-          document.getElementById("chart").innerHTML =
-            '<div class="empty"><div class="spinner"></div>Loading filter counts.</div>';
+          if (showSkeleton) {
+            showLoadingSkeleton();
+          } else {
+            chart.classList.add("refreshing");
+            chart.setAttribute("inert", "");
+          }
+        } else {
+          chart.classList.remove("refreshing");
+          chart.removeAttribute("inert");
+          ["initial-count", "result-count", "retention"].forEach(id => {
+            const value = document.getElementById(id);
+            value.classList.remove("loading-value");
+            value.removeAttribute("aria-label");
+          });
         }
       }
 
@@ -1843,12 +1970,24 @@
         }
         state.attemptedSegmentId = segmentId;
         state.refreshInProgress = true;
+        const isNewSegment = state.renderedSegmentId !== segmentId;
         const startedAt = performance.now();
-        setLoading(true);
+        setLoading(true, isNewSegment);
         setNotice("", "");
         try {
           await updateSegmentIdentity(segmentId);
-          render(await executeCountAction(segmentId), performance.now() - startedAt);
+          const result = await executeCountAction(segmentId);
+          const activeSegmentId = getActiveSegmentId();
+          if (activeSegmentId && activeSegmentId !== segmentId) {
+            state.attemptedSegmentId = "";
+            queueMicrotask(() => {
+              refresh({ segmentId: activeSegmentId, automatic: true }).catch(error => {
+                console.error("Segment preview: Follow-up refresh failed.", error);
+              });
+            });
+            return false;
+          }
+          render(result, performance.now() - startedAt);
           state.renderedSegmentId = segmentId;
           clearAutomaticRetry();
           clearDependencyProgress();
@@ -1904,8 +2043,11 @@
               : " Ensure that the Custom API " + ACTION_NAME + " is deployed."),
             "error"
           );
-          document.getElementById("chart").innerHTML =
-            '<div class="empty">The filter counts could not be loaded.</div>';
+          if (isNewSegment) {
+            document.getElementById("summary").hidden = true;
+            document.getElementById("chart").innerHTML =
+              '<div class="empty">The filter counts could not be loaded.</div>';
+          }
           return false;
         } finally {
           setLoading(false);

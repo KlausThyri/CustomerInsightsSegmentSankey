@@ -9,6 +9,11 @@ Side-pane preview for draft segments in Dynamics 365 Customer Insights - Journey
 See cumulative member counts for every filter stage without leaving the
 Customer Insights segment editor.
 
+The panel paints its header, summary placeholders, and member-flow skeleton
+immediately while Fabric calculates the counts. Refreshing an already rendered
+segment keeps the previous result visible with an updating indicator, then
+replaces the values atomically when the new evaluation completes.
+
 <img src="documentation/images/segment-preview-sankey.png"
      alt="Segment Preview side pane with cumulative member counts and Sankey flow"
      width="620">
