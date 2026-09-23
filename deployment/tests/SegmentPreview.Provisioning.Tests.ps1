@@ -991,13 +991,17 @@ Describe 'Segment count fast path' {
             Join-Path $script:RepositoryRoot 'CustomApi\GetSegmentFilterCountsPlugin.cs') -Raw
         $script:CountClient = Get-Content -LiteralPath (
             Join-Path $script:RepositoryRoot 'CustomApi\FabricSegmentCountClient.cs') -Raw
+        $script:CountApiClient = Get-Content -LiteralPath (
+            Join-Path $script:RepositoryRoot 'CustomApi\FabricSegmentCountApiClient.cs') -Raw
+        $script:CountSettingsProvider = Get-Content -LiteralPath (
+            Join-Path $script:RepositoryRoot 'CustomApi\FabricSegmentCountSettingsProvider.cs') -Raw
     }
 
     It 'uses one optimized Azure API call instead of provisioning first' {
         $script:CountPlugin | Should -Not -Match 'FabricDependencyProvisioningClient'
         $script:CountPlugin | Should -Match 'FabricSegmentCountClient'
         $script:CountClient | Should -Match 'requiredDataverseTables'
-        $script:CountClient | Should -Match 'new Uri\(behavioralEndpoint, "segment-counts"\)'
+        $script:CountApiClient | Should -Match 'new Uri\(settings\.BehavioralEndpoint, "segment-counts"\)'
     }
 
     It 'derives dependencies from the already-built request' {
@@ -1006,7 +1010,7 @@ Describe 'Segment count fast path' {
     }
 
     It 'loads all runtime environment settings in one batch' {
-        $script:CountClient | Should -Match 'EnvironmentVariableReader\.ReadMany'
+        $script:CountSettingsProvider | Should -Match 'EnvironmentVariableReader\.ReadMany'
         $reader = Get-Content -LiteralPath (
             Join-Path $script:RepositoryRoot 'CustomApi\EnvironmentVariableReader.cs') -Raw
         $reader | Should -Match 'ConditionOperator\.In'
@@ -1014,8 +1018,8 @@ Describe 'Segment count fast path' {
     }
 
     It 'requires the unified API to confirm catalog readiness' {
-        $script:CountClient | Should -Match 'result\.CatalogReady'
-        $script:CountClient | Should -Match 'result\.AddedTables'
-        $script:CountClient | Should -Match 'optimized dependency repair'
+        $script:CountApiClient | Should -Match 'result\.CatalogReady'
+        $script:CountApiClient | Should -Match 'result\.AddedTables'
+        $script:CountApiClient | Should -Match 'optimized dependency repair'
     }
 }
