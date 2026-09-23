@@ -114,7 +114,7 @@ test("browser requests and Fabric DTOs use the same member field names", () => {
     assert.match(browser, new RegExp(`\\b${field}\\s*:`));
   }
   assert.deepEqual(propertyNames(fabric, "SegmentMemberRequest"), fabricFields);
-  assert.match(browser, /klth_requestjson:\s*JSON\.stringify\(requestShape\(\)\)/);
+  assert.match(browser, /klth_requestjson:\s*JSON\.stringify\(request\)/);
 });
 
 test("count and member endpoints keep their response contracts distinct", () => {

@@ -1,0 +1,46 @@
+#if FABRIC_API
+using System.Security.Cryptography;
+using System.Text;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+/// <summary>
+/// Accepts the active key and, during a rotation, one explicitly configured
+/// previous key. The comparison is constant-time and the previous key is never
+/// returned in a response or log.
+/// </summary>
+internal sealed class ApiKeyValidator
+{
+    private readonly byte[][] keys;
+
+    public ApiKeyValidator()
+    {
+        var active = Environment.GetEnvironmentVariable("BEHAVIORAL_API_KEY");
+        var previous = Environment.GetEnvironmentVariable("BEHAVIORAL_API_KEY_PREVIOUS");
+        if (string.IsNullOrWhiteSpace(active))
+        {
+            throw new InvalidOperationException(
+                "The application setting 'BEHAVIORAL_API_KEY' is not configured.");
+        }
+
+        var values = new[] { active.Trim(), previous?.Trim() }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        keys = values.Select(value => Encoding.UTF8.GetBytes(value!)).ToArray();
+    }
+
+    public bool IsValid(string? supplied)
+    {
+        if (string.IsNullOrEmpty(supplied))
+        {
+            return false;
+        }
+
+        var suppliedBytes = Encoding.UTF8.GetBytes(supplied);
+        return keys.Any(key =>
+            key.Length == suppliedBytes.Length &&
+            CryptographicOperations.FixedTimeEquals(key, suppliedBytes));
+    }
+}
+#endif

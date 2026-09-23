@@ -922,6 +922,26 @@
         <summary>Interactive steps that Microsoft requires</summary>
         <ul class="consent-list" id="consentList" style="margin-top:12px"></ul>
       </details>
+
+      <details id="apiKeyRotationSection" style="margin-top:18px" hidden>
+        <summary>API key rotation</summary>
+        <div class="connect-body">
+          <p class="lead" id="apiKeyRotationStatus">
+            The behavioral API key authenticates the Web App with the Fabric API.
+          </p>
+          <div class="panel-actions">
+            <button class="button" id="rotateApiKeyButton" type="button">Rotate API key</button>
+            <button class="button" id="finishApiKeyRotationButton" type="button" hidden>
+              Finish rotation (revoke previous key)
+            </button>
+          </div>
+          <p class="note">
+            Rotating generates a new key and redeploys the Web App while the previous
+            key keeps working, so nothing breaks mid-rotation. Once every caller uses
+            the new key, press "Finish rotation" to revoke the old one.
+          </p>
+        </div>
+      </details>
         </div>
       </section>
       </div>
@@ -1110,6 +1130,7 @@
         availableUpdate: null,
         checkingForUpdates: false,
         installingUpdate: false,
+        activeSolutionOperations: [],
         correlationId: "",
         failedStep: "",
         journeysGuidanceTrigger: null
@@ -1158,6 +1179,10 @@
       const consentList = document.getElementById("consentList");
       const panelNote = document.getElementById("panelNote");
       const panelProvisionButton = document.getElementById("panelProvisionButton");
+      const apiKeyRotationSection = document.getElementById("apiKeyRotationSection");
+      const apiKeyRotationStatus = document.getElementById("apiKeyRotationStatus");
+      const rotateApiKeyButton = document.getElementById("rotateApiKeyButton");
+      const finishApiKeyRotationButton = document.getElementById("finishApiKeyRotationButton");
       const saveButton = document.getElementById("saveButton");
       const connectPanel = document.getElementById("connectPanel");
       const connectSummary = document.getElementById("connectSummary");
@@ -1489,6 +1514,54 @@
         return solution;
       }
 
+      async function activeSolutionOperations() {
+        const [importJobs, asyncOperations] = await Promise.all([
+          dataverseRequest(
+            "importjobs?$select=importjobid,startedon&$filter=completedon eq null&$top=10"
+          ),
+          dataverseRequest(
+            "asyncoperations?$select=name,startedon&$filter=statecode eq 0&$top=100"
+          )
+        ]);
+        const imports = Array.isArray(importJobs.value) ? importJobs.value : [];
+        const pendingAsyncOperations = Array.isArray(asyncOperations.value)
+          ? asyncOperations.value.filter(operation =>
+            /(?:import|uninstall|delete)\s+(?:managed\s+)?solution|solution\s+(?:import|uninstall|delete)/i
+              .test(String(operation.name || ""))
+          )
+          : [];
+        return [
+          ...imports.map(operation => ({
+            name: "solution import",
+            startedOn: operation.startedon || null
+          })),
+          ...pendingAsyncOperations.map(operation => ({
+            name: String(operation.name || "solution operation"),
+            startedOn: operation.startedon || null
+          }))
+        ];
+      }
+
+      async function requireNoActiveSolutionOperations() {
+        const operations = await activeSolutionOperations();
+        state.activeSolutionOperations = operations;
+        if (!operations.length) {
+          return;
+        }
+        const operationNames = operations
+          .map(operation => operation.name)
+          .slice(0, 3)
+          .join(", ");
+        const error = new Error(
+          "Dataverse is currently running " + operations.length +
+            " active solution import or uninstall operation" +
+            (operations.length === 1 ? "" : "s") +
+            " (" + operationNames + "). Wait for it to finish, then check for updates again."
+        );
+        error.code = "active_solution_operation";
+        throw error;
+      }
+
       async function checkForUpdates() {
         if (!engine || state.checkingForUpdates || state.installingUpdate) return;
         appendInstallationLog("info", "update.check-started", "Checking the latest release.");
@@ -1497,6 +1570,7 @@
         checkUpdatesButton.disabled = true;
         renderUpdateState("", "Checking for updates…", "Reading the latest verified GitHub release.");
         try {
+          await requireNoActiveSolutionOperations();
           const [solution, response] = await Promise.all([
             installedSolution(),
             fetch(
@@ -1547,12 +1621,13 @@
             );
           }
         } catch (error) {
-          appendInstallationLog("error", "update.check-failed", error.message || String(error), {
+          const operationIsActive = error?.code === "active_solution_operation";
+          appendInstallationLog(operationIsActive ? "warning" : "error", "update.check-failed", error.message || String(error), {
             error
           });
           renderUpdateState(
-            "error",
-            "Updates could not be checked",
+            operationIsActive ? "blocked" : "error",
+            operationIsActive ? "Update temporarily unavailable" : "Updates could not be checked",
             (error && error.message) || String(error)
           );
         } finally {
@@ -1629,6 +1704,7 @@
       }
 
       async function importSolutionAndConfirm(update, bytes) {
+        await requireNoActiveSolutionOperations();
         try {
           await dataverseRequest("ImportSolution", {
             method: "POST",
@@ -1692,6 +1768,7 @@
           update
         );
         try {
+          await requireNoActiveSolutionOperations();
           const rawUrl =
             "https://raw.githubusercontent.com/" +
             UPDATE_REPOSITORY +
@@ -3529,13 +3606,26 @@
         renderFields(context.target);
         renderConsent(context.consent);
         renderPlan(context.plan);
+        renderApiKeyRotationSection();
         panelNote.textContent = context.missingVariables.length
           ? "Configuration variables missing from this environment: " + context.missingVariables.join(", ")
           : "Contract " + context.contractVersion + " · mode " + context.mode.mode;
         setBusy(false);
       }
 
-      async function runProvisioning(dryRun) {
+      function renderApiKeyRotationSection() {
+        const fingerprint = state.setup?.state?.apiKeyFingerprint;
+        const pending = Boolean(state.setup?.state?.apiKeyRotationPending);
+        apiKeyRotationSection.hidden = !fingerprint;
+        if (!fingerprint) return;
+        apiKeyRotationStatus.textContent = pending
+          ? "Rotation in progress (" + fingerprint + "). The previous key still works until you finish the rotation."
+          : "Current API key fingerprint: " + fingerprint + ".";
+        rotateApiKeyButton.hidden = pending;
+        finishApiKeyRotationButton.hidden = !pending;
+      }
+
+      async function runProvisioning(dryRun, rotationOptions) {
         if (state.loading || !engine) return;
         const mode = state.setup?.mode;
         if (!dryRun && !mode?.automated) {
@@ -3623,6 +3713,8 @@
           dataverse,
           mode: mode.mode,
           dryRun,
+          rotateApiKey: Boolean(rotationOptions?.rotate),
+          finishApiKeyRotation: Boolean(rotationOptions?.finish),
           target,
           environmentUrl: getClientUrl(),
           template: azureTemplate,
@@ -3686,6 +3778,7 @@
             state.fabricWorkspaceId = resolvedTarget.fabricWorkspaceId || "";
             const completed = Object.assign({}, result.completed || {});
             completed.apiKeyFingerprint = result.context.apiKeyFingerprint;
+            completed.apiKeyRotationPending = Boolean(result.context.previousApiKey);
             completed.updatedAt = new Date().toISOString();
             const facts = Object.assign({}, state.setup.facts || {}, result.facts || {});
             state.target = resolvedTarget;
@@ -3694,6 +3787,7 @@
             state.setup.facts = facts;
             await engine.saveSetupContext(dataverse, resolvedTarget, completed, facts);
             renderFields(resolvedTarget);
+            renderApiKeyRotationSection();
           }
           showNotice(
             result.ok
@@ -3834,6 +3928,26 @@
       startOverButton.addEventListener("click", startOver);
       provisionButton.addEventListener("click", () => runProvisioning(false));
       panelProvisionButton.addEventListener("click", () => runProvisioning(false));
+      rotateApiKeyButton.addEventListener("click", () => {
+        if (
+          !window.confirm(
+            "Rotate the API key now? A new key is generated and deployed; the previous key keeps working until you finish the rotation."
+          )
+        ) {
+          return;
+        }
+        runProvisioning(false, { rotate: true });
+      });
+      finishApiKeyRotationButton.addEventListener("click", () => {
+        if (
+          !window.confirm(
+            "Revoke the previous API key now? Make sure every caller has switched to the new key first."
+          )
+        ) {
+          return;
+        }
+        runProvisioning(false, { finish: true });
+      });
       saveButton.addEventListener("click", async () => {
         if (!engine || state.loading) return;
         setBusy(true);

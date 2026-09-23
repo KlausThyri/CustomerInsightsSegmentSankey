@@ -140,6 +140,7 @@ $script:StepIndex = 0
 $script:StepTotal = 0
 $script:Quiet = $false
 $script:ApiKey = $null
+$script:PreviousApiKey = $null
 $script:StepFacts = $null
 $script:StartedAt = [DateTime]::UtcNow
 $script:Results = [System.Collections.Generic.List[pscustomobject]]::new()
@@ -1012,20 +1013,25 @@ function Step-Secret {
         return 'Skipped.'
     }
 
+    $existing = Invoke-AzJson -Arguments @(
+        'webapp', 'config', 'appsettings', 'list',
+        '--resource-group', (Get-ConfigValue -Name 'ResourceGroup'),
+        '--name', (Get-ConfigValue -Name 'WebAppName')
+    ) -AllowFailure
+    $existingActive = $existing | Where-Object { $_.name -eq 'BEHAVIORAL_API_KEY' } | Select-Object -First 1
+    if ($RotateApiKey -and $existingActive -and -not [string]::IsNullOrWhiteSpace($existingActive.value)) {
+        $script:PreviousApiKey = [string] $existingActive.value
+        Write-Detail 'Keeping the existing API key as the previous key during rotation.'
+    }
+
     if ($BehavioralApiKey) {
         $script:ApiKey = [System.Net.NetworkCredential]::new('', $BehavioralApiKey).Password
         Write-Detail 'Using the API key supplied through -BehavioralApiKey.'
     }
     elseif (-not $RotateApiKey) {
-        $existing = Invoke-AzJson -Arguments @(
-            'webapp', 'config', 'appsettings', 'list',
-            '--resource-group', (Get-ConfigValue -Name 'ResourceGroup'),
-            '--name', (Get-ConfigValue -Name 'WebAppName')
-        ) -AllowFailure
         if ($existing) {
-            $setting = $existing | Where-Object { $_.name -eq 'BEHAVIORAL_API_KEY' } | Select-Object -First 1
-            if ($setting -and -not [string]::IsNullOrWhiteSpace($setting.value)) {
-                $script:ApiKey = [string] $setting.value
+            if ($existingActive -and -not [string]::IsNullOrWhiteSpace($existingActive.value)) {
+                $script:ApiKey = [string] $existingActive.value
                 Write-Detail 'Reusing the API key already configured on the Web App.'
             }
         }
@@ -1097,7 +1103,8 @@ function Step-AzureInfrastructure {
         "fabricDataverseDeltaFolder=$($required.fabricDataverseDeltaFolder)",
         "dataverseEnvironmentUrl=$($required.dataverseEnvironmentUrl)",
         "requiredDataverseTables=$(Get-ConfigValue -Name 'RequiredDataverseTables')",
-        "behavioralApiKey=$script:ApiKey"
+        "behavioralApiKey=$script:ApiKey",
+        "behavioralApiKeyPrevious=$script:PreviousApiKey"
     )
 
     if (-not $PSCmdlet.ShouldProcess("Azure deployment '$deploymentName'", 'Deploy Bicep template')) {

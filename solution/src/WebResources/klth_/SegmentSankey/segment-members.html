@@ -339,6 +339,8 @@
 
       const ACTION_NAME = "klth_GetSegmentMembers";
       const PAGE_SIZE = 50;
+      const REQUEST_CACHE_TTL_MS = 5000;
+      const MAX_REQUEST_CACHE_ENTRIES = 12;
       const context = parseContext();
       const state = {
         rows: [],
@@ -352,6 +354,7 @@
         sortField: "fullname",
         sortDirection: "asc"
       };
+      const memberRequestCache = new Map();
       const columns = [
         ["fullname", "Full name", true],
         ["emailaddress1", "Email", true],
@@ -395,6 +398,81 @@
         return window.parent?.Xrm || window.opener?.Xrm || null;
       }
 
+      function pruneRequestCache(cache) {
+        const now = Date.now();
+        for (const [key, entry] of cache) {
+          if (!entry.promise && entry.expiresAt <= now) {
+            cache.delete(key);
+          }
+        }
+        while (cache.size > MAX_REQUEST_CACHE_ENTRIES) {
+          cache.delete(cache.keys().next().value);
+        }
+      }
+
+      function awaitSharedRequest(promise, signal) {
+        if (!signal) {
+          return promise;
+        }
+        return new Promise((resolve, reject) => {
+          const abort = () => {
+            signal.removeEventListener("abort", abort);
+            reject(new DOMException("The request was cancelled.", "AbortError"));
+          };
+          if (signal.aborted) {
+            abort();
+            return;
+          }
+          signal.addEventListener("abort", abort, { once: true });
+          promise.then(
+            value => {
+              signal.removeEventListener("abort", abort);
+              resolve(value);
+            },
+            error => {
+              signal.removeEventListener("abort", abort);
+              reject(error);
+            }
+          );
+        });
+      }
+
+      function cachedRequest(cache, key, load, signal) {
+        pruneRequestCache(cache);
+        const existing = cache.get(key);
+        if (existing?.promise) {
+          return awaitSharedRequest(existing.promise, signal);
+        }
+        if (existing && existing.expiresAt > Date.now()) {
+          return awaitSharedRequest(Promise.resolve(existing.value), signal);
+        }
+        const entry = {
+          value: null,
+          promise: null,
+          expiresAt: Date.now() + REQUEST_CACHE_TTL_MS
+        };
+        entry.promise = Promise.resolve()
+          .then(load)
+          .then(value => {
+            entry.value = value;
+            entry.promise = null;
+            entry.expiresAt = Date.now() + REQUEST_CACHE_TTL_MS;
+            pruneRequestCache(cache);
+            return value;
+          })
+          .catch(error => {
+            if (cache.get(key) === entry) {
+              cache.delete(key);
+            }
+            throw error;
+          });
+        while (cache.size >= MAX_REQUEST_CACHE_ENTRIES) {
+          cache.delete(cache.keys().next().value);
+        }
+        cache.set(key, entry);
+        return awaitSharedRequest(entry.promise, signal);
+      }
+
       function setStatus(message, kind) {
         const status = document.getElementById("status");
         status.textContent = message || "";
@@ -433,7 +511,7 @@
         };
       }
 
-      async function executeRequest(signal) {
+      async function executeRequest(request) {
         const xrm = getXrm();
         if (!xrm) {
           return demoResult();
@@ -443,7 +521,6 @@
             "/api/data/v9.2/" + ACTION_NAME,
           {
             method: "POST",
-            signal,
             credentials: "same-origin",
             headers: {
               "Accept": "application/json",
@@ -452,7 +529,7 @@
               "OData-Version": "4.0"
             },
             body: JSON.stringify({
-              klth_requestjson: JSON.stringify(requestShape())
+              klth_requestjson: JSON.stringify(request)
             })
           }
         );
@@ -502,7 +579,13 @@
         state.requestController = requestController;
         setStatus("", "");
         try {
-          const result = await executeRequest(requestController.signal);
+          const request = requestShape();
+          const result = await cachedRequest(
+            memberRequestCache,
+            JSON.stringify(request),
+            () => executeRequest(request),
+            requestController.signal
+          );
           if (requestGeneration !== state.requestGeneration) {
             return;
           }

@@ -1,0 +1,151 @@
+#if FABRIC_API
+using System.Net;
+
+namespace CustomerInsightsSegmentSankey.FabricApi;
+
+/// <summary>
+/// Small dependency-free guard for Fabric and ARM REST calls. It limits request
+/// starts in a fixed window and opens a circuit after repeated transient failures.
+/// </summary>
+internal sealed class OutboundResilienceHandler : DelegatingHandler
+{
+    private readonly object gate = new();
+    private readonly int requestsPerWindow;
+    private readonly TimeSpan window;
+    private readonly int failureThreshold;
+    private readonly TimeSpan openDuration;
+    private DateTimeOffset windowStarted = DateTimeOffset.UtcNow;
+    private int requestCount;
+    private int failures;
+    private DateTimeOffset? openedUntil;
+
+    public OutboundResilienceHandler()
+        : this(
+            ReadInt("FABRIC_OUTBOUND_RATE_LIMIT_PER_SECOND", 20, 1, 1000),
+            ReadInt("FABRIC_OUTBOUND_CIRCUIT_FAILURES", 5, 1, 100),
+            TimeSpan.FromSeconds(ReadInt("FABRIC_OUTBOUND_CIRCUIT_SECONDS", 30, 1, 3600)))
+    {
+    }
+
+    internal OutboundResilienceHandler(
+        int requestsPerSecond,
+        int failureThreshold,
+        TimeSpan openDuration)
+    {
+        requestsPerWindow = requestsPerSecond;
+        window = TimeSpan.FromSeconds(1);
+        this.failureThreshold = failureThreshold;
+        this.openDuration = openDuration;
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        await WaitForRateLimitAsync(cancellationToken).ConfigureAwait(false);
+        lock (gate)
+        {
+            if (openedUntil is { } until)
+            {
+                if (until > DateTimeOffset.UtcNow)
+                {
+                    throw new HttpRequestException(
+                        "The Fabric outbound circuit is open; retry after the dependency recovers.");
+                }
+
+                openedUntil = null;
+                failures = 0;
+            }
+        }
+
+        try
+        {
+            var response = await base.SendAsync(request, cancellationToken)
+                .ConfigureAwait(false);
+            RecordResult(response.StatusCode);
+            return response;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            RecordFailure();
+            throw;
+        }
+        catch (HttpRequestException)
+        {
+            RecordFailure();
+            throw;
+        }
+    }
+
+    private async Task WaitForRateLimitAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            TimeSpan delay;
+            lock (gate)
+            {
+                var now = DateTimeOffset.UtcNow;
+                if (now - windowStarted >= window)
+                {
+                    windowStarted = now;
+                    requestCount = 0;
+                }
+
+                if (requestCount < requestsPerWindow)
+                {
+                    requestCount++;
+                    return;
+                }
+
+                delay = window - (now - windowStarted);
+            }
+
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private void RecordResult(HttpStatusCode statusCode)
+    {
+        if ((int)statusCode >= 500 ||
+            statusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests)
+        {
+            RecordFailure();
+            return;
+        }
+
+        lock (gate)
+        {
+            failures = 0;
+        }
+    }
+
+    private void RecordFailure()
+    {
+        lock (gate)
+        {
+            failures++;
+            if (failures >= failureThreshold)
+            {
+                openedUntil = DateTimeOffset.UtcNow + openDuration;
+            }
+        }
+    }
+
+    private static int ReadInt(string name, int fallback, int minimum, int maximum)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        if (!int.TryParse(value, out var parsed) || parsed < minimum || parsed > maximum)
+        {
+            throw new InvalidOperationException(
+                $"The application setting '{name}' must be an integer from {minimum} through {maximum}.");
+        }
+
+        return parsed;
+    }
+}
+#endif

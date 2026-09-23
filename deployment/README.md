@@ -464,6 +464,22 @@ environment where Customer Insights - Journeys is installed and set:
 * `klth_FabricBehavioralApiUrl` - the Web App URL ending in `/api/`
 * `klth_FabricBehavioralApiKey` - the same server-side key configured in Azure
 
+### API-key rotation and outbound protection
+
+The API accepts `BEHAVIORAL_API_KEY` and, temporarily during rotation,
+`BEHAVIORAL_API_KEY_PREVIOUS`. Set the new key as the active setting, keep the
+old key in the previous setting while Dataverse environment-variable values are
+updated, then remove the previous setting after the overlap window. The API
+compares both values in constant time and never returns either value. Never
+replace the active key before the previous key is configured, or clients will
+be rejected during propagation.
+
+Fabric and Azure REST calls are protected by a shared fixed-window limiter and
+circuit breaker. Defaults are 20 request starts per second, five transient
+failures to open the circuit, and a 30-second open period. App Service settings
+`FABRIC_OUTBOUND_RATE_LIMIT_PER_SECOND`, `FABRIC_OUTBOUND_CIRCUIT_FAILURES`,
+and `FABRIC_OUTBOUND_CIRCUIT_SECONDS` may override these values.
+
 The solution extends the existing app:
 
 * App unique name: `msdyncrm_MarketingSMBApp`

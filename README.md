@@ -65,6 +65,11 @@ requires GitHub's SHA-256 asset digest before it offers an update. Generic
 filenames such as `CustomerInsightsSegmentPreview.zip` are not sufficient for
 automatic update detection.
 
+Before checking or importing an update, Setup verifies that Dataverse has no
+active solution import or uninstall operation. If another solution operation is
+running, Setup keeps the existing installation unchanged and explains that the
+administrator should wait for completion before checking again.
+
 Setup reuses the resource identities stored in `klth_SetupConfiguration` and
 updates the existing deployment in place. It does not rebuild every Fabric
 shortcut:
@@ -290,6 +295,11 @@ The UI shows the calculation timestamp and the end-to-end load time. The
 actual data state depends on the Customer Insights export to Fabric. The
 published Customer Insights member count may differ from the live-computed
 draft preview until the next segment evaluation.
+
+To avoid duplicate work while panes refresh or dialogs are reopened, identical
+in-flight count and member requests are shared. Successful browser results are
+kept for at most five seconds in a cache limited to 12 entries; a manual count
+refresh bypasses the cached result while still joining an in-flight request.
 
 ### Member view
 

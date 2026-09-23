@@ -2,13 +2,13 @@
 using CustomerInsightsSegmentSankey.FabricApi;
 using Azure.Core;
 using Azure.Identity;
-using System.Security.Cryptography;
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<FabricRuntimeOptions>();
+builder.Services.AddSingleton<ApiKeyValidator>();
+builder.Services.AddTransient<OutboundResilienceHandler>();
 builder.Services.AddSingleton<FabricConnectionFactory>();
 builder.Services.AddSingleton<FabricSegmentCatalog>();
 builder.Services.AddHostedService<FabricSqlWarmupService>();
@@ -27,9 +27,12 @@ builder.Services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential()
 // two immediate endpoint operations that race it do not each pay for a
 // separate ARM call when the capacity was just confirmed active.
 builder.Services.AddSingleton<FabricCapacityReadinessCache>();
-builder.Services.AddHttpClient<FabricDataverseShortcutService>();
-builder.Services.AddHttpClient<FabricCapacityService>();
-builder.Services.AddHttpClient();
+builder.Services.AddHttpClient<FabricDataverseShortcutService>()
+    .AddHttpMessageHandler<OutboundResilienceHandler>();
+builder.Services.AddHttpClient<FabricCapacityService>()
+    .AddHttpMessageHandler<OutboundResilienceHandler>();
+builder.Services.AddHttpClient(string.Empty)
+    .AddHttpMessageHandler<OutboundResilienceHandler>();
 builder.Services.AddTransient<IFabricCapacityReadiness>(
     sp => sp.GetRequiredService<FabricCapacityService>());
 builder.Services.AddTransient<IFabricTokenWarmup>(
@@ -88,8 +91,8 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.U
     .RequireCors(SetupHealthCors.PolicyName);
 app.MapGet(
         "/api/setup/key-check",
-        (HttpRequest request) =>
-            HasValidApiKey(request)
+        (HttpRequest request, ApiKeyValidator validator) =>
+            HasValidApiKey(request, validator)
                 ? Results.Ok(new { status = "ok", apiKeyAccepted = true, utc = DateTime.UtcNow })
                 : Unauthorized())
     .RequireCors(SetupHealthCors.KeyCheckPolicyName);
@@ -99,11 +102,12 @@ app.MapPost(
         HttpRequest request,
         SegmentCountRequest input,
         SegmentCountRequestCoordinator coordinator,
+        ApiKeyValidator validator,
         ILogger<Program> logger,
         CancellationToken cancellationToken) =>
     {
         var apiTimer = Stopwatch.StartNew();
-        if (!HasValidApiKey(request))
+        if (!HasValidApiKey(request, validator))
         {
             return Results.Json(
                 new ApiError
@@ -181,10 +185,11 @@ app.MapPost(
         SegmentMemberRequest input,
         FabricCapacityService capacity,
         FabricSegmentMemberService service,
+        ApiKeyValidator validator,
         ILogger<Program> logger,
         CancellationToken cancellationToken) =>
     {
-        if (!HasValidApiKey(request))
+        if (!HasValidApiKey(request, validator))
         {
             return Results.Json(
                 new ApiError
@@ -249,10 +254,11 @@ app.MapPost(
         FabricDependencyRequest input,
         FabricCapacityService capacity,
         FabricDependencyReconciler reconciler,
+        ApiKeyValidator validator,
         ILogger<Program> logger,
         CancellationToken cancellationToken) =>
     {
-        if (!HasValidApiKey(request))
+        if (!HasValidApiKey(request, validator))
         {
             return Results.Json(
                 new ApiError
@@ -303,10 +309,11 @@ app.MapGet(
     async (
         HttpRequest request,
         SegmentPreviewSetupService service,
+        ApiKeyValidator validator,
         ILogger<Program> logger,
         CancellationToken cancellationToken) =>
     {
-        if (!HasValidApiKey(request))
+        if (!HasValidApiKey(request, validator))
         {
             return Unauthorized();
         }
@@ -333,10 +340,11 @@ app.MapPost(
         HttpRequest request,
         SetupProvisionRequest input,
         SegmentPreviewSetupService service,
+        ApiKeyValidator validator,
         ILogger<Program> logger,
         CancellationToken cancellationToken) =>
     {
-        if (!HasValidApiKey(request))
+        if (!HasValidApiKey(request, validator))
         {
             return Unauthorized();
         }
@@ -386,18 +394,9 @@ static IResult Unauthorized()
         statusCode: StatusCodes.Status401Unauthorized);
 }
 
-static bool HasValidApiKey(HttpRequest request)
+static bool HasValidApiKey(HttpRequest request, ApiKeyValidator validator)
 {
-    var expected = Environment.GetEnvironmentVariable("BEHAVIORAL_API_KEY");
     var supplied = request.Headers["x-api-key"].FirstOrDefault();
-    if (string.IsNullOrEmpty(expected) || string.IsNullOrEmpty(supplied))
-    {
-        return false;
-    }
-
-    var expectedBytes = Encoding.UTF8.GetBytes(expected);
-    var suppliedBytes = Encoding.UTF8.GetBytes(supplied);
-    return expectedBytes.Length == suppliedBytes.Length &&
-        CryptographicOperations.FixedTimeEquals(expectedBytes, suppliedBytes);
+    return validator.IsValid(supplied);
 }
 #endif

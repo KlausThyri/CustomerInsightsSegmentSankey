@@ -1,0 +1,57 @@
+#if FABRIC_API
+using System.Net;
+using CustomerInsightsSegmentSankey.FabricApi;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+public sealed class OutboundResilienceHandlerTests
+{
+    [Fact]
+    public async Task OpensCircuitAfterTransientFailures()
+    {
+        var handler = new OutboundResilienceHandler(
+            requestsPerSecond: 100,
+            failureThreshold: 2,
+            openDuration: TimeSpan.FromMinutes(1))
+        {
+            InnerHandler = new StaticResponseHandler(HttpStatusCode.ServiceUnavailable)
+        };
+        using var client = new HttpClient(handler);
+
+        using var first = await client.GetAsync("https://fabric.test/one");
+        using var second = await client.GetAsync("https://fabric.test/two");
+        var error = await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.GetAsync("https://fabric.test/three"));
+
+        Assert.Contains("circuit is open", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RateLimitsRequestStarts()
+    {
+        var handler = new OutboundResilienceHandler(
+            requestsPerSecond: 1,
+            failureThreshold: 10,
+            openDuration: TimeSpan.FromSeconds(1))
+        {
+            InnerHandler = new StaticResponseHandler(HttpStatusCode.OK)
+        };
+        using var client = new HttpClient(handler);
+        var started = DateTime.UtcNow;
+
+        await client.GetAsync("https://fabric.test/one");
+        await client.GetAsync("https://fabric.test/two");
+
+        Assert.True(DateTime.UtcNow - started >= TimeSpan.FromMilliseconds(850));
+    }
+
+    private sealed class StaticResponseHandler(HttpStatusCode statusCode) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(statusCode));
+    }
+}
+#endif

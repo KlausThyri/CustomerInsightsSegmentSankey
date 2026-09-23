@@ -1,0 +1,31 @@
+#if FABRIC_API
+using CustomerInsightsSegmentSankey.FabricApi;
+using Xunit;
+
+namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
+
+public sealed class ApiKeyValidatorTests
+{
+    [Fact]
+    public void AcceptsActiveAndPreviousKeyDuringRotation()
+    {
+        var active = Environment.GetEnvironmentVariable("BEHAVIORAL_API_KEY");
+        var previous = Environment.GetEnvironmentVariable("BEHAVIORAL_API_KEY_PREVIOUS");
+        try
+        {
+            Environment.SetEnvironmentVariable("BEHAVIORAL_API_KEY", "active-key");
+            Environment.SetEnvironmentVariable("BEHAVIORAL_API_KEY_PREVIOUS", "previous-key");
+            var validator = new ApiKeyValidator();
+
+            Assert.True(validator.IsValid("active-key"));
+            Assert.True(validator.IsValid("previous-key"));
+            Assert.False(validator.IsValid("wrong-key"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("BEHAVIORAL_API_KEY", active);
+            Environment.SetEnvironmentVariable("BEHAVIORAL_API_KEY_PREVIOUS", previous);
+        }
+    }
+}
+#endif

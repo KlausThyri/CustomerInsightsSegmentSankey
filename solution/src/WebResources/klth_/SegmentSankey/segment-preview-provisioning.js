@@ -102,6 +102,7 @@
 
   /** App setting the Web App stores its API key under. Read back when resuming. */
   var API_KEY_SETTING = "BEHAVIORAL_API_KEY";
+  var API_KEY_PREVIOUS_SETTING = "BEHAVIORAL_API_KEY_PREVIOUS";
 
   /**
    * How long the page waits for a restarted Web App to serve its own health
@@ -1018,7 +1019,7 @@
   var MAX_CONFIGURATION_LENGTH = 2000;
 
   /** Never write these to Dataverse, whatever a caller hands over. */
-  var SECRET_KEYS = ["apiKey", "behavioralApiKey", "sasToken", "accountKey", "accessToken"];
+  var SECRET_KEYS = ["apiKey", "behavioralApiKey", "previousApiKey", "behavioralApiKeyPrevious", "sasToken", "accountKey", "accessToken"];
 
   function stripSecrets(record) {
     if (!record || typeof record !== "object") return {};
@@ -3674,6 +3675,7 @@
       target: target,
       environmentDomain: environmentDomain(environmentUrl),
       apiKey: null,
+      previousApiKey: "",
       apiKeyFingerprint: null,
       apiBaseUrl: null,
       outputs: {},
@@ -3790,7 +3792,11 @@
         return null;
       }
       var value = current && current[API_KEY_SETTING];
-      return isBlank(value) ? null : String(value);
+      var previous = current && current[API_KEY_PREVIOUS_SETTING];
+      return {
+        key: isBlank(value) ? null : String(value),
+        previousKey: isBlank(previous) ? null : String(previous)
+      };
     }
 
     async function discoverExistingAzureDeployment() {
@@ -4545,13 +4551,52 @@
       secret: async function () {
         if (dryRun) {
           context.apiKeyFingerprint = "sha256:dry-run";
-          return "A new API key would be generated.";
+          return settings.rotateApiKey
+            ? "A new API key would be generated and the current key would be kept as an overlap key."
+            : "A new API key would be generated.";
         }
         await discoverExistingAzureDeployment();
         var recovered = await recoverApiKey();
-        if (recovered) {
-          context.apiKey = recovered;
-          context.apiKeyFingerprint = await fingerprint(recovered, cryptoImpl);
+        var recoveredKey = recovered && recovered.key;
+        var recoveredPrevious = recovered && recovered.previousKey;
+
+        if (settings.finishApiKeyRotation) {
+          // The administrator confirmed every caller moved to the new key.
+          // Keep the active key untouched and drop the overlap key so a leaked
+          // or retired credential stops being accepted.
+          context.previousApiKey = "";
+          if (recoveredKey) {
+            context.apiKey = recoveredKey;
+            context.apiKeyFingerprint = await fingerprint(recoveredKey, cryptoImpl);
+          } else {
+            context.apiKey = generateApiKey(cryptoImpl);
+            context.apiKeyFingerprint = await fingerprint(context.apiKey, cryptoImpl);
+          }
+          forceRerun(SECRET_DEPENDENTS, "The API key rotation overlap window was closed.");
+          return "The previous API key overlap window was closed (" + context.apiKeyFingerprint + ").";
+        }
+
+        if (settings.rotateApiKey && recoveredKey) {
+          // The currently active key becomes the temporary overlap key so
+          // callers using the old key keep working during the rotation.
+          context.previousApiKey = recoveredKey;
+          context.apiKey = generateApiKey(cryptoImpl);
+          context.apiKeyFingerprint = await fingerprint(context.apiKey, cryptoImpl);
+          forceRerun(
+            SECRET_DEPENDENTS,
+            "The API key was rotated, so every step that stores it runs again."
+          );
+          return (
+            "A new API key was generated (" +
+            context.apiKeyFingerprint +
+            "). The previous key keeps working until Finish rotation is pressed."
+          );
+        }
+
+        if (recoveredKey) {
+          context.apiKey = recoveredKey;
+          context.previousApiKey = recoveredPrevious || "";
+          context.apiKeyFingerprint = await fingerprint(recoveredKey, cryptoImpl);
           return (
             "The existing API key was recovered from Web App '" +
             target.webAppName +
@@ -4563,6 +4608,7 @@
           );
         }
         context.apiKey = generateApiKey(cryptoImpl);
+        context.previousApiKey = "";
         context.apiKeyFingerprint = await fingerprint(context.apiKey, cryptoImpl);
         if (completed.secret) {
           forceRerun(
@@ -4634,6 +4680,7 @@
             context.dataverseDeltaFolder || target.fabricDataverseDeltaFolder,
           dataverseEnvironmentUrl: "https://" + context.environmentDomain,
           behavioralApiKey: context.apiKey,
+          behavioralApiKeyPrevious: context.previousApiKey || "",
           requiredDataverseTables: (context.requiredTables || []).join(","),
           apiPackageUrl: pkg.configured ? pkg.url : "",
           apiPackageSha256: pkg.configured ? pkg.sha256 : "",

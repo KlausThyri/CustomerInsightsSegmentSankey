@@ -37,6 +37,10 @@ param dataverseEnvironmentUrl string
 @description('Shared secret accepted only by the server-side Segment Preview API.')
 param behavioralApiKey string
 
+@secure()
+@description('Previous API key accepted during a controlled rotation. Empty when no overlap is required.')
+param behavioralApiKeyPrevious string = ''
+
 @description('Required Dataverse shortcuts provisioned by the setup center.')
 param requiredDataverseTables string = 'contact,msdynmkt_contactpointconsent4,msdynmkt_purpose,msdynmkt_topic'
 
@@ -417,6 +421,10 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'BEHAVIORAL_API_KEY'
           value: behavioralApiKey
+        }
+        {
+          name: 'BEHAVIORAL_API_KEY_PREVIOUS'
+          value: behavioralApiKeyPrevious
         }
         {
           name: 'FABRIC_SQL_SERVER'
