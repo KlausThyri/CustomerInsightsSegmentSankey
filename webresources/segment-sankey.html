@@ -680,7 +680,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.76">v1.1.0.76</span>
+          <span class="app-version" aria-label="Version 1.1.0.77">v1.1.0.77</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -827,82 +827,82 @@
         if (window.parent && window.parent.Xrm) {
           return window.parent.Xrm;
         }
+        return null;
+      }
 
-        function pruneRequestCache(cache) {
-          const now = Date.now();
-          for (const [key, entry] of cache) {
-            if (!entry.promise && entry.expiresAt <= now) {
+      function pruneRequestCache(cache) {
+        const now = Date.now();
+        for (const [key, entry] of cache) {
+          if (!entry.promise && entry.expiresAt <= now) {
+            cache.delete(key);
+          }
+        }
+        while (cache.size > MAX_REQUEST_CACHE_ENTRIES) {
+          cache.delete(cache.keys().next().value);
+        }
+      }
+
+      function awaitSharedRequest(promise, signal) {
+        if (!signal) {
+          return promise;
+        }
+        return new Promise((resolve, reject) => {
+          const abort = () => {
+            signal.removeEventListener("abort", abort);
+            reject(new DOMException("The request was cancelled.", "AbortError"));
+          };
+          if (signal.aborted) {
+            abort();
+            return;
+          }
+          signal.addEventListener("abort", abort, { once: true });
+          promise.then(
+            value => {
+              signal.removeEventListener("abort", abort);
+              resolve(value);
+            },
+            error => {
+              signal.removeEventListener("abort", abort);
+              reject(error);
+            }
+          );
+        });
+      }
+
+      function cachedRequest(cache, key, load, signal, forceRefresh) {
+        pruneRequestCache(cache);
+        const existing = cache.get(key);
+        if (existing?.promise) {
+          return awaitSharedRequest(existing.promise, signal);
+        }
+        if (existing && !forceRefresh && existing.expiresAt > Date.now()) {
+          return awaitSharedRequest(Promise.resolve(existing.value), signal);
+        }
+        const entry = {
+          value: null,
+          promise: null,
+          expiresAt: Date.now() + REQUEST_CACHE_TTL_MS
+        };
+        entry.promise = Promise.resolve()
+          .then(load)
+          .then(value => {
+            entry.value = value;
+            entry.promise = null;
+            entry.expiresAt = Date.now() + REQUEST_CACHE_TTL_MS;
+            pruneRequestCache(cache);
+            return value;
+          })
+          .catch(error => {
+            if (cache.get(key) === entry) {
               cache.delete(key);
             }
-          }
-          while (cache.size > MAX_REQUEST_CACHE_ENTRIES) {
-            cache.delete(cache.keys().next().value);
-          }
-        }
-
-        function awaitSharedRequest(promise, signal) {
-          if (!signal) {
-            return promise;
-          }
-          return new Promise((resolve, reject) => {
-            const abort = () => {
-              signal.removeEventListener("abort", abort);
-              reject(new DOMException("The request was cancelled.", "AbortError"));
-            };
-            if (signal.aborted) {
-              abort();
-              return;
-            }
-            signal.addEventListener("abort", abort, { once: true });
-            promise.then(
-              value => {
-                signal.removeEventListener("abort", abort);
-                resolve(value);
-              },
-              error => {
-                signal.removeEventListener("abort", abort);
-                reject(error);
-              }
-            );
+            throw error;
           });
+        while (cache.size >= MAX_REQUEST_CACHE_ENTRIES) {
+          cache.delete(cache.keys().next().value);
         }
-
-        function cachedRequest(cache, key, load, signal, forceRefresh) {
-          pruneRequestCache(cache);
-          const existing = cache.get(key);
-          if (existing?.promise) {
-            return awaitSharedRequest(existing.promise, signal);
-          }
-          if (existing && !forceRefresh && existing.expiresAt > Date.now()) {
-            return awaitSharedRequest(Promise.resolve(existing.value), signal);
-          }
-          const entry = {
-            value: null,
-            promise: null,
-            expiresAt: Date.now() + REQUEST_CACHE_TTL_MS
-          };
-          entry.promise = Promise.resolve()
-            .then(load)
-            .then(value => {
-              entry.value = value;
-              entry.promise = null;
-              entry.expiresAt = Date.now() + REQUEST_CACHE_TTL_MS;
-              pruneRequestCache(cache);
-              return value;
-            })
-            .catch(error => {
-              if (cache.get(key) === entry) {
-                cache.delete(key);
-              }
-              throw error;
-            });
-          while (cache.size >= MAX_REQUEST_CACHE_ENTRIES) {
-            cache.delete(cache.keys().next().value);
-          }
-          cache.set(key, entry);
-          return awaitSharedRequest(entry.promise, signal);
-        }
-        return null;
+        cache.set(key, entry);
+        return awaitSharedRequest(entry.promise, signal);
       }
 
       function setHostPaneTitle() {
