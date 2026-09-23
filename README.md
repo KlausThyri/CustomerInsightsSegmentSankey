@@ -55,6 +55,16 @@ Do not uninstall the previous Managed Solution. Import the newer
 release into the same Dataverse environment, then reopen **Settings > Overview >
 Segment Preview** and press **Install everything** again.
 
+GitHub releases must publish both versioned assets:
+
+- `CustomerInsightsSegmentPreview-<version>-managed.zip`
+- `CustomerInsightsSegmentPreview-<version>-unmanaged.zip`
+
+The Setup Center selects the asset matching the installed solution type and
+requires GitHub's SHA-256 asset digest before it offers an update. Generic
+filenames such as `CustomerInsightsSegmentPreview.zip` are not sufficient for
+automatic update detection.
+
 Setup reuses the resource identities stored in `klth_SetupConfiguration` and
 updates the existing deployment in place. It does not rebuild every Fabric
 shortcut:
