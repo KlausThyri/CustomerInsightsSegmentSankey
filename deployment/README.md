@@ -480,6 +480,15 @@ failures to open the circuit, and a 30-second open period. App Service settings
 `FABRIC_OUTBOUND_RATE_LIMIT_PER_SECOND`, `FABRIC_OUTBOUND_CIRCUIT_FAILURES`,
 and `FABRIC_OUTBOUND_CIRCUIT_SECONDS` may override these values.
 
+Administrators using the browser Setup Center (direct mode) do not need the
+`-RotateApiKey` PowerShell flag: once the first installation completes, an
+"API key rotation" section appears under **Install everything** with a
+**Rotate API key** button. Pressing it generates a new key and redeploys the
+Web App while keeping the old key valid (`BEHAVIORAL_API_KEY_PREVIOUS`), so
+in-flight callers are never rejected mid-rotation. Once every caller has
+picked up the new key, press **Finish rotation** to redeploy without the
+overlap key and close the window.
+
 The solution extends the existing app:
 
 * App unique name: `msdyncrm_MarketingSMBApp`
