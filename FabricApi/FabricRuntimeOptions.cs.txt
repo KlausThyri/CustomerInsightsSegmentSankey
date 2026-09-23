@@ -5,6 +5,7 @@ internal sealed class FabricRuntimeOptions
 {
     private const int DefaultCatalogCacheMinutes = 60;
     private const int DefaultWarmupIntervalMinutes = 4;
+    private const int DefaultCapacityWarmupSeconds = 25;
 
     public FabricRuntimeOptions(IConfiguration configuration)
     {
@@ -20,13 +21,56 @@ internal sealed class FabricRuntimeOptions
             DefaultWarmupIntervalMinutes,
             1,
             60));
+        CapacityWarmupInterval = TimeSpan.FromSeconds(ReadSeconds(
+            configuration,
+            "FABRIC_CAPACITY_WARMUP_SECONDS",
+            DefaultCapacityWarmupSeconds,
+            0,
+            300));
     }
 
     public TimeSpan CatalogCacheDuration { get; }
 
     public TimeSpan WarmupInterval { get; }
 
+    /// <summary>
+    /// How often the recurring warm-up loop re-confirms Fabric capacity is
+    /// active, independent of <see cref="WarmupInterval"/> (which only
+    /// re-warms SQL). This has to be shorter than
+    /// <see cref="FabricCapacityReadinessCache.Ttl"/> (30 seconds) for the
+    /// periodic warm-up to actually keep the readiness cache hot between
+    /// panel opens - otherwise every request more than 30 seconds after the
+    /// previous one still pays for a fresh ARM capacity check. A value of
+    /// zero disables the recurring capacity warm-up (capacity is still
+    /// warmed once at startup by <see cref="FabricSqlWarmupService.WarmStartupAsync"/>).
+    /// </summary>
+    public TimeSpan CapacityWarmupInterval { get; }
+
     private static int ReadMinutes(
+        IConfiguration configuration,
+        string name,
+        int defaultValue,
+        int minimum,
+        int maximum)
+    {
+        var configured = configuration[name];
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return defaultValue;
+        }
+
+        if (!int.TryParse(configured, out var value) ||
+            value < minimum ||
+            value > maximum)
+        {
+            throw new InvalidOperationException(
+                $"The application setting '{name}' must be an integer from {minimum} through {maximum}.");
+        }
+
+        return value;
+    }
+
+    private static int ReadSeconds(
         IConfiguration configuration,
         string name,
         int defaultValue,

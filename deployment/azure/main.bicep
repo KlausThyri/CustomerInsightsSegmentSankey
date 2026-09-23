@@ -443,6 +443,10 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
           value: '4'
         }
         {
+          name: 'FABRIC_CAPACITY_WARMUP_SECONDS'
+          value: '25'
+        }
+        {
           name: 'FABRIC_WORKSPACE_ID'
           value: fabricWorkspaceId
         }

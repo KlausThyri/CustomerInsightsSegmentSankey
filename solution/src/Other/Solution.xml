@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <ImportExportXml version="9.2.26073.158" SolutionPackageVersion="9.2" languagecode="1033" generatedBy="CrmLive" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" OrganizationVersion="9.2.26073.158" OrganizationSchemaType="Full" CRMServerServiceabilityVersion="9.2.26073.00158">
   <SolutionManifest>
     <UniqueName>klth_SegmentPreview</UniqueName>
@@ -8,7 +8,7 @@
     <Descriptions>
       <Description description="Draft segment visualization, secured member paging, and guided provisioning for Customer Insights - Journeys." languagecode="1033" />
     </Descriptions>
-    <Version>1.1.0.77</Version>
+    <Version>1.1.0.78</Version>
     <Managed>2</Managed>
     <Publisher>
       <UniqueName>KlausThyri</UniqueName>

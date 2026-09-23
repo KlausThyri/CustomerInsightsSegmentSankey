@@ -159,6 +159,21 @@ public sealed class FabricSqlWarmupServiceTests
         Assert.Equal(1, sql.CallCount);
     }
 
+    [Fact]
+    public async Task WarmCapacityAsync_only_touches_capacity_readiness()
+    {
+        var capacity = new ImmediateCapacityReadiness();
+        var token = new ImmediateTokenWarmup();
+        var sql = new ImmediateSqlWarmup();
+        var service = CreateService(capacity, token, sql, out _);
+
+        await service.WarmCapacityAsync(CancellationToken.None);
+
+        Assert.Equal(1, capacity.CallCount);
+        Assert.Equal(0, token.CallCount);
+        Assert.Equal(0, sql.CallCount);
+    }
+
     private static async Task WhenAllStarted(params Task[] started) =>
         await Task.WhenAll(started).WaitAsync(TimeSpan.FromSeconds(5));
 

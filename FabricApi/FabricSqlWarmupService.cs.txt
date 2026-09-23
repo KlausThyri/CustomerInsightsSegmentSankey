@@ -10,9 +10,13 @@ namespace CustomerInsightsSegmentSankey.FabricApi;
 /// cold start does not pay for capacity checks, Fabric REST token
 /// acquisition, and SQL connection setup serially. The immediate startup
 /// iteration warms capacity readiness, Fabric token acquisition, and SQL
-/// connectivity concurrently; every later, periodic iteration only re-warms
-/// the SQL catalog and connectivity, since capacity and token readiness are
-/// already exercised by every real request.
+/// connectivity concurrently. Afterwards two independent recurring loops
+/// run side by side: a SQL-only loop on <see cref="FabricRuntimeOptions.WarmupInterval"/>
+/// (minutes-scale, keeps the SQL connection/catalog warm) and - unless
+/// disabled via configuration - a capacity-only loop on the much shorter
+/// <see cref="FabricRuntimeOptions.CapacityWarmupInterval"/> (seconds-scale,
+/// keeps <see cref="FabricCapacityReadinessCache"/> from expiring between
+/// panel opens so most requests skip the ~2-3s ARM capacity check).
 /// </summary>
 internal sealed class FabricSqlWarmupService(
     IServiceScopeFactory scopeFactory,
@@ -23,6 +27,13 @@ internal sealed class FabricSqlWarmupService(
     {
         await WarmStartupAsync(stoppingToken);
 
+        var sqlLoop = RunSqlWarmupLoopAsync(stoppingToken);
+        var capacityLoop = RunCapacityWarmupLoopAsync(stoppingToken);
+        await Task.WhenAll(sqlLoop, capacityLoop);
+    }
+
+    private async Task RunSqlWarmupLoopAsync(CancellationToken stoppingToken)
+    {
         using var timer = new PeriodicTimer(runtimeOptions.WarmupInterval);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
@@ -30,10 +41,27 @@ internal sealed class FabricSqlWarmupService(
         }
     }
 
+    private async Task RunCapacityWarmupLoopAsync(CancellationToken stoppingToken)
+    {
+        if (runtimeOptions.CapacityWarmupInterval <= TimeSpan.Zero)
+        {
+            // Recurring capacity warm-up is disabled: capacity was still
+            // warmed once at startup, and every real request re-checks it
+            // when the readiness cache has expired.
+            return;
+        }
+
+        using var timer = new PeriodicTimer(runtimeOptions.CapacityWarmupInterval);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
+        {
+            await WarmCapacityAsync(stoppingToken);
+        }
+    }
+
     /// <summary>
     /// Runs the immediate startup iteration. Internal (rather than private)
     /// so tests can drive exactly this iteration without waiting on the
-    /// recurring <see cref="PeriodicTimer"/> loop in <see cref="ExecuteAsync"/>.
+    /// recurring <see cref="PeriodicTimer"/> loops in <see cref="ExecuteAsync"/>.
     /// </summary>
     internal async Task WarmStartupAsync(CancellationToken cancellationToken)
     {
@@ -53,6 +81,16 @@ internal sealed class FabricSqlWarmupService(
     {
         using var scope = scopeFactory.CreateScope();
         await WarmSqlAsync(scope.ServiceProvider, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs a single recurring capacity-only warm-up iteration in its own DI
+    /// scope. Internal so tests can drive one iteration directly.
+    /// </summary>
+    internal async Task WarmCapacityAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        await WarmCapacityAsync(scope.ServiceProvider, cancellationToken);
     }
 
     // Each warmer resolves its own service from the DI scope *inside* this

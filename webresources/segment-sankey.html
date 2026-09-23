@@ -680,7 +680,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.77">v1.1.0.77</span>
+          <span class="app-version" aria-label="Version 1.1.0.78">v1.1.0.78</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -780,6 +780,9 @@
       const MAX_CAPACITY_RETRIES = 30;
       const REQUEST_CACHE_TTL_MS = 5000;
       const MAX_REQUEST_CACHE_ENTRIES = 12;
+      const DEFAULT_SKELETON_STAGE_COUNT = 3;
+      const MAX_SKELETON_STAGE_COUNT = 8;
+      const LOAD_TIMER_INTERVAL_MS = 200;
       const PANE_IDS = ["klth_segment_preview", "klth_segment_sankey"];
       const ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
       const state = {
@@ -798,7 +801,9 @@
         retryAfter: 0,
         evaluationToken: "",
         diagnostics: null,
-        diagnosticsRenderPending: false
+        diagnosticsRenderPending: false,
+        lastKnownStageCount: null,
+        loadTimerHandle: null
       };
       const countRequestCache = new Map();
 
@@ -869,14 +874,23 @@
         });
       }
 
-      function cachedRequest(cache, key, load, signal, forceRefresh) {
+      function cachedRequest(cache, key, load, signal, forceRefresh, onSource) {
         pruneRequestCache(cache);
         const existing = cache.get(key);
         if (existing?.promise) {
+          if (onSource) {
+            onSource("coalesced");
+          }
           return awaitSharedRequest(existing.promise, signal);
         }
         if (existing && !forceRefresh && existing.expiresAt > Date.now()) {
+          if (onSource) {
+            onSource("client-cache");
+          }
           return awaitSharedRequest(Promise.resolve(existing.value), signal);
+        }
+        if (onSource) {
+          onSource("network");
         }
         const entry = {
           value: null,
@@ -1082,7 +1096,26 @@
         return /does not contain an MQL query/i.test(String(error?.message || ""));
       }
 
-      function showLoadingSkeleton() {
+      function startLoadElapsedTimer() {
+        stopLoadElapsedTimer();
+        const durationEl = document.getElementById("load-duration");
+        const startedAt = performance.now();
+        durationEl.textContent = "Loading… 0.0 s";
+        state.loadTimerHandle = window.setInterval(() => {
+          const elapsedSeconds = (performance.now() - startedAt) / 1000;
+          durationEl.textContent =
+            "Loading… " + elapsedSeconds.toFixed(1) + " s";
+        }, LOAD_TIMER_INTERVAL_MS);
+      }
+
+      function stopLoadElapsedTimer() {
+        if (state.loadTimerHandle) {
+          window.clearInterval(state.loadTimerHandle);
+          state.loadTimerHandle = null;
+        }
+      }
+
+      function showLoadingSkeleton(stageCount) {
         const summary = document.getElementById("summary");
         summary.hidden = false;
         ["initial-count", "result-count", "retention"].forEach(id => {
@@ -1091,14 +1124,20 @@
           value.classList.add("loading-value");
           value.setAttribute("aria-label", "Loading");
         });
+        // Mirror the segment's actual stage count (remembered from the last
+        // successful load) so the skeleton does not visibly "jump" in size
+        // once real data arrives. Falls back to a generic 3-stage skeleton
+        // only when the stage count is not yet known (first load ever).
+        const count = Math.min(
+          Math.max(Number(stageCount) || DEFAULT_SKELETON_STAGE_COUNT, 2),
+          MAX_SKELETON_STAGE_COUNT
+        );
+        const stageMarkup = '<div class="loading-stage" aria-hidden="true"></div>';
+        const connectorMarkup = '<div class="loading-connector" aria-hidden="true"></div>';
         document.getElementById("chart").innerHTML =
           '<div class="loading-flow" role="status" aria-live="polite">' +
             '<span class="visually-hidden">Loading segment structure and filter counts.</span>' +
-            '<div class="loading-stage" aria-hidden="true"></div>' +
-            '<div class="loading-connector" aria-hidden="true"></div>' +
-            '<div class="loading-stage" aria-hidden="true"></div>' +
-            '<div class="loading-connector" aria-hidden="true"></div>' +
-            '<div class="loading-stage" aria-hidden="true"></div>' +
+            new Array(count).fill(stageMarkup).join(connectorMarkup) +
           '</div>';
       }
 
@@ -1112,14 +1151,15 @@
         summary.setAttribute("aria-busy", String(isLoading));
         chart.setAttribute("aria-busy", String(isLoading));
         if (isLoading) {
-          document.getElementById("load-duration").textContent = "Measuring load time…";
+          startLoadElapsedTimer();
           if (showSkeleton) {
-            showLoadingSkeleton();
+            showLoadingSkeleton(state.lastKnownStageCount);
           } else {
             chart.classList.add("refreshing");
             chart.setAttribute("inert", "");
           }
         } else {
+          stopLoadElapsedTimer();
           chart.classList.remove("refreshing");
           chart.removeAttribute("inert");
           ["initial-count", "result-count", "retention"].forEach(id => {
@@ -1155,6 +1195,25 @@
         return {
           includeCounts: document.getElementById("diagnostics-include-counts").checked
         };
+      }
+
+      /**
+       * The Fabric API always reports "not_reported" for runtime.cache and
+       * false for runtime.coalesced because request de-duplication happens
+       * entirely in this browser session (see cachedRequest), not on the
+       * server. Prefer the source this session actually observed so the
+       * diagnostics panel never shows a stale/misleading network timing
+       * (e.g. "Fabric SQL: 6.7 s") next to a request that was really served
+       * from the local cache in a few milliseconds.
+       */
+      function resolveClientCacheLabel(clientRequestSource, serverCache) {
+        if (clientRequestSource === "client-cache") {
+          return "client-cache-hit";
+        }
+        if (clientRequestSource === "coalesced") {
+          return "coalesced-with-in-flight-request";
+        }
+        return safeDiagnosticText(serverCache, 20);
       }
 
       function buildDiagnosticsReport(includeIdentifiers, options) {
@@ -1199,8 +1258,13 @@
             maximumDepth: finiteMetric(complexity.maximumDepth)
           },
           runtime: {
-            cache: safeDiagnosticText(runtime.cache, 20),
-            coalesced: typeof runtime.coalesced === "boolean" ? runtime.coalesced : null,
+            cache: resolveClientCacheLabel(diagnostic.clientRequestSource, runtime.cache),
+            coalesced:
+              diagnostic.clientRequestSource === "coalesced"
+                ? true
+                : typeof runtime.coalesced === "boolean"
+                ? runtime.coalesced
+                : null,
             capacityState: safeDiagnosticText(runtime.capacityState, 40),
             businessUnitScoping:
               typeof runtime.businessUnitScoping === "boolean"
@@ -1276,11 +1340,20 @@
           state.diagnosticsRenderPending = false;
           const total = finiteMetric(diagnostic.browserTotalMs);
           const sql = finiteMetric(diagnostic.server?.timingsMs?.sqlExecution);
-          const cache = safeDiagnosticText(diagnostic.server?.runtime?.cache, 20);
+          const cache = resolveClientCacheLabel(
+            diagnostic.clientRequestSource,
+            diagnostic.server?.runtime?.cache
+          );
+          const isReusedResponse =
+            diagnostic.clientRequestSource === "client-cache" ||
+            diagnostic.clientRequestSource === "coalesced";
           document.getElementById("diagnostics-summary").textContent =
             (diagnostic.status === "succeeded" ? "Last request" : "Last failure") +
             (total === null ? "" : ": " + (total / 1000).toFixed(1) + " s") +
-            (sql === null ? "" : " · Fabric SQL: " + (sql / 1000).toFixed(1) + " s") +
+            (sql === null
+              ? ""
+              : " · Fabric SQL: " + (sql / 1000).toFixed(1) + " s" +
+                (isReusedResponse ? " (from prior request)" : "")) +
             (cache ? " · Cache " + cache : "");
           if (document.getElementById("performance-diagnostics").open) {
             renderDiagnosticsDetails();
@@ -1499,6 +1572,7 @@
             '<div class="empty">No supported filters were found for this segment.</div>';
           return;
         }
+        state.lastKnownStageCount = stages.length;
 
         const initial = stages[0].count;
         const final = stages[stages.length - 1].count;
@@ -1671,7 +1745,10 @@
               });
               additionPath.append(createSvgTitle(
                 namespace,
-                state.formatter.format(addition) + " members added by filter " + index
+                state.formatter.format(addition) + " members added by filter " + index +
+                  (previous.count > 0
+                    ? " (" + formatShareOfPrevious(addition, previous.count) + " of incoming population)"
+                    : "")
               ));
               svg.append(additionPath);
               appendAdditionCard(
@@ -1683,7 +1760,8 @@
                 additionBubbleHeight,
                 addition,
                 hoverLayer,
-                stage.order
+                stage.order,
+                previous.count
               );
             }
 
@@ -1713,7 +1791,10 @@
               });
               branch.append(createSvgTitle(
                 namespace,
-                state.formatter.format(loss) + " excluded by filter " + index
+                state.formatter.format(loss) + " excluded by filter " + index +
+                  (previous.count > 0
+                    ? " (" + formatShareOfPrevious(loss, previous.count) + " of incoming population)"
+                    : "")
               ));
               svg.append(branch);
               appendBranchCard(
@@ -1725,7 +1806,8 @@
                 lossBubbleHeight,
                 loss,
                 hoverLayer,
-                stage.order
+                stage.order,
+                previous.count
               );
             }
 
@@ -1820,6 +1902,16 @@
 
       function flowBubbleHeight(count, initial, minimumHeight) {
         return Math.max(minimumHeight, flowThickness(count, initial) + 12);
+      }
+
+      function formatShareOfPrevious(part, whole) {
+        if (!(whole > 0)) {
+          return "";
+        }
+        return new Intl.NumberFormat("en-US", {
+          minimumFractionDigits: 1,
+          maximumFractionDigits: 1
+        }).format((part / whole) * 100) + "%";
       }
 
       function appendJourneyCard(
@@ -2030,7 +2122,8 @@
         height,
         count,
         hoverLayer,
-        stageOrder
+        stageOrder,
+        previousCount
       ) {
         svg.append(createSvgElement(namespace, "rect", {
           class: "journey-add-card",
@@ -2052,9 +2145,10 @@
         const number = document.createElement("div");
         number.className = "journey-add-number";
         number.textContent = "+" + state.formatter.format(count);
+        const share = formatShareOfPrevious(count, previousCount);
         const label = document.createElement("div");
         label.className = "journey-branch-label";
-        label.textContent = "members";
+        label.textContent = share ? "members · " + share : "members";
         wrapper.append(number, label);
         content.append(wrapper);
         svg.append(content);
@@ -2066,7 +2160,8 @@
           width,
           height,
           height / 2,
-          "+" + state.formatter.format(count) + " members",
+          "+" + state.formatter.format(count) + " members" +
+            (share ? " (" + share + ")" : ""),
           () => openMembersDialog(
             stageOrder,
             "added",
@@ -2075,6 +2170,7 @@
           )
         );
       }
+
 
       function createGroupIcon(isAudience, detail) {
         const isBehavioral = !isAudience && /\bInteraction\s*\(/i.test(detail || "");
@@ -2225,7 +2321,8 @@
         height,
         loss,
         hoverLayer,
-        stageOrder
+        stageOrder,
+        previousCount
       ) {
         svg.append(createSvgElement(namespace, "rect", {
           class: "journey-branch-card",
@@ -2247,9 +2344,10 @@
         const number = document.createElement("div");
         number.className = "journey-branch-number";
         number.textContent = "− " + state.formatter.format(loss);
+        const share = formatShareOfPrevious(loss, previousCount);
         const label = document.createElement("div");
         label.className = "journey-branch-label";
-        label.textContent = "members";
+        label.textContent = share ? "members · " + share : "members";
         wrapper.append(number, label);
         content.append(wrapper);
         svg.append(content);
@@ -2261,7 +2359,8 @@
           width,
           height,
           height / 2,
-          "− " + state.formatter.format(loss) + " members",
+          "− " + state.formatter.format(loss) + " members" +
+            (share ? " (" + share + ")" : ""),
           () => openMembersDialog(
             stageOrder,
             "removed",
@@ -2410,6 +2509,12 @@
         state.requestController = requestController;
         state.refreshInProgress = true;
         const isNewSegment = state.renderedSegmentId !== segmentId;
+        if (isNewSegment) {
+          // A different segment can have a different number of filter
+          // stages, so don't reuse the previous segment's stage count for
+          // the loading skeleton — fall back to the generic default instead.
+          state.lastKnownStageCount = null;
+        }
         const startedAt = performance.now();
         let dataverseActionMs = null;
         setLoading(true, isNewSegment);
@@ -2418,13 +2523,17 @@
           await updateSegmentIdentity(segmentId);
           const actionStartedAt = performance.now();
           let result;
+          let requestSource = "network";
           try {
             result = await cachedRequest(
               countRequestCache,
               segmentId,
               () => executeCountAction(segmentId),
               requestController.signal,
-              !isAutomatic
+              !isAutomatic,
+              source => {
+                requestSource = source;
+              }
             );
           } finally {
             dataverseActionMs = performance.now() - actionStartedAt;
@@ -2451,7 +2560,8 @@
             dataverseActionMs: dataverseActionMs,
             renderingMs: performance.now() - renderingStartedAt,
             stages: result.stages,
-            server: result.diagnostics
+            server: result.diagnostics,
+            clientRequestSource: requestSource
           });
           state.renderedSegmentId = segmentId;
           clearAutomaticRetry();

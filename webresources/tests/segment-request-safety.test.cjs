@@ -14,7 +14,7 @@ test("segment count requests coalesce safely and cache only a bounded number of 
   assert.match(countView, /const REQUEST_CACHE_TTL_MS = 5000;/);
   assert.match(countView, /const MAX_REQUEST_CACHE_ENTRIES = 12;/);
   assert.match(countView, /const countRequestCache = new Map\(\);/);
-  assert.match(countView, /if \(existing\?\.promise\) \{\s*return awaitSharedRequest\(existing\.promise, signal\);/);
+  assert.match(countView, /if \(existing\?\.promise\) \{[\s\S]{0,120}return awaitSharedRequest\(existing\.promise, signal\);/);
   assert.match(countView, /if \(existing && !forceRefresh && existing\.expiresAt > Date\.now\(\)\)/);
   assert.match(countView, /Promise\.resolve\(\)\s*\.then\(load\)/);
   assert.match(countView, /while \(cache\.size >= MAX_REQUEST_CACHE_ENTRIES\)/);

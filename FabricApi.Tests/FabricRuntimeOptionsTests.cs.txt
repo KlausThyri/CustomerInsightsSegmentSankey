@@ -13,6 +13,7 @@ public sealed class FabricRuntimeOptionsTests
 
         Assert.Equal(TimeSpan.FromHours(1), options.CatalogCacheDuration);
         Assert.Equal(TimeSpan.FromMinutes(4), options.WarmupInterval);
+        Assert.Equal(TimeSpan.FromSeconds(25), options.CapacityWarmupInterval);
     }
 
     [Fact]
@@ -21,11 +22,24 @@ public sealed class FabricRuntimeOptionsTests
         var options = CreateOptions(new Dictionary<string, string?>
         {
             ["FABRIC_CATALOG_CACHE_MINUTES"] = "360",
-            ["FABRIC_WARMUP_INTERVAL_MINUTES"] = "3"
+            ["FABRIC_WARMUP_INTERVAL_MINUTES"] = "3",
+            ["FABRIC_CAPACITY_WARMUP_SECONDS"] = "20"
         });
 
         Assert.Equal(TimeSpan.FromHours(6), options.CatalogCacheDuration);
         Assert.Equal(TimeSpan.FromMinutes(3), options.WarmupInterval);
+        Assert.Equal(TimeSpan.FromSeconds(20), options.CapacityWarmupInterval);
+    }
+
+    [Fact]
+    public void ZeroDisablesRecurringCapacityWarmup()
+    {
+        var options = CreateOptions(new Dictionary<string, string?>
+        {
+            ["FABRIC_CAPACITY_WARMUP_SECONDS"] = "0"
+        });
+
+        Assert.Equal(TimeSpan.Zero, options.CapacityWarmupInterval);
     }
 
     [Theory]
@@ -34,6 +48,9 @@ public sealed class FabricRuntimeOptionsTests
     [InlineData("FABRIC_WARMUP_INTERVAL_MINUTES", "0")]
     [InlineData("FABRIC_WARMUP_INTERVAL_MINUTES", "61")]
     [InlineData("FABRIC_WARMUP_INTERVAL_MINUTES", "invalid")]
+    [InlineData("FABRIC_CAPACITY_WARMUP_SECONDS", "-1")]
+    [InlineData("FABRIC_CAPACITY_WARMUP_SECONDS", "301")]
+    [InlineData("FABRIC_CAPACITY_WARMUP_SECONDS", "invalid")]
     public void RejectsInvalidDurations(string name, string value)
     {
         var configuration = new ConfigurationBuilder()

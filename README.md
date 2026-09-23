@@ -438,12 +438,18 @@ identity token, the Fabric SQL connection, and the catalog. Subsequent calls
 use the warm process, connection pool, and catalog cache.
 At process startup, the API warms capacity readiness, its shared Fabric access
 token, and SQL connectivity concurrently. Confirmed active-capacity state is
-cached briefly, the catalog is kept for 60 minutes, and a lightweight Fabric
-SQL keep-alive runs every four minutes. Capacity readiness and SQL evaluation
-also run concurrently on a preview request. Catalog refreshes use
-stale-while-refresh semantics so an existing preview is not blocked by
-metadata refresh latency. These defaults can be adjusted with
-`FABRIC_CATALOG_CACHE_MINUTES` and `FABRIC_WARMUP_INTERVAL_MINUTES`.
+cached briefly (30 seconds), the catalog is kept for 60 minutes, and a
+lightweight Fabric SQL keep-alive runs every four minutes. In addition, a
+separate recurring capacity keep-alive re-confirms active capacity every 25
+seconds by default — just under the 30-second readiness cache TTL — so most
+preview requests skip the ~2-3 second Azure Resource Manager capacity check
+that would otherwise be paid whenever the cache has expired. Capacity
+readiness and SQL evaluation also run concurrently on a preview request.
+Catalog refreshes use stale-while-refresh semantics so an existing preview is
+not blocked by metadata refresh latency. These defaults can be adjusted with
+`FABRIC_CATALOG_CACHE_MINUTES`, `FABRIC_WARMUP_INTERVAL_MINUTES`, and
+`FABRIC_CAPACITY_WARMUP_SECONDS` (set the latter to `0` to disable the
+recurring capacity keep-alive and only warm capacity once at startup).
 The initial load of the Fabric event catalog uses a 90-second timeout and
 retries only a transient SQL execution timeout (`-2`) once after two seconds.
 Business errors such as missing events or fields are not retried.

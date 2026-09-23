@@ -78,7 +78,7 @@ test("the first paint shows an accessible progressive loading skeleton", () => {
 
 test("refresh keeps an existing visualization visible while counts update", () => {
   assert.match(html, /function setLoading\(isLoading, showSkeleton\)/);
-  assert.match(html, /if \(showSkeleton\) \{\s*showLoadingSkeleton\(\);/);
+  assert.match(html, /if \(showSkeleton\) \{\s*showLoadingSkeleton\(state\.lastKnownStageCount\);/);
   assert.match(html, /chart\.classList\.add\("refreshing"\)/);
   assert.match(html, /chart\.setAttribute\("inert", ""\)/);
   assert.match(html, /pointer-events: none/);
