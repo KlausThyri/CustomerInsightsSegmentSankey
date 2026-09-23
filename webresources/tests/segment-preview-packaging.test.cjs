@@ -25,6 +25,14 @@ const userInterfaces = [
   "segment-sankey.html",
   "segment-members.html"
 ];
+const synchronizedWebResources = [
+  "segment-preview-setup.html",
+  "segment-sankey.html",
+  "segment-members.html",
+  "segment-preview-provisioning.js",
+  "segment-preview-azure-template.js",
+  "segment-preview-payload.js"
+];
 
 const NEW_WEB_RESOURCES = [
   "segment-preview-provisioning.js",
@@ -76,6 +84,32 @@ test("the plugin assembly root component is untouched", () => {
 test("the build script copies the provisioning web resources", () => {
   NEW_WEB_RESOURCES.forEach((name) => {
     assert.ok(buildScript.includes(name), `build-solution.ps1 does not copy ${name}`);
+  });
+
+  test("source and Solution web resources remain synchronized", () => {
+    synchronizedWebResources.forEach((name) => {
+      const source = fs.readFileSync(
+        path.join(repoRoot, "webresources", name),
+        "utf8"
+      );
+      const packaged = fs.readFileSync(
+        path.join(
+          repoRoot,
+          "solution",
+          "src",
+          "WebResources",
+          "klth_",
+          "SegmentSankey",
+          name
+        ),
+        "utf8"
+      );
+      assert.strictEqual(
+        packaged,
+        source,
+        `solution web resource '${name}' differs from webresources/${name}`
+      );
+    });
   });
 });
 

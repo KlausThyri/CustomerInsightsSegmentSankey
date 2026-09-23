@@ -699,7 +699,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.73">v1.1.0.73</span>
+          <span class="app-version" aria-label="Version 1.1.0.74">v1.1.0.74</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -1023,6 +1023,7 @@
         <div class="panel-actions">
           <button class="button" id="copyInstallationLogButton" type="button">Copy log</button>
           <button class="button" id="downloadInstallationLogButton" type="button">Download log</button>
+          <button class="button" id="downloadSupportBundleButton" type="button">Download support bundle</button>
           <span class="note">Tokens, API keys, credentials, and package contents are redacted.</span>
         </div>
         <pre class="diagnostic-log-output" id="installationLogOutput"
@@ -1032,9 +1033,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.73"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.73"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.73"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.74"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.74"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.74"></script>
 
   <script>
     (() => {
@@ -1109,6 +1110,8 @@
         availableUpdate: null,
         checkingForUpdates: false,
         installingUpdate: false,
+        correlationId: "",
+        failedStep: "",
         journeysGuidanceTrigger: null
       };
 
@@ -1194,6 +1197,9 @@
       const downloadInstallationLogButton = document.getElementById(
         "downloadInstallationLogButton"
       );
+      const downloadSupportBundleButton = document.getElementById(
+        "downloadSupportBundleButton"
+      );
 
       const engine = window.SegmentPreviewProvisioning || null;
       const azureTemplate = window.SegmentPreviewAzureTemplate || null;
@@ -1201,6 +1207,16 @@
       const INSTALLATION_LOG_KEY = "klth.segmentPreview.installationLog.v1";
       const MAX_INSTALLATION_LOG_ENTRIES = 1000;
       const installationLog = [];
+
+      function createCorrelationId() {
+        if (window.crypto?.randomUUID) {
+          return window.crypto.randomUUID();
+        }
+        return "setup-" + Date.now().toString(36) + "-" +
+          Math.random().toString(36).slice(2, 10);
+      }
+
+      state.correlationId = createCorrelationId();
 
       function redactDiagnosticString(value) {
         return String(value)
@@ -1273,6 +1289,31 @@
           .join("\n");
       }
 
+      function supportBundle() {
+        return {
+          schemaVersion: "1.0",
+          generatedAt: new Date().toISOString(),
+          correlationId: state.correlationId,
+          page: {
+            solutionVersion:
+              document.querySelector(".app-version")?.textContent?.replace(/^v/, "") || "",
+            environmentDomain: state.setup?.environmentDomain || null,
+            mode: state.setup?.mode?.mode || null
+          },
+          status: {
+            overallState: state.result?.overallState || null,
+            failedStep: state.failedStep || null,
+            setupFacts: state.setup?.facts || {},
+            completedSteps: state.setup?.state || {}
+          },
+          log: installationLog
+        };
+      }
+
+      function supportBundleText() {
+        return JSON.stringify(supportBundle(), null, 2);
+      }
+
       function renderInstallationLog() {
         const count = installationLog.length;
         installationLogSummary.textContent =
@@ -1294,6 +1335,7 @@
       function appendInstallationLog(level, event, message, details) {
         installationLog.push({
           timestamp: new Date().toISOString(),
+          correlationId: state.correlationId,
           level: level || "info",
           event: event || "setup.event",
           message: redactDiagnosticString(message || ""),
@@ -3661,6 +3703,7 @@
               : "Installation stopped at '" + result.failedStep + "'.",
             result.ok ? "success" : "error"
           );
+          state.failedStep = result.ok ? "" : result.failedStep || "";
           if (!dryRun && result.ok) {
             engine.clearBrokerSession(sessionStore());
             renderSessionBanner();
@@ -3728,6 +3771,27 @@
         const blob = new Blob([installationLogText()], {
           type: "text/plain;charset=utf-8"
         });
+        downloadSupportBundleButton.addEventListener("click", () => {
+          const blob = new Blob([supportBundleText()], {
+            type: "application/json;charset=utf-8"
+          });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download =
+            "segment-preview-support-" +
+            new Date().toISOString().replace(/[:.]/g, "-") +
+            ".json";
+          document.body.append(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+          appendInstallationLog(
+            "info",
+            "support-bundle.downloaded",
+            "Support bundle downloaded."
+          );
+        });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
@@ -3791,6 +3855,7 @@
 
       loadInstallationLog();
       appendInstallationLog("info", "setup.page-loaded", "Setup Center loaded.", {
+        correlationId: state.correlationId,
         solutionUiVersion:
           document.querySelector(".app-version")?.textContent?.replace(/^v/, "") || "",
         pageUrl: window.parent.location.href,

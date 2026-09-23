@@ -289,7 +289,7 @@
       <div>
         <div class="title-row">
           <h1 id="title">Segment members</h1>
-          <span class="app-version" aria-label="Version 1.1.0.73">v1.1.0.73</span>
+          <span class="app-version" aria-label="Version 1.1.0.74">v1.1.0.74</span>
         </div>
         <div class="subtitle" id="subtitle">Members in the selected flow element</div>
       </div>
@@ -347,6 +347,8 @@
         nextToken: null,
         hasMore: false,
         loading: false,
+        requestController: null,
+        requestGeneration: 0,
         sortField: "fullname",
         sortDirection: "asc"
       };
@@ -431,7 +433,7 @@
         };
       }
 
-      async function executeRequest() {
+      async function executeRequest(signal) {
         const xrm = getXrm();
         if (!xrm) {
           return demoResult();
@@ -441,6 +443,7 @@
             "/api/data/v9.2/" + ACTION_NAME,
           {
             method: "POST",
+            signal,
             credentials: "same-origin",
             headers: {
               "Accept": "application/json",
@@ -494,14 +497,24 @@
           return;
         }
         setLoading(true);
+        const requestGeneration = ++state.requestGeneration;
+        const requestController = new AbortController();
+        state.requestController = requestController;
         setStatus("", "");
         try {
-          const result = await executeRequest();
+          const result = await executeRequest(requestController.signal);
+          if (requestGeneration !== state.requestGeneration) {
+            return;
+          }
           state.rows = Array.isArray(result.rows) ? result.rows : [];
           state.nextToken = result.nextToken || null;
           state.hasMore = Boolean(result.hasMore && result.nextToken);
           renderTable();
         } catch (error) {
+          if (requestController.signal.aborted ||
+            requestGeneration !== state.requestGeneration) {
+            return;
+          }
           state.rows = [];
           state.nextToken = null;
           state.hasMore = false;
@@ -509,10 +522,17 @@
             '<div class="empty">Members could not be loaded.</div>';
           setStatus(error.message || "Members could not be loaded.", "error");
         } finally {
-          setLoading(false);
-          document.getElementById("page-info").textContent = "Page " + state.page;
+          if (requestGeneration === state.requestGeneration) {
+            state.requestController = null;
+            setLoading(false);
+            document.getElementById("page-info").textContent = "Page " + state.page;
+          }
         }
       }
+
+      window.addEventListener("pagehide", () => {
+        state.requestController?.abort();
+      });
 
       function renderTable() {
         const host = document.getElementById("table-wrap");

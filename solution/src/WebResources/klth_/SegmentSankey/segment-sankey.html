@@ -680,7 +680,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.73">v1.1.0.73</span>
+          <span class="app-version" aria-label="Version 1.1.0.74">v1.1.0.74</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -787,6 +787,8 @@
         renderedSegmentId: "",
         attemptedSegmentId: "",
         refreshInProgress: false,
+        requestController: null,
+        requestGeneration: 0,
         pendingSegmentId: "",
         pendingPollCount: 0,
         retrySegmentId: "",
@@ -796,6 +798,10 @@
         diagnostics: null,
         diagnosticsRenderPending: false
       };
+
+      window.addEventListener("pagehide", () => {
+        state.requestController?.abort();
+      });
 
       function parseContext() {
         const raw = new URLSearchParams(window.location.search).get("data");
@@ -1307,7 +1313,7 @@
         return value;
       }
 
-      async function executeCountAction(segmentId) {
+      async function executeCountAction(segmentId, signal) {
         const xrm = getXrm();
         if (!xrm) {
           return normalizeResult({
@@ -1337,6 +1343,7 @@
             xrm.Utility.getGlobalContext().getClientUrl() + "/api/data/v9.2/" + ACTION_NAME,
             {
               method: "POST",
+              signal,
               credentials: "same-origin",
               headers: {
                 "Accept": "application/json",
@@ -2299,8 +2306,8 @@
       }
 
       async function refresh(options) {
-        if (state.refreshInProgress) {
-          return false;
+        if (state.refreshInProgress && state.requestController) {
+          state.requestController.abort();
         }
 
         const requestedSegmentId = options?.segmentId;
@@ -2321,6 +2328,9 @@
           clearAutomaticRetry();
         }
         state.attemptedSegmentId = segmentId;
+        const requestGeneration = ++state.requestGeneration;
+        const requestController = new AbortController();
+        state.requestController = requestController;
         state.refreshInProgress = true;
         const isNewSegment = state.renderedSegmentId !== segmentId;
         const startedAt = performance.now();
@@ -2332,11 +2342,14 @@
           const actionStartedAt = performance.now();
           let result;
           try {
-            result = await executeCountAction(segmentId);
+            result = await executeCountAction(segmentId, requestController.signal);
           } finally {
             dataverseActionMs = performance.now() - actionStartedAt;
           }
           const activeSegmentId = getActiveSegmentId();
+          if (requestGeneration !== state.requestGeneration) {
+            return false;
+          }
           if (activeSegmentId && activeSegmentId !== segmentId) {
             state.attemptedSegmentId = "";
             queueMicrotask(() => {
@@ -2362,6 +2375,10 @@
           clearDependencyProgress();
           return true;
         } catch (error) {
+          if (requestController.signal.aborted ||
+            requestGeneration !== state.requestGeneration) {
+            return false;
+          }
           if (isStaticSegmentWithoutFilterQuery(error)) {
             document.getElementById("updated-at").textContent = "Static segment";
             document.getElementById("load-duration").textContent = "No filter steps";
@@ -2441,8 +2458,11 @@
           }
           return false;
         } finally {
-          setLoading(false);
-          state.refreshInProgress = false;
+          if (requestGeneration === state.requestGeneration) {
+            setLoading(false);
+            state.refreshInProgress = false;
+            state.requestController = null;
+          }
         }
       }
 

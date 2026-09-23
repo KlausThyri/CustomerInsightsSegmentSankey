@@ -94,6 +94,10 @@ test("the installation page exposes a persistent redacted diagnostics log", () =
   assert.match(html, /id="installationLogViewer"\s+hidden/);
   assert.match(html, /id="copyInstallationLogButton"/);
   assert.match(html, /id="downloadInstallationLogButton"/);
+  assert.match(html, /id="downloadSupportBundleButton"/);
+  assert.match(html, /schemaVersion: "1\.0"/);
+  assert.match(html, /correlationId: state\.correlationId/);
+  assert.match(html, /function supportBundleText\(\)/);
   assert.match(html, /klth\.segmentPreview\.installationLog\.v1/);
   assert.match(html, /window\.sessionStorage\.setItem/);
   assert.match(html, /function redactDiagnosticValue/);

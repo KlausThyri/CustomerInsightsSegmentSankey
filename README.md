@@ -447,3 +447,33 @@ Business errors such as missing events or fields are not retried.
 If `segment-sankey.html` is opened outside of Dynamics, it uses only local
 sample data. Sample data is never used in Dataverse; there, the custom API is
 always called.
+
+## Local validation
+
+Run the complete hermetic validation sequence from the repository root:
+
+```powershell
+./deployment/tests/Invoke-AllTests.ps1
+```
+
+The runner executes all .NET, Node.js, and Pester tests, then builds the
+plugin and Dataverse solution package in a fixed serial order. Serial execution
+is intentional because the plugin DLL and Solution Packager use shared output
+paths. Use `-SkipSolutionPackage` for a faster test-only run, or `-Detailed`
+to show individual Pester test results.
+
+The Node.js packaging tests also verify that source web resources and their
+copies under `solution/src/WebResources/klth_/SegmentSankey` are byte-for-byte
+identical. The GitHub Actions workflow additionally rejects whitespace errors
+with `git diff --check`.
+
+The same Node.js suite includes contract checks for the Dataverse Custom API
+metadata, the browser-to-Fabric member request, and the count/member response
+shapes. These checks are intentionally run as part of the normal validation
+runner so interface drift fails before packaging.
+
+When setup stops at a step, the Installation log includes a per-session
+correlation ID. Use **Download support bundle** beside the log to export a
+redacted JSON bundle containing the correlation ID, failed step, safe setup
+facts, completion state, and diagnostic events. It contains no tokens, API
+keys, credentials, or package contents.
