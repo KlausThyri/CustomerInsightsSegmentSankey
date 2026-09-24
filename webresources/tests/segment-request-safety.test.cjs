@@ -53,6 +53,8 @@ test("segment counts render progressive preview and final phases in parallel", (
   assert.match(countView, /renderProgressive\(preview, performance\.now\(\) - startedAt\)/);
   assert.match(countView, /stage\.count === null \|\| stage\.status === "pending"/);
   assert.match(countView, /Waiting for dependent segment data/);
+  assert.match(countView, /label\.textContent = stage\.label/);
+  assert.doesNotMatch(countView, /escapeHtml\(stage\.label\)/);
   assert.match(countView, /state\.evaluationToken = result\.isComplete \? result\.evaluationToken : ""/);
 });
 

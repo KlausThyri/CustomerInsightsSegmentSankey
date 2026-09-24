@@ -706,7 +706,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.82">v1.1.0.82</span>
+          <span class="app-version" aria-label="Version 1.1.0.83">v1.1.0.83</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -1695,12 +1695,16 @@
         pendingList.className = "progressive-pending";
         pendingList.setAttribute("role", "status");
         pendingList.setAttribute("aria-live", "polite");
-        pendingList.innerHTML = pending.map(stage =>
-          '<div class="progressive-pending-stage">' +
-            "<strong>" + escapeHtml(stage.label) + "</strong>" +
-            "<span>Waiting for dependent segment data…</span>" +
-          "</div>"
-        ).join("");
+        pending.forEach(stage => {
+          const pendingStage = document.createElement("div");
+          pendingStage.className = "progressive-pending-stage";
+          const label = document.createElement("strong");
+          label.textContent = stage.label;
+          const status = document.createElement("span");
+          status.textContent = "Waiting for dependent segment data…";
+          pendingStage.append(label, status);
+          pendingList.append(pendingStage);
+        });
         chart.append(pendingList);
         document.getElementById("result-count").textContent = "Pending";
         document.getElementById("retention").textContent = "Pending";
