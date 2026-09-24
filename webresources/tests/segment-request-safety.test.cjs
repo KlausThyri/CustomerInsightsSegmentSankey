@@ -59,6 +59,18 @@ test("segment refresh reuses known identity and records whether a draft was save
   assert.match(countView, /"skipped-clean"/);
 });
 
+test("segment refresh resolves the launcher from Dynamics host frames", () => {
+  assert.match(countView, /function getSegmentLauncher\(\)/);
+  assert.match(countView, /window\.top\.frames\.length/);
+  assert.match(countView, /typeof launcher\?\.saveCurrentSegment === "function"/);
+  assert.match(countView, /const segmentLauncher = getSegmentLauncher\(\)/);
+  assert.match(countView, /await segmentLauncher\.saveCurrentSegment\(\)/);
+  assert.doesNotMatch(
+    countView,
+    /await window\.parent\.CISegmentSankey\.saveCurrentSegment\(\)/
+  );
+});
+
 test("segment counts render progressive preview and final phases in parallel", () => {
   assert.match(countView, /klth_phase: phase \|\| "complete"/);
   assert.match(countView, /segmentId \+ "\|preview"/);

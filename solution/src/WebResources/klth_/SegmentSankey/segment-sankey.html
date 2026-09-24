@@ -713,7 +713,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.86">v1.1.0.86</span>
+          <span class="app-version" aria-label="Version 1.1.0.87">v1.1.0.87</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -866,6 +866,33 @@
       function getXrm() {
         if (window.parent && window.parent.Xrm) {
           return window.parent.Xrm;
+        }
+        return null;
+      }
+
+      function getSegmentLauncher() {
+        const candidates = [window.parent, window.top];
+        try {
+          for (let index = 0; index < window.top.frames.length; index++) {
+            candidates.push(window.top.frames[index]);
+          }
+        } catch (error) {
+          if (error?.name !== "SecurityError") {
+            console.warn("Segment preview: Unable to inspect host frames.", error);
+          }
+        }
+
+        for (const candidate of candidates) {
+          try {
+            const launcher = candidate?.CISegmentSankey;
+            if (typeof launcher?.saveCurrentSegment === "function") {
+              return launcher;
+            }
+          } catch (error) {
+            if (error?.name !== "SecurityError") {
+              console.warn("Segment preview: Unable to inspect a host frame.", error);
+            }
+          }
         }
         return null;
       }
@@ -2716,11 +2743,12 @@
           const identityStartedAt = performance.now();
           await updateSegmentIdentity(segmentId);
           segmentIdentityMs = performance.now() - identityStartedAt;
-          if (window.parent?.CISegmentSankey?.saveCurrentSegment) {
+          const segmentLauncher = getSegmentLauncher();
+          if (segmentLauncher) {
             const saveStartedAt = performance.now();
             try {
               const saveResult =
-                await window.parent.CISegmentSankey.saveCurrentSegment();
+                await segmentLauncher.saveCurrentSegment();
               segmentSaved = Boolean(saveResult?.saved);
               segmentSaveOperationMs = finiteMetric(saveResult?.durationMs);
               segmentSaveStatus =
