@@ -61,17 +61,26 @@ a customer installation.
 
 ### Update
 
-1. Download the newer
-   `CustomerInsightsSegmentPreview-<version>-managed.zip` from the corresponding
-   GitHub release.
-2. Import it into the existing Dataverse environment as an update. Do **not**
-   uninstall the previous Managed Solution.
-3. Reopen **Customer Insights - Journeys > Settings > Overview > Segment
-   Preview** so the new web resources are loaded.
-4. Press **Install everything** again. Setup reads the existing resource
+The preferred path is the in-app updater:
+
+1. Open **Customer Insights - Journeys > Settings > Overview > Segment
+   Preview**.
+2. Press **Check for updates**.
+3. When a newer verified GitHub release is available, press
+   **Install `<version>`**. Setup selects the package matching the installed
+   managed or unmanaged solution type, verifies GitHub's SHA-256 asset digest,
+   imports it, publishes this solution's web resources, and reloads itself.
+4. Press **Install everything** if Setup indicates that deployment components
+   also need refreshing. Setup reads the existing resource
    identities from `klth_SetupConfiguration` and updates the deployment in
    place. Workspace, capacity, and Dataverse-connection permissions are checked
    again even when an older run recorded those steps as complete.
+
+For a manual update, download
+`CustomerInsightsSegmentPreview-<version>-managed.zip` from the corresponding
+GitHub release and import it into the existing Dataverse environment. Do
+**not** uninstall the previous Managed Solution. Reopen the Setup Center
+afterward so the new web resources are loaded.
 
 The update path is incremental. Before the bootstrap notebook runs, Setup
 compares every required root Dataverse shortcut with the corresponding

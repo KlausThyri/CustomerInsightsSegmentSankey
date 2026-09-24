@@ -2,6 +2,37 @@
 
 Side-pane preview for draft segments in Dynamics 365 Customer Insights - Journeys.
 
+## Current stable release
+
+**v1.1.0.87 is the current accepted production baseline.** It is deployed and
+verified in a Customer Insights - Journeys environment with all 10 Setup Center
+checks ready. The release includes:
+
+- progressive preview and complete evaluation for segments with static
+  dependencies;
+- stable chart dimensions while delayed stages arrive;
+- draft-safe refreshes that save dirty forms and skip clean-form saves;
+- cumulative stage, added-member, and removed-member navigation;
+- server-side member search, sorting, filtering, and paging;
+- self-service Dataverse, Azure, and Fabric provisioning and updates; and
+- sanitized end-to-end performance diagnostics.
+
+Live verification on 24 September 2026 produced the following reference
+measurements. These values describe the test environment and are not product
+service-level guarantees:
+
+| Scenario | Browser total | First progressive paint | Dominant work |
+|---|---:|---:|---|
+| Dynamic relationship segment, warm | 0.80 s | Complete response won the race | Fabric SQL 0.47 s |
+| Static-reference segment, warm | 2.24 s | 1.24 s | Static members 1.22 s; Fabric SQL 0.68 s |
+| Static-reference segment, cold | 7.47 s | 7.46 s | SQL connection 2.42 s; SQL 2.17 s; static members 1.86 s |
+
+On a clean form, the measured save hook took about 1–2 ms and reported
+`skipped-clean`; a dirty form is still saved before evaluation so the preview
+never uses stale draft MQL. Cold-start and static-membership caching remain
+possible future optimizations, but are intentionally not part of the accepted
+v1.1.0.87 baseline.
+
 ## Product experience
 
 ### Draft segment preview
@@ -159,7 +190,7 @@ and business-unit scoping. Static-member requests remain uncached because their
 membership can change independently. Diagnostics report the compiled-request
 cache as `hit` or `miss`. A successful SQL evaluation returns immediately without waiting
 for a slower, concurrent capacity control-plane check because that success already
-proves the capacity is queryable. The standard copy also includes request
+proves the capacity is queryable.
 
 The panel renders progressively. It starts a lightweight preview and the complete
 evaluation in parallel after saving the draft once. The preview evaluates the
@@ -170,9 +201,9 @@ partial view and enables member navigation only after its evaluation token is
 available. Purely dynamic segments can therefore paint all stages from the
 preview response while the final response is completing. Diagnostics include
 `progressiveFirstPaint` so the perceived improvement can be measured separately
-from total completion time. The standard copy also includes request
-correlation, versions, bounded query-complexity counters, runtime state, and
-logical source-table names.
+from total completion time. The standard copy also includes request correlation,
+versions, bounded query-complexity counters, runtime state, and logical
+source-table names.
 Stage counts are opt-in. Subscription, resource-group, workspace, lakehouse, and
 segment identifiers require a separate confirmation. Filter expressions and
 values, MQL, member identifiers, credentials, tokens, SAS data, and connection
