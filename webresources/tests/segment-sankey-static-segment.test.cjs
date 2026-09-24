@@ -92,6 +92,7 @@ test("refresh keeps an existing visualization visible while counts update", () =
 test("progressive completion preserves the chart height until the final layout is ready", () => {
   assert.match(html, /\.chart \{[\s\S]*?transition: min-height 180ms ease-out;/);
   assert.match(html, /function lockChartHeight\(chart\)/);
+  assert.match(html, /\.chart\.height-locked \{\s*transition: none;/);
   assert.match(html, /chart\.style\.minHeight = currentHeight \+ "px"/);
   assert.match(html, /function releaseChartHeight\(chart\)/);
   assert.match(html, /svg\.getBoundingClientRect\(\)\.height/);

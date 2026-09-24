@@ -57,6 +57,8 @@ test("segment counts render progressive preview and final phases in parallel", (
   assert.doesNotMatch(countView, /escapeHtml\(stage\.label\)/);
   assert.match(countView, /function lockChartHeight\(chart\)/);
   assert.match(countView, /function releaseChartHeight\(chart\)/);
+  assert.match(countView, /chart\.classList\.add\("height-locked"\)/);
+  assert.match(countView, /chart\.classList\.remove\("height-locked"\)/);
   assert.match(countView, /elapsedMilliseconds,\s*true\s*\)/);
   assert.match(countView, /state\.evaluationToken = result\.isComplete \? result\.evaluationToken : ""/);
 });

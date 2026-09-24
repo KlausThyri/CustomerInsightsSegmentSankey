@@ -246,6 +246,9 @@
       background: var(--cp-bg-elevated);
       transition: min-height 180ms ease-out;
     }
+    .chart.height-locked {
+      transition: none;
+    }
     .chart.refreshing .sankey-svg {
       opacity: .62;
       pointer-events: none;
@@ -710,7 +713,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.84">v1.1.0.84</span>
+          <span class="app-version" aria-label="Version 1.1.0.85">v1.1.0.85</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -1684,6 +1687,7 @@
         }
         const currentHeight = Math.ceil(chart.getBoundingClientRect().height);
         if (currentHeight > 0) {
+          chart.classList.add("height-locked");
           chart.style.minHeight = currentHeight + "px";
         }
       }
@@ -1702,6 +1706,7 @@
           svg.getBoundingClientRect().height +
           Number.parseFloat(style.paddingTop || "0") +
           Number.parseFloat(style.paddingBottom || "0");
+        chart.classList.remove("height-locked");
         chart.style.minHeight = Math.ceil(naturalHeight) + "px";
         state.chartHeightReleaseHandle = window.setTimeout(() => {
           chart.style.removeProperty("min-height");
@@ -1737,7 +1742,7 @@
               minimumFractionDigits: 1,
               maximumFractionDigits: 1
             }).format(elapsedMilliseconds / 1000) + " s";
-          setNotice("All filter stages are calculated. Finalizing the result…", "");
+          setNotice("", "");
           return;
         }
         const pendingList = document.createElement("div");
@@ -1762,13 +1767,7 @@
             minimumFractionDigits: 1,
             maximumFractionDigits: 1
           }).format(elapsedMilliseconds / 1000) + " s";
-        setNotice(
-          completed.length + " stages calculated. " +
-            pending.length + " dependent " +
-            (pending.length === 1 ? "stage is" : "stages are") +
-            " still loading.",
-          ""
-        );
+        setNotice("", "");
       }
 
       function createSankey(stages) {
