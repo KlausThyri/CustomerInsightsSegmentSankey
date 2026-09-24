@@ -87,3 +87,82 @@ test("launcher matches uppercase Xrm record ids to lowercase page ids", async ()
   assert.equal(saves, 1);
   assert.equal(navigations, 1);
 });
+
+test("launcher skips clean forms and conservatively saves without a dirty-state API", async () => {
+  const recordId = "F2E4EEAE-4C5F-F111-A825-6045BDE0D602";
+  let saves = 0;
+  const formContext = {
+    data: {
+      entity: {
+        getId: () => `{${recordId}}`,
+        getPrimaryAttributeValue: () => "Clean segment"
+      },
+      getIsDirty: () => false,
+      save: async () => {
+        saves++;
+      },
+      addOnLoad() {},
+      removeOnLoad() {}
+    }
+  };
+  const Xrm = {
+    Page: formContext,
+    App: {
+      sidePanes: {
+        getPane: () => null
+      }
+    },
+    Utility: {
+      getPageContext: () => ({
+        input: {
+          pageType: "entityrecord",
+          entityName: "msdynmkt_segmentdefinition",
+          entityId: `{${recordId}}`
+        }
+      })
+    }
+  };
+  const window = {
+    top: {
+      location: {
+        href:
+          "https://contoso.crm4.dynamics.com/main.aspx?pagetype=entityrecord" +
+          "&etn=msdynmkt_segmentdefinition&id=" +
+          recordId.toLowerCase()
+      }
+    },
+    setInterval: () => 1,
+    clearInterval() {}
+  };
+  const context = vm.createContext({
+    window,
+    Xrm,
+    document: { title: "Clean segment - Dynamics 365" },
+    URL,
+    console
+  });
+  vm.runInContext(fs.readFileSync(launcherPath, "utf8"), context, { filename: launcherPath });
+
+  const result = await window.CISegmentSankey.saveCurrentSegment();
+
+  assert.equal(saves, 0);
+  assert.deepStrictEqual(
+    { ...result },
+    { saved: false, dirty: false, dirtyStateAvailable: true, durationMs: 0 }
+  );
+
+  delete formContext.data.getIsDirty;
+  const conservativeResult = await window.CISegmentSankey.saveCurrentSegment();
+
+  assert.equal(saves, 1);
+  assert.deepStrictEqual(
+    { ...conservativeResult },
+    {
+      saved: true,
+      dirty: true,
+      dirtyStateAvailable: false,
+      durationMs: conservativeResult.durationMs
+    }
+  );
+  assert.equal(Number.isFinite(conservativeResult.durationMs), true);
+});

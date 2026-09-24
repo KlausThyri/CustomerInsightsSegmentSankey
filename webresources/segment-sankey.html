@@ -713,7 +713,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.85">v1.1.0.85</span>
+          <span class="app-version" aria-label="Version 1.1.0.86">v1.1.0.86</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -997,9 +997,14 @@
 
       async function updateSegmentIdentity(segmentId) {
         const isNewSegment = state.renderedSegmentId !== segmentId;
-        let segmentName = state.context.segmentName || "Segment";
+        const contextMatchesSegment =
+          state.context.segmentId === segmentId &&
+          Boolean(state.context.segmentName);
+        let segmentName = contextMatchesSegment
+          ? state.context.segmentName
+          : "Segment";
         const xrm = getXrm();
-        if (xrm?.WebApi?.retrieveRecord) {
+        if (!contextMatchesSegment && xrm?.WebApi?.retrieveRecord) {
           let segment;
           try {
             segment = await xrm.WebApi.retrieveRecord(
@@ -1278,6 +1283,11 @@
             progressiveFirstPaint: finiteMetric(
               diagnostic.progressiveFirstPaintMs
             ),
+            segmentIdentity: finiteMetric(diagnostic.segmentIdentityMs),
+            segmentSave: finiteMetric(diagnostic.segmentSaveMs),
+            segmentSaveOperation: finiteMetric(
+              diagnostic.segmentSaveOperationMs
+            ),
             dataverseAction: finiteMetric(
               timings.dataverseAction ?? diagnostic.dataverseActionMs
             ),
@@ -1331,6 +1341,11 @@
                 : typeof runtime.coalesced === "boolean"
                 ? runtime.coalesced
                 : null,
+            segmentSaved: Boolean(diagnostic.segmentSaved),
+            segmentSaveStatus: safeDiagnosticText(
+              diagnostic.segmentSaveStatus,
+              30
+            ),
             capacityState: safeDiagnosticText(runtime.capacityState, 40),
             requestBuildCache: safeDiagnosticText(
               runtime.requestBuildCache,
@@ -2688,19 +2703,39 @@
         }
         const startedAt = performance.now();
         let dataverseActionMs = null;
+        let segmentIdentityMs = null;
+        let segmentSaveMs = null;
+        let segmentSaveOperationMs = null;
+        let segmentSaved = false;
+        let segmentSaveStatus = "unavailable";
         let progressiveRendered = false;
         let progressiveFirstPaintMs = null;
         setLoading(true, isNewSegment);
         setNotice("", "");
         try {
+          const identityStartedAt = performance.now();
           await updateSegmentIdentity(segmentId);
+          segmentIdentityMs = performance.now() - identityStartedAt;
           if (window.parent?.CISegmentSankey?.saveCurrentSegment) {
+            const saveStartedAt = performance.now();
             try {
-              await window.parent.CISegmentSankey.saveCurrentSegment();
+              const saveResult =
+                await window.parent.CISegmentSankey.saveCurrentSegment();
+              segmentSaved = Boolean(saveResult?.saved);
+              segmentSaveOperationMs = finiteMetric(saveResult?.durationMs);
+              segmentSaveStatus =
+                saveResult?.saved === true
+                  ? "saved"
+                  : saveResult?.saved === false
+                  ? "skipped-clean"
+                  : "unavailable";
             } catch (error) {
+              segmentSaveStatus = "failed";
               throw createTransientError(
                 error?.message || "The active segment could not be saved yet."
               );
+            } finally {
+              segmentSaveMs = performance.now() - saveStartedAt;
             }
           }
           const actionStartedAt = performance.now();
@@ -2765,6 +2800,11 @@
             segmentId: segmentId,
             browserTotalMs: performance.now() - startedAt,
             progressiveFirstPaintMs: progressiveFirstPaintMs,
+            segmentIdentityMs: segmentIdentityMs,
+            segmentSaveMs: segmentSaveMs,
+            segmentSaveOperationMs: segmentSaveOperationMs,
+            segmentSaved: segmentSaved,
+            segmentSaveStatus: segmentSaveStatus,
             dataverseActionMs: dataverseActionMs,
             renderingMs: performance.now() - renderingStartedAt,
             stages: result.stages,
@@ -2795,6 +2835,11 @@
               errorCode: "static_segment",
               segmentId: segmentId,
               browserTotalMs: performance.now() - startedAt,
+              segmentIdentityMs: segmentIdentityMs,
+              segmentSaveMs: segmentSaveMs,
+              segmentSaveOperationMs: segmentSaveOperationMs,
+              segmentSaved: segmentSaved,
+              segmentSaveStatus: segmentSaveStatus,
               dataverseActionMs: dataverseActionMs,
               renderingMs: 0,
               stages: [],
@@ -2847,6 +2892,11 @@
             ),
             segmentId: segmentId,
             browserTotalMs: performance.now() - startedAt,
+            segmentIdentityMs: segmentIdentityMs,
+            segmentSaveMs: segmentSaveMs,
+            segmentSaveOperationMs: segmentSaveOperationMs,
+            segmentSaved: segmentSaved,
+            segmentSaveStatus: segmentSaveStatus,
             dataverseActionMs: dataverseActionMs,
             renderingMs: 0,
             stages: null,

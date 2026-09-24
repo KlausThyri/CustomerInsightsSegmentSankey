@@ -29,6 +29,11 @@ test("segment diagnostics report browser-observed request source", () => {
 });
 
 test("segment diagnostics preserve the Dataverse phase timing breakdown", () => {
+  assert.match(countView, /segmentIdentity: finiteMetric\(diagnostic\.segmentIdentityMs\)/);
+  assert.match(countView, /segmentSave: finiteMetric\(diagnostic\.segmentSaveMs\)/);
+  assert.match(countView, /segmentSaveOperation: finiteMetric\(/);
+  assert.match(countView, /segmentSaved: Boolean\(diagnostic\.segmentSaved\)/);
+  assert.match(countView, /segmentSaveStatus: safeDiagnosticText\(/);
   assert.match(countView, /dataverseSettings: finiteMetric\(timings\.dataverseSettings\)/);
   assert.match(countView, /progressiveFirstPaint: finiteMetric\([\s\S]{0,80}diagnostic\.progressiveFirstPaintMs/);
   assert.match(countView, /dataverseRequestBuild: finiteMetric\(timings\.dataverseRequestBuild\)/);
@@ -42,6 +47,16 @@ test("segment diagnostics preserve the Dataverse phase timing breakdown", () => 
   assert.match(countView, /dataverseSegmentReferences: finiteMetric\([\s\S]{0,80}timings\.dataverseSegmentReferences/);
   assert.match(countView, /dataverseStaticMembers: finiteMetric\([\s\S]{0,80}timings\.dataverseStaticMembers/);
   assert.match(countView, /requestBuildCache: safeDiagnosticText\([\s\S]{0,80}runtime\.requestBuildCache/);
+});
+
+test("segment refresh reuses known identity and records whether a draft was saved", () => {
+  assert.match(countView, /const contextMatchesSegment =[\s\S]{0,180}state\.context\.segmentName/);
+  assert.match(countView, /if \(!contextMatchesSegment && xrm\?\.WebApi\?\.retrieveRecord\)/);
+  assert.match(countView, /const identityStartedAt = performance\.now\(\)/);
+  assert.match(countView, /const saveStartedAt = performance\.now\(\)/);
+  assert.match(countView, /segmentSaved = Boolean\(saveResult\?\.saved\)/);
+  assert.match(countView, /segmentSaveOperationMs = finiteMetric\(saveResult\?\.durationMs\)/);
+  assert.match(countView, /"skipped-clean"/);
 });
 
 test("segment counts render progressive preview and final phases in parallel", () => {

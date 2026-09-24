@@ -141,8 +141,11 @@ from measurements already collected by the normal count request and opens withou
 another SQL query or network request. Formatting is deferred until the browser is
 idle, so the diagnostics do not delay the visualization.
 
-The standard copy includes browser, Dataverse action, API, capacity, catalog, SQL
-connection, SQL execution, and rendering durations. The Dataverse action is further
+The standard copy includes browser, segment identity, segment save, Dataverse action,
+API, capacity, catalog, SQL connection, SQL execution, and rendering durations. Clean
+forms skip the Dynamics save; `segmentSaveStatus` distinguishes `skipped-clean` from
+`saved`, while `segmentSaveOperation` records only the actual form-save duration.
+The Dataverse action is further
 split into settings lookup, request construction, dependency resolution, API
 roundtrip, and response mapping so tenant-side latency can be distinguished from
 Fabric execution. Request construction is further split into segment retrieval,

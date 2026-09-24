@@ -267,9 +267,20 @@
     }
 
     registerFormContext(formContext);
-    if (!data.getIsDirty || data.getIsDirty()) {
+    const dirtyStateAvailable = typeof data.getIsDirty === "function";
+    const isDirty = !dirtyStateAvailable || data.getIsDirty();
+    let durationMs = 0;
+    if (isDirty) {
+      const startedAt = Date.now();
       await data.save();
+      durationMs = Date.now() - startedAt;
     }
+    return {
+      saved: isDirty,
+      dirty: isDirty,
+      dirtyStateAvailable: dirtyStateAvailable,
+      durationMs: durationMs
+    };
   }
 
   global.CISegmentSankey = Object.freeze({
