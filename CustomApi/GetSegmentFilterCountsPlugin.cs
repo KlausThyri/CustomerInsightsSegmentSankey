@@ -14,6 +14,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             var factory = (IOrganizationServiceFactory)serviceProvider.GetService(typeof(IOrganizationServiceFactory));
             var service = factory.CreateOrganizationService(context.UserId);
             var segmentId = SegmentFilterCountPluginRequestReader.ReadSegmentId(context);
+            var progressivePreview =
+                SegmentFilterCountPluginRequestReader.ReadProgressivePreview(context);
 
             tracing.Trace("Calculating demographic MQL filter counts for segment {0}.", segmentId);
 
@@ -21,7 +23,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 service,
                 tracing,
                 context.OrganizationId)
-                .Evaluate(segmentId);
+                .Evaluate(segmentId, progressivePreview);
             if (result.Diagnostics != null && result.Diagnostics.TimingsMs != null)
             {
                 result.Diagnostics.TimingsMs.DataverseAction =

@@ -46,7 +46,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             IList<FilterCountStage> stages,
             FabricDependencyStatus fabricDependencies,
             string evaluationToken,
-            FabricSegmentDiagnostics diagnostics)
+            FabricSegmentDiagnostics diagnostics,
+            bool isComplete = true)
         {
             GeneratedAt = generatedAt.ToString("o");
             IsEstimate = isEstimate;
@@ -54,6 +55,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             FabricDependencies = fabricDependencies;
             EvaluationToken = evaluationToken;
             Diagnostics = diagnostics;
+            IsComplete = isComplete;
         }
 
         [DataMember(Name = "generatedAt", Order = 1)]
@@ -73,17 +75,26 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "diagnostics", Order = 6, EmitDefaultValue = false)]
         public FabricSegmentDiagnostics Diagnostics { get; private set; }
+
+        [DataMember(Name = "isComplete", Order = 7)]
+        public bool IsComplete { get; private set; }
     }
 
     [DataContract]
     internal sealed class FilterCountStage
     {
-        public FilterCountStage(int order, string label, string detail, long count)
+        public FilterCountStage(
+            int order,
+            string label,
+            string detail,
+            long? count,
+            string status = "complete")
         {
             Order = order;
             Label = label;
             Detail = detail;
             Count = count;
+            Status = status;
         }
 
         [DataMember(Name = "order", Order = 1)]
@@ -96,6 +107,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
         public string Detail { get; private set; }
 
         [DataMember(Name = "count", Order = 4)]
-        public long Count { get; private set; }
+        public long? Count { get; private set; }
+
+        [DataMember(Name = "status", Order = 5)]
+        public string Status { get; private set; }
     }
 }

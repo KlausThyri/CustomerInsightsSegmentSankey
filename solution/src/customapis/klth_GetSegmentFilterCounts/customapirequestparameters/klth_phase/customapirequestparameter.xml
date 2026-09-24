@@ -1,0 +1,12 @@
+<customapirequestparameter uniquename="klth_phase">
+  <description default="Optional progressive evaluation phase: preview or complete.">
+    <label description="Optional progressive evaluation phase: preview or complete." languagecode="1033" />
+  </description>
+  <displayname default="Evaluation phase">
+    <label description="Evaluation phase" languagecode="1033" />
+  </displayname>
+  <iscustomizable>1</iscustomizable>
+  <isoptional>1</isoptional>
+  <name>klth_phase</name>
+  <type>10</type>
+</customapirequestparameter>

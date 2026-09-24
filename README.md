@@ -157,6 +157,17 @@ membership can change independently. Diagnostics report the compiled-request
 cache as `hit` or `miss`. A successful SQL evaluation returns immediately without waiting
 for a slower, concurrent capacity control-plane check because that success already
 proves the capacity is queryable. The standard copy also includes request
+
+The panel renders progressively. It starts a lightweight preview and the complete
+evaluation in parallel after saving the draft once. The preview evaluates the
+dynamic prefix without waiting for static segment membership and renders every
+completed filter stage immediately; dependent set-operation stages remain visible
+as accessible pending cards. The complete response atomically replaces the
+partial view and enables member navigation only after its evaluation token is
+available. Purely dynamic segments can therefore paint all stages from the
+preview response while the final response is completing. Diagnostics include
+`progressiveFirstPaint` so the perceived improvement can be measured separately
+from total completion time. The standard copy also includes request
 correlation, versions, bounded query-complexity counters, runtime state, and
 logical source-table names.
 Stage counts are opt-in. Subscription, resource-group, workspace, lakehouse, and

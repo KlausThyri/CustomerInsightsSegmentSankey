@@ -36,6 +36,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
         private readonly Guid organizationId;
         private readonly Dictionary<string, FabricRelationshipResolution> relationshipCache;
         private readonly Dictionary<string, string> primaryIdCache;
+        private bool deferStaticMembers;
 
         public FabricSegmentRequestBuilder(
             IOrganizationService service,
@@ -53,10 +54,15 @@ namespace CustomerInsightsSegmentSankey.CustomApi
         public FabricSegmentRequestBuildTimings Timings { get; private set; } =
             new FabricSegmentRequestBuildTimings();
 
+        public IList<FabricDeferredStage> DeferredStages { get; private set; } =
+            new List<FabricDeferredStage>();
+
         public FabricSegmentCountApiRequest Build(
             Guid segmentDefinitionId,
-            bool businessUnitScopingEnabled)
+            bool businessUnitScopingEnabled,
+            bool deferStaticMembers = false)
         {
+            this.deferStaticMembers = deferStaticMembers;
             var recursionPath = new HashSet<Guid>();
             if (!recursionPath.Add(segmentDefinitionId))
             {
@@ -74,7 +80,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         ? (DateTime?)definition.GetAttributeValue<DateTime>(
                             "modifiedon")
                         : null,
-                    businessUnitScopingEnabled);
+                    businessUnitScopingEnabled,
+                    deferStaticMembers);
                 FabricSegmentCountApiRequest cached;
                 if (TryGetRequest(cacheKey, out cached))
                 {
@@ -92,13 +99,16 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         " has no owning business unit.");
                 }
 
-                var query = BuildQuery(ParseMql(definition), recursionPath);
+                var query = BuildQuery(
+                    ParseMql(definition),
+                    recursionPath,
+                    deferStaticMembers);
                 query.BusinessUnitId = businessUnitScopingEnabled
                     ? (Guid?)businessUnit.Id
                     : null;
                 var request = new FabricSegmentCountApiRequest { Query = query };
                 Timings.Cache = "miss";
-                if (!ContainsStaticMembers(request.Query))
+                if (!deferStaticMembers && !ContainsStaticMembers(request.Query))
                 {
                     StoreRequest(cacheKey, request);
                 }
@@ -108,6 +118,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             finally
             {
                 recursionPath.Remove(segmentDefinitionId);
+                this.deferStaticMembers = false;
             }
         }
 
@@ -137,7 +148,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             Entity definition,
             ISet<Guid> recursionPath)
         {
-            return BuildQuery(ParseMql(definition), recursionPath);
+            return BuildQuery(ParseMql(definition), recursionPath, false);
         }
 
         private Entity RetrieveDefinition(Guid definitionId)
@@ -187,13 +198,19 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         private FabricSegmentQueryRequest BuildQuery(
             SegmentQuery query,
-            ISet<Guid> recursionPath)
+            ISet<Guid> recursionPath,
+            bool captureDeferredStages)
         {
-            return new FabricSegmentQueryRequest
+            var result = new FabricSegmentQueryRequest
             {
-                FirstOperand = BuildOperand(query.FirstOperand, recursionPath),
-                SetOperations = query.SetOperations
-                    .Select(operation => new FabricSegmentSetOperationRequest
+                FirstOperand = BuildOperand(query.FirstOperand, recursionPath)
+            };
+            for (var index = 0; index < query.SetOperations.Count; index++)
+            {
+                var operation = query.SetOperations[index];
+                try
+                {
+                    result.SetOperations.Add(new FabricSegmentSetOperationRequest
                     {
                         Operator = operation.Operator.ToString().ToUpperInvariant(),
                         Operand = BuildOperand(operation.Operand, recursionPath),
@@ -204,9 +221,35 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                                 : "Exclusion",
                         Detail = operation.Operator.ToString().ToUpperInvariant() +
                             " " + DescribeSetOperand(operation.Operand)
-                    })
-                    .ToList()
-            };
+                    });
+                }
+                catch (DeferredStaticMembersException)
+                {
+                    if (!captureDeferredStages)
+                    {
+                        throw;
+                    }
+
+                    for (var pendingIndex = index;
+                        pendingIndex < query.SetOperations.Count;
+                        pendingIndex++)
+                    {
+                        var pending = query.SetOperations[pendingIndex];
+                        DeferredStages.Add(new FabricDeferredStage(
+                            pending.Operator == SetOperator.Intersect
+                                ? "Intersection"
+                                : pending.Operator == SetOperator.Union
+                                    ? "Union"
+                                    : "Exclusion",
+                            pending.Operator.ToString().ToUpperInvariant() +
+                                " " + DescribeSetOperand(pending.Operand)));
+                    }
+
+                    break;
+                }
+            }
+
+            return result;
         }
 
         private FabricSegmentOperandRequest BuildOperand(
@@ -450,6 +493,11 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     recursionPath.Remove(definitionId);
                 }
             }
+
+                if (deferStaticMembers)
+                {
+                    throw new DeferredStaticMembersException();
+                }
 
                 return new FabricSegmentOperandRequest
                 {
@@ -926,14 +974,16 @@ namespace CustomerInsightsSegmentSankey.CustomApi
         private string BuildRequestCacheKey(
             Guid segmentDefinitionId,
             DateTime? modifiedOn,
-            bool businessUnitScopingEnabled)
+            bool businessUnitScopingEnabled,
+            bool progressivePreview)
         {
             return organizationId.ToString("D") + "|" +
                 segmentDefinitionId.ToString("D") + "|" +
                 (modifiedOn.HasValue
                     ? modifiedOn.Value.ToUniversalTime().Ticks.ToString()
                     : "unknown") + "|" +
-                (businessUnitScopingEnabled ? "1" : "0");
+                (businessUnitScopingEnabled ? "1" : "0") + "|" +
+                (progressivePreview ? "preview" : "complete");
         }
 
         private static bool TryGetRequest(
@@ -1049,6 +1099,23 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             public T Value { get; private set; }
 
             public DateTime ExpiresAtUtc { get; private set; }
+        }
+
+        private sealed class DeferredStaticMembersException : Exception
+        {
+        }
+
+        internal sealed class FabricDeferredStage
+        {
+            public FabricDeferredStage(string label, string detail)
+            {
+                Label = label;
+                Detail = detail;
+            }
+
+            public string Label { get; private set; }
+
+            public string Detail { get; private set; }
         }
 
         private sealed class FabricRelationshipResolution

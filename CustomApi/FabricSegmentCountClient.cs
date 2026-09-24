@@ -21,7 +21,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             this.organizationId = organizationId;
         }
 
-        public FilterCountResult Evaluate(Guid segmentDefinitionId)
+        public FilterCountResult Evaluate(
+            Guid segmentDefinitionId,
+            bool progressivePreview = false)
         {
             var phaseTimer = Stopwatch.StartNew();
             var settings = new FabricSegmentCountSettingsProvider(service)
@@ -34,7 +36,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 organizationId);
             var requestPayload = requestBuilder.Build(
                 segmentDefinitionId,
-                settings.BusinessUnitScopingEnabled);
+                settings.BusinessUnitScopingEnabled,
+                progressivePreview);
             var requestBuildMs = phaseTimer.Elapsed.TotalMilliseconds;
 
             phaseTimer.Restart();
@@ -46,6 +49,26 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
             var result = new FabricSegmentCountApiClient(tracing)
                 .Evaluate(segmentDefinitionId, settings, requestPayload, dependencies);
+            if (progressivePreview)
+            {
+                var stages = result.Stages.ToList();
+                var nextOrder = stages.Count;
+                stages.AddRange(requestBuilder.DeferredStages.Select(stage =>
+                    new FilterCountStage(
+                        nextOrder++,
+                        stage.Label,
+                        stage.Detail,
+                        null,
+                        "pending")));
+                result = new FilterCountResult(
+                    DateTime.Parse(result.GeneratedAt),
+                    result.IsEstimate,
+                    stages,
+                    result.FabricDependencies,
+                    string.Empty,
+                    result.Diagnostics,
+                    false);
+            }
             if (result.Diagnostics != null && result.Diagnostics.TimingsMs != null)
             {
                 result.Diagnostics.TimingsMs.DataverseSettings = settingsMs;

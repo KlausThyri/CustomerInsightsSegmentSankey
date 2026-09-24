@@ -249,6 +249,10 @@
       opacity: .62;
       pointer-events: none;
     }
+    .chart.progressive-result .sankey-svg {
+      opacity: .86;
+      pointer-events: none;
+    }
     .chart.refreshing::after {
       position: absolute;
       top: 12px;
@@ -284,6 +288,28 @@
       background: var(--cp-surface-soft);
       content: "";
       animation: loading-pulse 1.4s ease-in-out infinite;
+    }
+    .progressive-pending {
+      display: grid;
+      gap: 10px;
+      width: min(338px, 82%);
+      margin: 0 auto 20px;
+    }
+    .progressive-pending-stage {
+      padding: 14px 16px;
+      border: 1px dashed var(--cp-border-strong);
+      border-radius: .625rem;
+      background: var(--cp-surface-soft);
+      color: var(--cp-text-muted);
+    }
+    .progressive-pending-stage strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--cp-text);
+      font-size: 13px;
+    }
+    .progressive-pending-stage span {
+      font-size: 11px;
     }
     .loading-stage::before { width: 54%; }
     .loading-stage::after {
@@ -680,7 +706,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.81">v1.1.0.81</span>
+          <span class="app-version" aria-label="Version 1.1.0.82">v1.1.0.82</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -1240,6 +1266,9 @@
           errorCode: safeDiagnosticText(diagnostic.errorCode || server.errorCode, 80),
           timingsMs: {
             browserTotal: finiteMetric(diagnostic.browserTotalMs),
+            progressiveFirstPaint: finiteMetric(
+              diagnostic.progressiveFirstPaintMs
+            ),
             dataverseAction: finiteMetric(
               timings.dataverseAction ?? diagnostic.dataverseActionMs
             ),
@@ -1434,9 +1463,15 @@
           order: Number.isInteger(stage.order) ? stage.order : index,
           label: translateStageLabel(stage.label) || "Filter " + (index + 1),
           detail: stage.detail || "",
-          count: Number(stage.count)
+          count: stage.count === null || stage.status === "pending"
+            ? null
+            : Number(stage.count),
+          status: stage.status === "pending" ? "pending" : "complete"
         }));
-        if (stages.some(stage => !Number.isFinite(stage.count) || stage.count < 0)) {
+        if (stages.some(stage =>
+          stage.status === "complete" &&
+          (!Number.isFinite(stage.count) || stage.count < 0)
+        )) {
           throw new Error("The count provider returned an invalid stage count.");
         }
 
@@ -1448,6 +1483,7 @@
             result.diagnostics && typeof result.diagnostics === "object"
               ? result.diagnostics
               : null,
+          isComplete: result.isComplete !== false,
           stages: stages
         };
       }
@@ -1496,7 +1532,7 @@
         return value;
       }
 
-      async function executeCountAction(segmentId) {
+      async function executeCountAction(segmentId, phase) {
         const xrm = getXrm();
         if (!xrm) {
           return normalizeResult({
@@ -1508,16 +1544,6 @@
               { label: "Risk profile", detail: "Risk-ready or speculative", count: 5870 }
             ]
           });
-        }
-
-        if (window.parent?.CISegmentSankey?.saveCurrentSegment) {
-          try {
-            await window.parent.CISegmentSankey.saveCurrentSegment();
-          } catch (error) {
-            throw createTransientError(
-              error?.message || "The active segment could not be saved yet."
-            );
-          }
         }
 
         let response;
@@ -1533,7 +1559,10 @@
                 "OData-MaxVersion": "4.0",
                 "OData-Version": "4.0"
               },
-              body: JSON.stringify({ klth_segmentid: segmentId })
+              body: JSON.stringify({
+                klth_segmentid: segmentId,
+                klth_phase: phase || "complete"
+              })
             }
           );
         } catch (error) {
@@ -1591,8 +1620,8 @@
       }
 
       function render(result, elapsedMilliseconds) {
-        const stages = result.stages;
-        state.evaluationToken = result.evaluationToken;
+        const stages = result.stages.filter(stage => stage.status !== "pending");
+        state.evaluationToken = result.isComplete ? result.evaluationToken : "";
         document.getElementById("load-duration").textContent =
           "Load time " + new Intl.NumberFormat("en-US", {
             minimumFractionDigits: 1,
@@ -1609,6 +1638,7 @@
         const initial = stages[0].count;
         const final = stages[stages.length - 1].count;
         const chart = document.getElementById("chart");
+        chart.classList.remove("progressive-result");
         chart.replaceChildren();
         chart.append(createSankey(stages));
 
@@ -1627,6 +1657,63 @@
           }).format(new Date(result.generatedAt));
         setNotice(
           result.isEstimate ? "The displayed values are estimates from the count provider." : "",
+          ""
+        );
+      }
+
+      function renderProgressive(result, elapsedMilliseconds) {
+        const completed = result.stages.filter(stage => stage.status !== "pending");
+        const pending = result.stages.filter(stage => stage.status === "pending");
+        if (!completed.length) {
+          return;
+        }
+
+        render(
+          {
+            ...result,
+            stages: completed,
+            isComplete: false
+          },
+          elapsedMilliseconds
+        );
+        state.lastKnownStageCount = result.stages.length;
+        const chart = document.getElementById("chart");
+        chart.classList.add("progressive-result");
+        chart.setAttribute("aria-busy", "true");
+        chart.classList.remove("refreshing");
+        chart.removeAttribute("inert");
+        if (!pending.length) {
+          document.getElementById("load-duration").textContent =
+            "Filter stages ready " + new Intl.NumberFormat("en-US", {
+              minimumFractionDigits: 1,
+              maximumFractionDigits: 1
+            }).format(elapsedMilliseconds / 1000) + " s";
+          setNotice("All filter stages are calculated. Finalizing the result…", "");
+          return;
+        }
+        const pendingList = document.createElement("div");
+        pendingList.className = "progressive-pending";
+        pendingList.setAttribute("role", "status");
+        pendingList.setAttribute("aria-live", "polite");
+        pendingList.innerHTML = pending.map(stage =>
+          '<div class="progressive-pending-stage">' +
+            "<strong>" + escapeHtml(stage.label) + "</strong>" +
+            "<span>Waiting for dependent segment data…</span>" +
+          "</div>"
+        ).join("");
+        chart.append(pendingList);
+        document.getElementById("result-count").textContent = "Pending";
+        document.getElementById("retention").textContent = "Pending";
+        document.getElementById("load-duration").textContent =
+          "Partial result " + new Intl.NumberFormat("en-US", {
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1
+          }).format(elapsedMilliseconds / 1000) + " s";
+        setNotice(
+          completed.length + " stages calculated. " +
+            pending.length + " dependent " +
+            (pending.length === 1 ? "stage is" : "stages are") +
+            " still loading.",
           ""
         );
       }
@@ -2549,24 +2636,60 @@
         }
         const startedAt = performance.now();
         let dataverseActionMs = null;
+        let progressiveRendered = false;
+        let progressiveFirstPaintMs = null;
         setLoading(true, isNewSegment);
         setNotice("", "");
         try {
           await updateSegmentIdentity(segmentId);
+          if (window.parent?.CISegmentSankey?.saveCurrentSegment) {
+            try {
+              await window.parent.CISegmentSankey.saveCurrentSegment();
+            } catch (error) {
+              throw createTransientError(
+                error?.message || "The active segment could not be saved yet."
+              );
+            }
+          }
           const actionStartedAt = performance.now();
           let result;
           let requestSource = "network";
           try {
-            result = await cachedRequest(
+            let finalSettled = false;
+            const previewPromise = cachedRequest(
               countRequestCache,
-              segmentId,
-              () => executeCountAction(segmentId),
+              segmentId + "|preview",
+              () => executeCountAction(segmentId, "preview"),
+              requestController.signal,
+              !isAutomatic
+            ).catch(error => {
+              console.warn("Segment preview: Progressive preview failed.", error);
+              return null;
+            });
+            const finalPromise = cachedRequest(
+              countRequestCache,
+              segmentId + "|complete",
+              () => executeCountAction(segmentId, "complete"),
               requestController.signal,
               !isAutomatic,
               source => {
                 requestSource = source;
               }
-            );
+            ).finally(() => {
+              finalSettled = true;
+            });
+            const preview = await previewPromise;
+            if (
+              preview &&
+              !preview.isComplete &&
+              !finalSettled &&
+              requestGeneration === state.requestGeneration
+            ) {
+              renderProgressive(preview, performance.now() - startedAt);
+              progressiveRendered = true;
+              progressiveFirstPaintMs = performance.now() - startedAt;
+            }
+            result = await finalPromise;
           } finally {
             dataverseActionMs = performance.now() - actionStartedAt;
           }
@@ -2589,6 +2712,7 @@
             status: "succeeded",
             segmentId: segmentId,
             browserTotalMs: performance.now() - startedAt,
+            progressiveFirstPaintMs: progressiveFirstPaintMs,
             dataverseActionMs: dataverseActionMs,
             renderingMs: performance.now() - renderingStartedAt,
             stages: result.stages,
@@ -2676,7 +2800,7 @@
             stages: null,
             server: error.diagnostics
           });
-          if (isNewSegment) {
+          if (isNewSegment && !progressiveRendered) {
             document.getElementById("summary").hidden = true;
             document.getElementById("chart").innerHTML =
               '<div class="empty">The filter counts could not be loaded.</div>';

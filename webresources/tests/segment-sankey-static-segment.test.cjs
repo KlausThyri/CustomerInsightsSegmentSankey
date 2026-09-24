@@ -85,7 +85,7 @@ test("refresh keeps an existing visualization visible while counts update", () =
   assert.match(html, /setLoading\(true, isNewSegment\)/);
   assert.match(
     html,
-    /if \(isNewSegment\) \{\s*document\.getElementById\("summary"\)\.hidden = true;/
+    /if \(isNewSegment && !progressiveRendered\) \{\s*document\.getElementById\("summary"\)\.hidden = true;/
   );
 });
 

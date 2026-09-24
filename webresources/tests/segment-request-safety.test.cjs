@@ -30,6 +30,7 @@ test("segment diagnostics report browser-observed request source", () => {
 
 test("segment diagnostics preserve the Dataverse phase timing breakdown", () => {
   assert.match(countView, /dataverseSettings: finiteMetric\(timings\.dataverseSettings\)/);
+  assert.match(countView, /progressiveFirstPaint: finiteMetric\([\s\S]{0,80}diagnostic\.progressiveFirstPaintMs/);
   assert.match(countView, /dataverseRequestBuild: finiteMetric\(timings\.dataverseRequestBuild\)/);
   assert.match(countView, /dataverseDependencyResolution: finiteMetric\([\s\S]{0,80}timings\.dataverseDependencyResolution/);
   assert.match(countView, /dataverseApiRoundtrip: finiteMetric\(timings\.dataverseApiRoundtrip\)/);
@@ -41,6 +42,18 @@ test("segment diagnostics preserve the Dataverse phase timing breakdown", () => 
   assert.match(countView, /dataverseSegmentReferences: finiteMetric\([\s\S]{0,80}timings\.dataverseSegmentReferences/);
   assert.match(countView, /dataverseStaticMembers: finiteMetric\([\s\S]{0,80}timings\.dataverseStaticMembers/);
   assert.match(countView, /requestBuildCache: safeDiagnosticText\([\s\S]{0,80}runtime\.requestBuildCache/);
+});
+
+test("segment counts render progressive preview and final phases in parallel", () => {
+  assert.match(countView, /klth_phase: phase \|\| "complete"/);
+  assert.match(countView, /segmentId \+ "\|preview"/);
+  assert.match(countView, /segmentId \+ "\|complete"/);
+  assert.match(countView, /const previewPromise = cachedRequest\(/);
+  assert.match(countView, /const finalPromise = cachedRequest\(/);
+  assert.match(countView, /renderProgressive\(preview, performance\.now\(\) - startedAt\)/);
+  assert.match(countView, /stage\.count === null \|\| stage\.status === "pending"/);
+  assert.match(countView, /Waiting for dependent segment data/);
+  assert.match(countView, /state\.evaluationToken = result\.isComplete \? result\.evaluationToken : ""/);
 });
 
 test("member requests use their full request shape as a bounded cache key", () => {

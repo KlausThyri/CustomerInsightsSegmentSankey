@@ -19,6 +19,29 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
             return (Guid)context.InputParameters["klth_segmentid"];
         }
+
+        public static bool ReadProgressivePreview(IPluginExecutionContext context)
+        {
+            if (!context.InputParameters.Contains("klth_phase"))
+            {
+                return false;
+            }
+
+            var phase = context.InputParameters["klth_phase"] as string;
+            if (string.IsNullOrWhiteSpace(phase) ||
+                string.Equals(phase, "complete", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (string.Equals(phase, "preview", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            throw new InvalidPluginExecutionException(
+                "The klth_phase parameter must be 'preview' or 'complete'.");
+        }
     }
 
     internal static class SegmentFilterCountResultSerializer
