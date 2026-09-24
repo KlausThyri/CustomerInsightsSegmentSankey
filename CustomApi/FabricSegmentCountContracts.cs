@@ -335,6 +335,24 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "dataverseResponseMapping", Order = 11)]
         public double DataverseResponseMapping { get; set; }
+
+        [DataMember(Name = "dataverseSegmentRetrieve", Order = 12)]
+        public double DataverseSegmentRetrieve { get; set; }
+
+        [DataMember(Name = "dataverseMqlParsing", Order = 13)]
+        public double DataverseMqlParsing { get; set; }
+
+        [DataMember(Name = "dataverseRelationshipMetadata", Order = 14)]
+        public double DataverseRelationshipMetadata { get; set; }
+
+        [DataMember(Name = "dataverseEntityMetadata", Order = 15)]
+        public double DataverseEntityMetadata { get; set; }
+
+        [DataMember(Name = "dataverseSegmentReferences", Order = 16)]
+        public double DataverseSegmentReferences { get; set; }
+
+        [DataMember(Name = "dataverseStaticMembers", Order = 17)]
+        public double DataverseStaticMembers { get; set; }
     }
 
     [DataContract]
@@ -382,6 +400,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "retries", Order = 5)]
         public int Retries { get; set; }
+
+        [DataMember(Name = "requestBuildCache", Order = 6)]
+        public string RequestBuildCache { get; set; }
     }
 
     [DataContract]

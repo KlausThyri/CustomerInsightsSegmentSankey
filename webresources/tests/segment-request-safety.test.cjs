@@ -34,6 +34,13 @@ test("segment diagnostics preserve the Dataverse phase timing breakdown", () => 
   assert.match(countView, /dataverseDependencyResolution: finiteMetric\([\s\S]{0,80}timings\.dataverseDependencyResolution/);
   assert.match(countView, /dataverseApiRoundtrip: finiteMetric\(timings\.dataverseApiRoundtrip\)/);
   assert.match(countView, /dataverseResponseMapping: finiteMetric\([\s\S]{0,80}timings\.dataverseResponseMapping/);
+  assert.match(countView, /dataverseSegmentRetrieve: finiteMetric\([\s\S]{0,80}timings\.dataverseSegmentRetrieve/);
+  assert.match(countView, /dataverseMqlParsing: finiteMetric\(timings\.dataverseMqlParsing\)/);
+  assert.match(countView, /dataverseRelationshipMetadata: finiteMetric\([\s\S]{0,80}timings\.dataverseRelationshipMetadata/);
+  assert.match(countView, /dataverseEntityMetadata: finiteMetric\([\s\S]{0,80}timings\.dataverseEntityMetadata/);
+  assert.match(countView, /dataverseSegmentReferences: finiteMetric\([\s\S]{0,80}timings\.dataverseSegmentReferences/);
+  assert.match(countView, /dataverseStaticMembers: finiteMetric\([\s\S]{0,80}timings\.dataverseStaticMembers/);
+  assert.match(countView, /requestBuildCache: safeDiagnosticText\([\s\S]{0,80}runtime\.requestBuildCache/);
 });
 
 test("member requests use their full request shape as a bounded cache key", () => {

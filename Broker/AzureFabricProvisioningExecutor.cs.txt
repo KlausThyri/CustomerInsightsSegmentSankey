@@ -843,11 +843,21 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
                 "service will reuse the existing key instead of rotating it.");
         }
 
+        var warmup = await PollApiWarmupAsync(apiBaseUrl, apiKey, cancellationToken).ConfigureAwait(false);
+        if (!warmup.Ok)
+        {
+            throw new InvalidOperationException(
+                "The API package is running and accepts its key, but Fabric SQL did not warm successfully within " +
+                FormatMinutes(HealthAttempts, HealthPollDelay) + " minutes (" + (warmup.Error ?? "no response") + "). " +
+                "Wait a few minutes and install again; the provisioning service will safely retry the SQL warm-up.");
+        }
+
         return StepOutcome.Succeeded(
             "The Web App runs API package " + (Trim(package.Version) ?? package.ResolvedBlobName) +
             " from the customer's own storage account, was restarted, answered /health after " + health.Attempts +
             (health.Attempts == 1 ? " attempt, and" : " attempts, and") + " accepted its API key after " + keyCheck.Attempts +
-            (keyCheck.Attempts == 1 ? " attempt." : " attempts."),
+            (keyCheck.Attempts == 1 ? " attempt, and" : " attempts, and") + " completed the Fabric SQL warm-up after " +
+            warmup.Attempts + (warmup.Attempts == 1 ? " attempt." : " attempts."),
             new Dictionary<string, string?>
             {
                 ["principalId"] = context.Outputs.TryGetValue("principalId", out var value) ? value : null,
@@ -930,6 +940,53 @@ public sealed class AzureFabricProvisioningExecutor : IProvisioningExecutor
                         if (document.RootElement.ValueKind == JsonValueKind.Object &&
                             document.RootElement.TryGetProperty("apiKeyAccepted", out var accepted) &&
                             accepted.ValueKind == JsonValueKind.True)
+                        {
+                            return new ApiProbeResult(true, attempt, null);
+                        }
+                    }
+                }
+
+                lastError = "HTTP " + (int)response.StatusCode;
+            }
+            catch (HttpRequestException exception)
+            {
+                lastError = exception.Message;
+            }
+        }
+
+        return new ApiProbeResult(false, HealthAttempts, lastError);
+    }
+
+    /// <summary>
+    /// Runs the authenticated SQL readiness probe after the deployed worker has
+    /// accepted its key, so provisioning cannot finish while Fabric SQL is cold.
+    /// </summary>
+    private async Task<ApiProbeResult> PollApiWarmupAsync(string apiBaseUrl, string apiKey, CancellationToken cancellationToken)
+    {
+        var url = apiBaseUrl.TrimEnd('/') + "/setup/warmup";
+        string? lastError = null;
+        for (var attempt = 1; attempt <= HealthAttempts; attempt++)
+        {
+            if (attempt > 1)
+            {
+                await Task.Delay(HealthPollDelay, _time, cancellationToken).ConfigureAwait(false);
+            }
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, url);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+                using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                if (response.IsSuccessStatusCode)
+                {
+                    var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        using var document = JsonDocument.Parse(text);
+                        if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                            document.RootElement.TryGetProperty("sqlWarm", out var sqlWarm) &&
+                            sqlWarm.ValueKind == JsonValueKind.True)
                         {
                             return new ApiProbeResult(true, attempt, null);
                         }

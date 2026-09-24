@@ -851,7 +851,7 @@ Describe 'Browser-only notebook and API deployment' {
         $plugin | Should -Match 'App Service access restriction'
     }
 
-    It 'opens only the health and authenticated key-check probes to the setup origin' {
+    It 'opens only the health and authenticated setup probes to the setup origin' {
         $cors = Get-Content -LiteralPath (Join-Path $script:BrowserRoot 'FabricApi\SetupHealthCors.cs.txt') -Raw
         $program = Get-Content -LiteralPath (Join-Path $script:BrowserRoot 'FabricApi\Program.cs.txt') -Raw
         $cors | Should -Not -Match 'AllowAnyOrigin'
@@ -859,9 +859,11 @@ Describe 'Browser-only notebook and API deployment' {
         $program | Should -Match 'RequireCors\(SetupHealthCors\.PolicyName\)'
         $program | Should -Match 'RequireCors\(SetupHealthCors\.KeyCheckPolicyName\)'
         $program | Should -Match '"/api/setup/key-check"'
+        $program | Should -Match '"/api/setup/warmup"'
         $program | Should -Match '\.WithHeaders\("Accept", "x-api-key"\)'
         $program | Should -Match 'WithMethods\("GET"\)'
-        ([regex]::Matches($program, 'RequireCors\(')).Count | Should -Be 2
+        $program | Should -Match 'WithMethods\("GET", "POST"\)'
+        ([regex]::Matches($program, 'RequireCors\(')).Count | Should -Be 3
     }
 
     It 'sends the pinned package to the optional provisioning service too' {

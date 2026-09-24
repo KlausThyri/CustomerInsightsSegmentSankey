@@ -2502,6 +2502,32 @@ test("direct client waits between authenticated API key-check attempts", async (
   assert.equal(fetchImpl.calls[1].init.headers["x-api-key"], "stable-key");
 });
 
+test("direct client performs an authenticated Fabric SQL warm-up", async () => {
+  const fetchImpl = createFetchMock([
+    {
+      match: (request) => request.url.endsWith("/api/setup/warmup"),
+      respond: (request) => {
+        assert.equal(request.init.method, "POST");
+        assert.equal(request.init.headers["x-api-key"], "stable-key");
+        return jsonResponse(200, { status: "ok", sqlWarm: true });
+      }
+    }
+  ]);
+  const direct = engine.createDirectClient({
+    fetch: fetchImpl,
+    getToken: async () => "token"
+  });
+
+  const result = await direct.apiWarmup(
+    "https://api.example.com/api/",
+    "stable-key",
+    { attempts: 1 }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.attempts, 1);
+});
+
 test("direct health polling does not multiply its retry budget", async () => {
   const delays = [];
   const fetchImpl = createFetchMock([
@@ -3967,6 +3993,18 @@ function directHarness(options = {}) {
         attempts: options.keyCheckAttempts || 1,
         status: 200,
         body: { status: "ok", apiKeyAccepted: true }
+      };
+    },
+    async apiWarmup(baseUrl, apiKey, config) {
+      calls.push({ kind: "apiWarmup", baseUrl, apiKey, config });
+      if (options.warmupNeverCompletes) {
+        return { ok: false, attempts: (config && config.attempts) || 60, error: "HTTP 503", url: baseUrl };
+      }
+      return {
+        ok: true,
+        attempts: options.warmupAttempts || 1,
+        status: 200,
+        body: { status: "ok", sqlWarm: true }
       };
     }
   };
@@ -5495,8 +5533,10 @@ test("the API is only reported as installed once it actually answers", async () 
   const restart = kinds.lastIndexOf("restartWebApp");
   const health = kinds.lastIndexOf("apiHealth");
   const keyCheck = kinds.lastIndexOf("apiKeyCheck");
+  const warmup = kinds.lastIndexOf("apiWarmup");
   assert.ok(restart >= 0 && health > restart, "the health check has to follow the restart");
   assert.ok(keyCheck > health, "the authenticated key check has to follow the health check");
+  assert.ok(warmup > keyCheck, "the SQL warm-up has to follow the authenticated key check");
   assert.match(direct.calls[health].baseUrl, /\/api\/$/);
 });
 

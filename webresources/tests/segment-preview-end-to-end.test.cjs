@@ -257,6 +257,10 @@ function directHarness(options = {}) {
     async apiKeyCheck(baseUrl, apiKey, config) {
       calls.push({ kind: "apiKeyCheck", baseUrl, apiKey, config });
       return { ok: true, attempts: 1, status: 200, body: { status: "ok", apiKeyAccepted: true } };
+    },
+    async apiWarmup(baseUrl, apiKey, config) {
+      calls.push({ kind: "apiWarmup", baseUrl, apiKey, config });
+      return { ok: true, attempts: 1, status: 200, body: { status: "ok", sqlWarm: true } };
     }
   };
 }

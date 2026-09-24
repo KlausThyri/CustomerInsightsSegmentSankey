@@ -3595,6 +3595,42 @@
       return { ok: false, attempts: attempts, error: lastError, url: url };
     }
 
+    async function apiWarmup(baseUrl, apiKey, options) {
+      var config = options || {};
+      var attempts = config.attempts || HEALTH_ATTEMPTS;
+      var delayMs = config.delayMs || HEALTH_DELAY_MS;
+      var url = String(baseUrl || "").replace(/\/+$/, "") + "/setup/warmup";
+      var lastError = null;
+      for (var attempt = 0; attempt < attempts; attempt++) {
+        if (attempt > 0) await delay(delayMs, timer);
+        try {
+          var response = await http.send({
+            url: url,
+            method: "POST",
+            headers: { Accept: "application/json", "x-api-key": apiKey },
+            maxAttempts: 1
+          });
+          if (
+            response.status >= 200 &&
+            response.status < 300 &&
+            response.body &&
+            response.body.sqlWarm === true
+          ) {
+            return {
+              ok: true,
+              attempts: attempt + 1,
+              status: response.status,
+              body: response.body
+            };
+          }
+          lastError = "HTTP " + response.status;
+        } catch (error) {
+          lastError = (error && error.message) || String(error);
+        }
+      }
+      return { ok: false, attempts: attempts, error: lastError, url: url };
+    }
+
     function sitePath(subscriptionId, resourceGroup, webAppName) {
       return (
         "/subscriptions/" +
@@ -3636,7 +3672,8 @@
       restartContainerGroup: restartContainerGroup,
       packageCopyLogs: packageCopyLogs,
       apiHealth: apiHealth,
-      apiKeyCheck: apiKeyCheck
+      apiKeyCheck: apiKeyCheck,
+      apiWarmup: apiWarmup
     };
   }
 
@@ -4997,6 +5034,19 @@
               "). App Service may still be recycling an older worker. Wait a few minutes and install again; Setup will reuse the existing key instead of rotating it."
           );
         }
+        var warmup = await direct.apiWarmup(healthBase, context.apiKey, {
+          attempts: settings.healthAttempts,
+          delayMs: settings.healthDelayMs
+        });
+        if (!warmup || !warmup.ok) {
+          throw new Error(
+            "The API package is running and accepts its key, but Fabric SQL did not warm successfully within " +
+              Math.round(((settings.healthAttempts || HEALTH_ATTEMPTS) * (settings.healthDelayMs || HEALTH_DELAY_MS)) / 60000) +
+              " minutes (" +
+              ((warmup && warmup.error) || "no response") +
+              "). Wait a few minutes and install again; Setup will safely retry the SQL warm-up."
+          );
+        }
         context.apiHealthy = true;
         return (
           "API package " +
@@ -5006,7 +5056,10 @@
           (health.attempts === 1 ? " attempt, and" : " attempts, and") +
           " accepted its API key after " +
           keyCheck.attempts +
-          (keyCheck.attempts === 1 ? " attempt." : " attempts.")
+          (keyCheck.attempts === 1 ? " attempt, and" : " attempts, and") +
+          " completed the Fabric SQL warm-up after " +
+          warmup.attempts +
+          (warmup.attempts === 1 ? " attempt." : " attempts.")
         );
       },
 

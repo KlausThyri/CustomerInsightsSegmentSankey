@@ -387,6 +387,7 @@ public sealed class AzureFabricProvisioningExecutorTests
         const string apiKey = "correct-key";
         var healthCalls = 0;
         var keyCheckCalls = 0;
+        var warmupCalls = 0;
         var executor = CreateExecutor(request =>
         {
             var common = HandleWebAppInfrastructure(request, Package(), apiKey);
@@ -408,6 +409,17 @@ public sealed class AzureFabricProvisioningExecutorTests
                     : JsonResponse(HttpStatusCode.OK, new { apiKeyAccepted = false });
             }
 
+            if (path == "/api/setup/warmup")
+            {
+                warmupCalls++;
+                var accepted = request.Method == HttpMethod.Post &&
+                    request.Headers.TryGetValues("x-api-key", out var values) &&
+                    values.Contains(apiKey);
+                return accepted
+                    ? JsonResponse(HttpStatusCode.OK, new { sqlWarm = true })
+                    : new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            }
+
             throw new InvalidOperationException("Unexpected request: " + request.Method + " " + request.RequestUri);
         });
 
@@ -417,6 +429,7 @@ public sealed class AzureFabricProvisioningExecutorTests
         Assert.Equal("succeeded", outcome.Status);
         Assert.Equal(2, healthCalls);
         Assert.Equal(2, keyCheckCalls);
+        Assert.Equal(1, warmupCalls);
         Assert.Contains("2 attempts", outcome.Message);
     }
 

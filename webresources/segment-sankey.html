@@ -680,7 +680,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.80">v1.1.0.80</span>
+          <span class="app-version" aria-label="Version 1.1.0.81">v1.1.0.81</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -1252,6 +1252,22 @@
             dataverseResponseMapping: finiteMetric(
               timings.dataverseResponseMapping
             ),
+            dataverseSegmentRetrieve: finiteMetric(
+              timings.dataverseSegmentRetrieve
+            ),
+            dataverseMqlParsing: finiteMetric(timings.dataverseMqlParsing),
+            dataverseRelationshipMetadata: finiteMetric(
+              timings.dataverseRelationshipMetadata
+            ),
+            dataverseEntityMetadata: finiteMetric(
+              timings.dataverseEntityMetadata
+            ),
+            dataverseSegmentReferences: finiteMetric(
+              timings.dataverseSegmentReferences
+            ),
+            dataverseStaticMembers: finiteMetric(
+              timings.dataverseStaticMembers
+            ),
             apiTotal: finiteMetric(timings.apiTotal),
             capacityReadiness: finiteMetric(timings.capacityReadiness),
             catalog: finiteMetric(timings.catalog),
@@ -1278,6 +1294,10 @@
                 ? runtime.coalesced
                 : null,
             capacityState: safeDiagnosticText(runtime.capacityState, 40),
+            requestBuildCache: safeDiagnosticText(
+              runtime.requestBuildCache,
+              20
+            ),
             businessUnitScoping:
               typeof runtime.businessUnitScoping === "boolean"
                 ? runtime.businessUnitScoping

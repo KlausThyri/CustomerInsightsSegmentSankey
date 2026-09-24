@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.RegularExpressions;
 using Microsoft.Xrm.Sdk;
@@ -14,19 +15,43 @@ namespace CustomerInsightsSegmentSankey.CustomApi
         private const string SegmentEntityName = "msdynmkt_segmentdefinition";
         private const string SegmentQueryAttribute = "msdynmkt_segmentquery";
         private const int StaticPageSize = 5000;
+        private const int MaximumMetadataCacheEntries = 128;
+        private const int MaximumRequestCacheEntries = 32;
+        private static readonly TimeSpan MetadataCacheTtl = TimeSpan.FromMinutes(15);
+        private static readonly TimeSpan RequestCacheTtl = TimeSpan.FromSeconds(20);
+        private static readonly object SharedCacheLock = new object();
+        private static readonly Dictionary<string, CacheEntry<FabricRelationshipResolution>>
+            SharedRelationshipCache =
+                new Dictionary<string, CacheEntry<FabricRelationshipResolution>>(
+                    StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, CacheEntry<string>>
+            SharedPrimaryIdCache =
+                new Dictionary<string, CacheEntry<string>>(
+                    StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, CacheEntry<string>>
+            SharedRequestCache =
+                new Dictionary<string, CacheEntry<string>>(
+                    StringComparer.OrdinalIgnoreCase);
         private readonly IOrganizationService service;
+        private readonly Guid organizationId;
         private readonly Dictionary<string, FabricRelationshipResolution> relationshipCache;
         private readonly Dictionary<string, string> primaryIdCache;
 
-        public FabricSegmentRequestBuilder(IOrganizationService service)
+        public FabricSegmentRequestBuilder(
+            IOrganizationService service,
+            Guid organizationId)
         {
             this.service = service;
+            this.organizationId = organizationId;
             relationshipCache =
                 new Dictionary<string, FabricRelationshipResolution>(
                     StringComparer.OrdinalIgnoreCase);
             primaryIdCache =
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
+
+        public FabricSegmentRequestBuildTimings Timings { get; private set; } =
+            new FabricSegmentRequestBuildTimings();
 
         public FabricSegmentCountApiRequest Build(
             Guid segmentDefinitionId,
@@ -43,6 +68,20 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             try
             {
                 var definition = RetrieveDefinition(segmentDefinitionId);
+                var cacheKey = BuildRequestCacheKey(
+                    segmentDefinitionId,
+                    definition.Contains("modifiedon")
+                        ? (DateTime?)definition.GetAttributeValue<DateTime>(
+                            "modifiedon")
+                        : null,
+                    businessUnitScopingEnabled);
+                FabricSegmentCountApiRequest cached;
+                if (TryGetRequest(cacheKey, out cached))
+                {
+                    Timings.Cache = "hit";
+                    return cached;
+                }
+
                 var businessUnit = definition.GetAttributeValue<EntityReference>(
                     "owningbusinessunit");
                 if (businessUnitScopingEnabled && businessUnit == null)
@@ -53,13 +92,18 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         " has no owning business unit.");
                 }
 
-                var query = BuildQuery(
-                    new MqlParser(ReadSegmentQuery(definition)).Parse(),
-                    recursionPath);
+                var query = BuildQuery(ParseMql(definition), recursionPath);
                 query.BusinessUnitId = businessUnitScopingEnabled
                     ? (Guid?)businessUnit.Id
                     : null;
-                return new FabricSegmentCountApiRequest { Query = query };
+                var request = new FabricSegmentCountApiRequest { Query = query };
+                Timings.Cache = "miss";
+                if (!ContainsStaticMembers(request.Query))
+                {
+                    StoreRequest(cacheKey, request);
+                }
+
+                return request;
             }
             finally
             {
@@ -81,9 +125,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             try
             {
                 var definition = RetrieveDefinition(definitionId);
-                return BuildQuery(
-                    new MqlParser(ReadSegmentQuery(definition)).Parse(),
-                    recursionPath);
+                return BuildDefinition(definition, recursionPath);
             }
             finally
             {
@@ -91,12 +133,43 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             }
         }
 
+        private FabricSegmentQueryRequest BuildDefinition(
+            Entity definition,
+            ISet<Guid> recursionPath)
+        {
+            return BuildQuery(ParseMql(definition), recursionPath);
+        }
+
         private Entity RetrieveDefinition(Guid definitionId)
         {
-            return service.Retrieve(
-                SegmentEntityName,
-                definitionId,
-                new ColumnSet(SegmentQueryAttribute, "owningbusinessunit"));
+            var timer = Stopwatch.StartNew();
+            try
+            {
+                return service.Retrieve(
+                    SegmentEntityName,
+                    definitionId,
+                    new ColumnSet(
+                        SegmentQueryAttribute,
+                        "owningbusinessunit",
+                        "modifiedon"));
+            }
+            finally
+            {
+                Timings.SegmentRetrieve += timer.Elapsed.TotalMilliseconds;
+            }
+        }
+
+        private SegmentQuery ParseMql(Entity definition)
+        {
+            var timer = Stopwatch.StartNew();
+            try
+            {
+                return new MqlParser(ReadSegmentQuery(definition)).Parse();
+            }
+            finally
+            {
+                Timings.MqlParsing += timer.Elapsed.TotalMilliseconds;
+            }
         }
 
         private static string ReadSegmentQuery(Entity definition)
@@ -296,13 +369,26 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             Guid segmentId,
             ISet<Guid> recursionPath)
         {
-            var segment = service.Retrieve(
-                "msdynmkt_segment",
-                segmentId,
-                new ColumnSet(
-                    "msdynmkt_sourcesegmentuid",
-                    "msdynmkt_baseentitylogicalname",
-                    "msdynmkt_displayname"));
+            var referenceTimer = Stopwatch.StartNew();
+            try
+            {
+                var retrieveTimer = Stopwatch.StartNew();
+                Entity segment;
+                try
+                {
+                    segment = service.Retrieve(
+                        "msdynmkt_segment",
+                        segmentId,
+                        new ColumnSet(
+                            "msdynmkt_sourcesegmentuid",
+                            "msdynmkt_baseentitylogicalname",
+                            "msdynmkt_displayname"));
+                }
+                finally
+                {
+                    Timings.SegmentRetrieve +=
+                        retrieveTimer.Elapsed.TotalMilliseconds;
+                }
             Guid definitionId;
             if (!Guid.TryParse(
                 segment.GetAttributeValue<string>("msdynmkt_sourcesegmentuid"),
@@ -313,10 +399,22 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     segmentId.ToString("D") + " could not be determined.");
             }
 
-            var definition = service.Retrieve(
-                SegmentEntityName,
-                definitionId,
-                new ColumnSet(SegmentQueryAttribute, "msdynmkt_staticlistmembers"));
+            retrieveTimer.Restart();
+            Entity definition;
+            try
+            {
+                definition = service.Retrieve(
+                    SegmentEntityName,
+                    definitionId,
+                    new ColumnSet(
+                        SegmentQueryAttribute,
+                        "msdynmkt_staticlistmembers",
+                        "modifiedon"));
+            }
+            finally
+            {
+                Timings.SegmentRetrieve += retrieveTimer.Elapsed.TotalMilliseconds;
+            }
             var mql = definition.GetAttributeValue<string>(SegmentQueryAttribute);
             var profileEntity =
                 segment.GetAttributeValue<string>("msdynmkt_baseentitylogicalname");
@@ -327,31 +425,52 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
             if (!string.IsNullOrWhiteSpace(mql))
             {
-                var query = BuildDefinition(definitionId, recursionPath);
-                return new FabricSegmentOperandRequest
+                if (!recursionPath.Add(definitionId))
                 {
-                    Kind = "query",
-                    ProfileEntity = query.FirstOperand.ProfileEntity,
-                    BaseLabel = "Referenced segment",
-                    BaseDetail = "SEGMENT(SEGMENT_CJO_ID_" +
-                        segmentId.ToString("N") + ")",
-                    Query = query
-                };
+                    throw new InvalidPluginExecutionException(
+                        "The segment references contain a cycle at " +
+                        definitionId.ToString("D") + ".");
+                }
+
+                try
+                {
+                    var query = BuildDefinition(definition, recursionPath);
+                    return new FabricSegmentOperandRequest
+                    {
+                        Kind = "query",
+                        ProfileEntity = query.FirstOperand.ProfileEntity,
+                        BaseLabel = "Referenced segment",
+                        BaseDetail = "SEGMENT(SEGMENT_CJO_ID_" +
+                            segmentId.ToString("N") + ")",
+                        Query = query
+                    };
+                }
+                finally
+                {
+                    recursionPath.Remove(definitionId);
+                }
             }
 
-            return new FabricSegmentOperandRequest
+                return new FabricSegmentOperandRequest
+                {
+                    Kind = "static",
+                    ProfileEntity = profileEntity,
+                    BaseLabel = "Static segment",
+                    BaseDetail = "SEGMENT(SEGMENT_CJO_ID_" +
+                        segmentId.ToString("N") + ")",
+                    ProfileIds = RetrieveStaticSegmentIds(
+                        segmentId,
+                        definition.GetAttributeValue<string>(
+                            "msdynmkt_staticlistmembers"),
+                        segment.GetAttributeValue<string>("msdynmkt_displayname"))
+                        .ToList()
+                };
+            }
+            finally
             {
-                Kind = "static",
-                ProfileEntity = profileEntity,
-                BaseLabel = "Static segment",
-                BaseDetail = "SEGMENT(SEGMENT_CJO_ID_" +
-                    segmentId.ToString("N") + ")",
-                ProfileIds = RetrieveStaticSegmentIds(
-                    segmentId,
-                    definition.GetAttributeValue<string>("msdynmkt_staticlistmembers"),
-                    segment.GetAttributeValue<string>("msdynmkt_displayname"))
-                    .ToList()
-            };
+                Timings.SegmentReferences +=
+                    referenceTimer.Elapsed.TotalMilliseconds;
+            }
         }
 
         private FabricRelationshipResolution ResolveRelationship(
@@ -365,12 +484,25 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 return cached;
             }
 
+            var sharedKey = organizationId.ToString("D") + "|" + cacheKey;
+            if (TryGetShared(
+                SharedRelationshipCache,
+                sharedKey,
+                out cached))
+            {
+                relationshipCache.Add(cacheKey, cached);
+                return cached;
+            }
+
+            var metadataTimer = Stopwatch.StartNew();
             var response = (RetrieveRelationshipResponse)service.Execute(
                 new RetrieveRelationshipRequest
                 {
                     Name = relationshipSchema,
                     RetrieveAsIfPublished = true
                 });
+            Timings.RelationshipMetadata +=
+                metadataTimer.Elapsed.TotalMilliseconds;
             var relationship =
                 response.RelationshipMetadata as OneToManyRelationshipMetadata;
             FabricRelationshipResolution resolved;
@@ -404,6 +536,12 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 }
 
                 relationshipCache.Add(cacheKey, resolved);
+                StoreShared(
+                    SharedRelationshipCache,
+                    sharedKey,
+                    resolved,
+                    MaximumMetadataCacheEntries,
+                    MetadataCacheTtl);
                 return resolved;
             }
 
@@ -450,6 +588,12 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             }
 
             relationshipCache.Add(cacheKey, resolved);
+            StoreShared(
+                SharedRelationshipCache,
+                sharedKey,
+                resolved,
+                MaximumMetadataCacheEntries,
+                MetadataCacheTtl);
             return resolved;
         }
 
@@ -461,6 +605,14 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 return primaryId;
             }
 
+            var sharedKey = organizationId.ToString("D") + "|" + entityName;
+            if (TryGetShared(SharedPrimaryIdCache, sharedKey, out primaryId))
+            {
+                primaryIdCache.Add(entityName, primaryId);
+                return primaryId;
+            }
+
+            var metadataTimer = Stopwatch.StartNew();
             var response = (RetrieveEntityResponse)service.Execute(
                 new RetrieveEntityRequest
                 {
@@ -468,6 +620,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     EntityFilters = EntityFilters.Entity,
                     RetrieveAsIfPublished = true
                 });
+            Timings.EntityMetadata += metadataTimer.Elapsed.TotalMilliseconds;
             primaryId = response.EntityMetadata.PrimaryIdAttribute;
             if (string.IsNullOrWhiteSpace(primaryId))
             {
@@ -477,6 +630,12 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             }
 
             primaryIdCache.Add(entityName, primaryId);
+            StoreShared(
+                SharedPrimaryIdCache,
+                sharedKey,
+                primaryId,
+                MaximumMetadataCacheEntries,
+                MetadataCacheTtl);
             return primaryId;
         }
 
@@ -577,6 +736,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             string groupsJson,
             string segmentName)
         {
+            var timer = Stopwatch.StartNew();
+            try
+            {
             if (string.IsNullOrWhiteSpace(groupsJson))
             {
                 throw new InvalidPluginExecutionException(
@@ -619,7 +781,12 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 }
             }
 
-            return result;
+                return result;
+            }
+            finally
+            {
+                Timings.StaticMembers += timer.Elapsed.TotalMilliseconds;
+            }
         }
 
         private HashSet<Guid> RetrieveStaticGroupIds(Guid segmentId, Guid groupId)
@@ -756,6 +923,134 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 : string.Join(" AND ", filters.ToArray());
         }
 
+        private string BuildRequestCacheKey(
+            Guid segmentDefinitionId,
+            DateTime? modifiedOn,
+            bool businessUnitScopingEnabled)
+        {
+            return organizationId.ToString("D") + "|" +
+                segmentDefinitionId.ToString("D") + "|" +
+                (modifiedOn.HasValue
+                    ? modifiedOn.Value.ToUniversalTime().Ticks.ToString()
+                    : "unknown") + "|" +
+                (businessUnitScopingEnabled ? "1" : "0");
+        }
+
+        private static bool TryGetRequest(
+            string key,
+            out FabricSegmentCountApiRequest request)
+        {
+            string serialized;
+            if (TryGetShared(SharedRequestCache, key, out serialized))
+            {
+                request = FabricSegmentCountJsonSerialization
+                    .Deserialize<FabricSegmentCountApiRequest>(serialized);
+                return true;
+            }
+
+            request = null;
+            return false;
+        }
+
+        private static void StoreRequest(
+            string key,
+            FabricSegmentCountApiRequest request)
+        {
+            StoreShared(
+                SharedRequestCache,
+                key,
+                FabricSegmentCountJsonSerialization.Serialize(request),
+                MaximumRequestCacheEntries,
+                RequestCacheTtl);
+        }
+
+        private static bool ContainsStaticMembers(FabricSegmentQueryRequest query)
+        {
+            if (query == null)
+            {
+                return false;
+            }
+
+            if (ContainsStaticMembers(query.FirstOperand))
+            {
+                return true;
+            }
+
+            return (query.SetOperations ?? new List<FabricSegmentSetOperationRequest>())
+                .Any(operation => ContainsStaticMembers(operation.Operand));
+        }
+
+        private static bool ContainsStaticMembers(FabricSegmentOperandRequest operand)
+        {
+            return operand != null &&
+                ((operand.ProfileIds != null && operand.ProfileIds.Count > 0) ||
+                 ContainsStaticMembers(operand.Query));
+        }
+
+        private static bool TryGetShared<T>(
+            IDictionary<string, CacheEntry<T>> cache,
+            string key,
+            out T value)
+        {
+            lock (SharedCacheLock)
+            {
+                CacheEntry<T> entry;
+                if (cache.TryGetValue(key, out entry))
+                {
+                    if (entry.ExpiresAtUtc > DateTime.UtcNow)
+                    {
+                        value = entry.Value;
+                        return true;
+                    }
+
+                    cache.Remove(key);
+                }
+            }
+
+            value = default(T);
+            return false;
+        }
+
+        private static void StoreShared<T>(
+            IDictionary<string, CacheEntry<T>> cache,
+            string key,
+            T value,
+            int maximumEntries,
+            TimeSpan ttl)
+        {
+            lock (SharedCacheLock)
+            {
+                var now = DateTime.UtcNow;
+                foreach (var expired in cache
+                    .Where(pair => pair.Value.ExpiresAtUtc <= now)
+                    .Select(pair => pair.Key)
+                    .ToList())
+                {
+                    cache.Remove(expired);
+                }
+
+                while (cache.Count >= maximumEntries)
+                {
+                    cache.Remove(cache.Keys.First());
+                }
+
+                cache[key] = new CacheEntry<T>(value, now.Add(ttl));
+            }
+        }
+
+        private sealed class CacheEntry<T>
+        {
+            public CacheEntry(T value, DateTime expiresAtUtc)
+            {
+                Value = value;
+                ExpiresAtUtc = expiresAtUtc;
+            }
+
+            public T Value { get; private set; }
+
+            public DateTime ExpiresAtUtc { get; private set; }
+        }
+
         private sealed class FabricRelationshipResolution
         {
             public FabricRelationshipResolution(
@@ -786,5 +1081,22 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
             public string RelatedIntersectAttribute { get; private set; }
         }
+    }
+
+    internal sealed class FabricSegmentRequestBuildTimings
+    {
+        public double SegmentRetrieve { get; set; }
+
+        public double MqlParsing { get; set; }
+
+        public double RelationshipMetadata { get; set; }
+
+        public double EntityMetadata { get; set; }
+
+        public double SegmentReferences { get; set; }
+
+        public double StaticMembers { get; set; }
+
+        public string Cache { get; set; } = "miss";
     }
 }

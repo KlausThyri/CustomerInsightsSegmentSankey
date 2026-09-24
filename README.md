@@ -105,6 +105,10 @@ that must refresh definitions are rerun safely while already-correct
 per-table shortcuts are left untouched. Fabric workspace, capacity, and
 Dataverse-connection permissions are revalidated idempotently on every run, so
 an older completion record cannot hide a newly required role assignment.
+After the deployed API answers its health and authenticated key checks, Setup
+refreshes the Fabric catalog, opens Fabric SQL, and executes `SELECT 1`. The
+installation is reported ready only after this SQL warm-up succeeds, preventing
+the first Segment Preview request from paying the entire deployment cold start.
 
 The two steps that look as if they need a build machine do not. The bootstrap
 notebook ships **inside the solution** as a Jupyter definition, so the browser
@@ -141,7 +145,16 @@ The standard copy includes browser, Dataverse action, API, capacity, catalog, SQ
 connection, SQL execution, and rendering durations. The Dataverse action is further
 split into settings lookup, request construction, dependency resolution, API
 roundtrip, and response mapping so tenant-side latency can be distinguished from
-Fabric execution. A successful SQL evaluation returns immediately without waiting
+Fabric execution. Request construction is further split into segment retrieval,
+MQL parsing, relationship metadata, entity metadata, referenced segments, and
+static-member retrieval. The referenced-segment duration is inclusive and can
+overlap the other builder durations, so the detailed values are diagnostic rather
+than additive. Relationship and primary-ID metadata are cached per organization
+for 15 minutes. Compiled dynamic requests are cached for 20 seconds and cloned on
+read; the cache key includes organization, segment, root modification timestamp,
+and business-unit scoping. Static-member requests remain uncached because their
+membership can change independently. Diagnostics report the compiled-request
+cache as `hit` or `miss`. A successful SQL evaluation returns immediately without waiting
 for a slower, concurrent capacity control-plane check because that success already
 proves the capacity is queryable. The standard copy also includes request
 correlation, versions, bounded query-complexity counters, runtime state, and

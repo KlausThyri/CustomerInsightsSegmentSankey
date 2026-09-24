@@ -9,13 +9,16 @@ namespace CustomerInsightsSegmentSankey.CustomApi
     {
         private readonly IOrganizationService service;
         private readonly ITracingService tracing;
+        private readonly Guid organizationId;
 
         public FabricSegmentCountClient(
             IOrganizationService service,
-            ITracingService tracing)
+            ITracingService tracing,
+            Guid organizationId)
         {
             this.service = service;
             this.tracing = tracing;
+            this.organizationId = organizationId;
         }
 
         public FilterCountResult Evaluate(Guid segmentDefinitionId)
@@ -26,10 +29,12 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             var settingsMs = phaseTimer.Elapsed.TotalMilliseconds;
 
             phaseTimer.Restart();
-            var requestPayload = new FabricSegmentRequestBuilder(service)
-                .Build(
-                    segmentDefinitionId,
-                    settings.BusinessUnitScopingEnabled);
+            var requestBuilder = new FabricSegmentRequestBuilder(
+                service,
+                organizationId);
+            var requestPayload = requestBuilder.Build(
+                segmentDefinitionId,
+                settings.BusinessUnitScopingEnabled);
             var requestBuildMs = phaseTimer.Elapsed.TotalMilliseconds;
 
             phaseTimer.Restart();
@@ -47,6 +52,20 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 result.Diagnostics.TimingsMs.DataverseRequestBuild = requestBuildMs;
                 result.Diagnostics.TimingsMs.DataverseDependencyResolution =
                     dependencyResolutionMs;
+                result.Diagnostics.TimingsMs.DataverseSegmentRetrieve =
+                    requestBuilder.Timings.SegmentRetrieve;
+                result.Diagnostics.TimingsMs.DataverseMqlParsing =
+                    requestBuilder.Timings.MqlParsing;
+                result.Diagnostics.TimingsMs.DataverseRelationshipMetadata =
+                    requestBuilder.Timings.RelationshipMetadata;
+                result.Diagnostics.TimingsMs.DataverseEntityMetadata =
+                    requestBuilder.Timings.EntityMetadata;
+                result.Diagnostics.TimingsMs.DataverseSegmentReferences =
+                    requestBuilder.Timings.SegmentReferences;
+                result.Diagnostics.TimingsMs.DataverseStaticMembers =
+                    requestBuilder.Timings.StaticMembers;
+                result.Diagnostics.Runtime.RequestBuildCache =
+                    requestBuilder.Timings.Cache;
             }
 
             return result;

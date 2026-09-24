@@ -79,7 +79,7 @@ builder.Services.AddCors(options =>
 
         policy
             .WithOrigins(setupHealthOrigins)
-            .WithMethods("GET")
+            .WithMethods("GET", "POST")
             .WithHeaders("Accept", "x-api-key")
             .DisallowCredentials();
     });
@@ -95,6 +95,28 @@ app.MapGet(
             HasValidApiKey(request, validator)
                 ? Results.Ok(new { status = "ok", apiKeyAccepted = true, utc = DateTime.UtcNow })
                 : Unauthorized())
+    .RequireCors(SetupHealthCors.KeyCheckPolicyName);
+app.MapPost(
+        "/api/setup/warmup",
+        async (
+            HttpRequest request,
+            ApiKeyValidator validator,
+            IFabricSqlConnectivityWarmup warmup,
+            CancellationToken cancellationToken) =>
+        {
+            if (!HasValidApiKey(request, validator))
+            {
+                return Unauthorized();
+            }
+
+            await warmup.WarmAsync(cancellationToken);
+            return Results.Ok(new
+            {
+                status = "ok",
+                sqlWarm = true,
+                utc = DateTime.UtcNow
+            });
+        })
     .RequireCors(SetupHealthCors.KeyCheckPolicyName);
 app.MapPost(
     "/api/segment-counts",

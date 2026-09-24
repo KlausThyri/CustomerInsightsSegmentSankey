@@ -17,7 +17,10 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
             tracing.Trace("Calculating demographic MQL filter counts for segment {0}.", segmentId);
 
-            var result = new FabricSegmentCountClient(service, tracing)
+            var result = new FabricSegmentCountClient(
+                service,
+                tracing,
+                context.OrganizationId)
                 .Evaluate(segmentId);
             if (result.Diagnostics != null && result.Diagnostics.TimingsMs != null)
             {
