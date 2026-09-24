@@ -320,6 +320,21 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "dataverseAction", Order = 6)]
         public double DataverseAction { get; set; }
+
+        [DataMember(Name = "dataverseSettings", Order = 7)]
+        public double DataverseSettings { get; set; }
+
+        [DataMember(Name = "dataverseRequestBuild", Order = 8)]
+        public double DataverseRequestBuild { get; set; }
+
+        [DataMember(Name = "dataverseDependencyResolution", Order = 9)]
+        public double DataverseDependencyResolution { get; set; }
+
+        [DataMember(Name = "dataverseApiRoundtrip", Order = 10)]
+        public double DataverseApiRoundtrip { get; set; }
+
+        [DataMember(Name = "dataverseResponseMapping", Order = 11)]
+        public double DataverseResponseMapping { get; set; }
     }
 
     [DataContract]

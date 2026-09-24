@@ -138,8 +138,14 @@ another SQL query or network request. Formatting is deferred until the browser i
 idle, so the diagnostics do not delay the visualization.
 
 The standard copy includes browser, Dataverse action, API, capacity, catalog, SQL
-connection, SQL execution, and rendering durations; request correlation, versions,
-bounded query-complexity counters, runtime state, and logical source-table names.
+connection, SQL execution, and rendering durations. The Dataverse action is further
+split into settings lookup, request construction, dependency resolution, API
+roundtrip, and response mapping so tenant-side latency can be distinguished from
+Fabric execution. A successful SQL evaluation returns immediately without waiting
+for a slower, concurrent capacity control-plane check because that success already
+proves the capacity is queryable. The standard copy also includes request
+correlation, versions, bounded query-complexity counters, runtime state, and
+logical source-table names.
 Stage counts are opt-in. Subscription, resource-group, workspace, lakehouse, and
 segment identifiers require a separate confirmation. Filter expressions and
 values, MQL, member identifiers, credentials, tokens, SAS data, and connection

@@ -95,6 +95,23 @@ internal sealed class SegmentCountRequestCoordinator
         var evaluateCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var evaluateTask = evaluateAsync(request, evaluateCancellation.Token);
 
+        // A successful SQL evaluation proves that the capacity is queryable.
+        // Return that result immediately instead of waiting for the slower
+        // control-plane readiness check. The readiness task remains observed
+        // in the background and can still refresh its short-lived cache.
+        await Task.WhenAny(capacityTask, evaluateTask);
+        if (evaluateTask.IsCompletedSuccessfully)
+        {
+            var response = evaluateTask.Result;
+            response.AddedTables = [];
+            response.CatalogReady = true;
+            response.Diagnostics.Runtime.CapacityState = "Active";
+            validationQueue.Enqueue(request.RequiredDataverseTables);
+            ObserveInBackground(capacityTask);
+            evaluateCancellation.Dispose();
+            return response;
+        }
+
         // Capacity is the more actionable failure/cancellation and must
         // never be delayed behind the concurrently started evaluation -
         // inspect it first, before ever awaiting evaluateTask.
@@ -267,6 +284,15 @@ internal sealed class SegmentCountRequestCoordinator
                 ((CancellationTokenSource)state!).Dispose();
             },
             cancellation,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private static void ObserveInBackground(Task task)
+    {
+        task.ContinueWith(
+            static completed => _ = completed.Exception,
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);

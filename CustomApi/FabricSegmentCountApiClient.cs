@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -37,19 +38,32 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 tracing.Trace(
                     "Calling full Fabric segment API for definition {0}.",
                     segmentDefinitionId);
+                var roundtripTimer = Stopwatch.StartNew();
                 using (var response = HttpClient.SendAsync(request).GetAwaiter().GetResult())
                 {
                     var responseBody = response.Content.ReadAsStringAsync()
                         .GetAwaiter()
                         .GetResult();
+                    var apiRoundtripMs = roundtripTimer.Elapsed.TotalMilliseconds;
                     if (!response.IsSuccessStatusCode)
                     {
                         ThrowApiError(response, responseBody);
                     }
 
+                    var mappingTimer = Stopwatch.StartNew();
                     var result = FabricSegmentCountJsonSerialization
                         .Deserialize<FabricSegmentCountApiResponse>(responseBody);
-                    return MapResult(result, dependencies);
+                    var mapped = MapResult(result, dependencies);
+                    if (mapped.Diagnostics != null &&
+                        mapped.Diagnostics.TimingsMs != null)
+                    {
+                        mapped.Diagnostics.TimingsMs.DataverseApiRoundtrip =
+                            apiRoundtripMs;
+                        mapped.Diagnostics.TimingsMs.DataverseResponseMapping =
+                            mappingTimer.Elapsed.TotalMilliseconds;
+                    }
+
+                    return mapped;
                 }
             }
         }

@@ -28,6 +28,14 @@ test("segment diagnostics report browser-observed request source", () => {
   assert.match(countView, /normalizedServerCache !== "not_reported"[\s\S]{0,80}: "network";/);
 });
 
+test("segment diagnostics preserve the Dataverse phase timing breakdown", () => {
+  assert.match(countView, /dataverseSettings: finiteMetric\(timings\.dataverseSettings\)/);
+  assert.match(countView, /dataverseRequestBuild: finiteMetric\(timings\.dataverseRequestBuild\)/);
+  assert.match(countView, /dataverseDependencyResolution: finiteMetric\([\s\S]{0,80}timings\.dataverseDependencyResolution/);
+  assert.match(countView, /dataverseApiRoundtrip: finiteMetric\(timings\.dataverseApiRoundtrip\)/);
+  assert.match(countView, /dataverseResponseMapping: finiteMetric\([\s\S]{0,80}timings\.dataverseResponseMapping/);
+});
+
 test("member requests use their full request shape as a bounded cache key", () => {
   assert.match(memberView, /const memberRequestCache = new Map\(\);/);
   assert.match(memberView, /JSON\.stringify\(request\),\s*\(\) => executeRequest\(request\)/);

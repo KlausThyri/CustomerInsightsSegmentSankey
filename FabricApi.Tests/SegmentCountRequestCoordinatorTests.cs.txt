@@ -52,6 +52,35 @@ public sealed class SegmentCountRequestCoordinatorTests
     }
 
     [Fact]
+    public async Task HandleAsync_returns_success_without_waiting_for_slower_capacity_check()
+    {
+        var capacityCompletion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var queue = new FakeQueue();
+        var coordinator = new SegmentCountRequestCoordinator(
+            _ => capacityCompletion.Task,
+            (_, _) => Task.FromResult(new SegmentCountResponse()),
+            (_, _) => throw new InvalidOperationException("not expected"),
+            (_, _) => throw new InvalidOperationException("not expected"),
+            queue);
+
+        var handleTask = coordinator.HandleAsync(
+            new SegmentCountRequest { RequiredDataverseTables = ["account"] },
+            CancellationToken.None);
+        var completed = await Task.WhenAny(
+            handleTask,
+            Task.Delay(TimeSpan.FromSeconds(2)));
+
+        Assert.Same(handleTask, completed);
+        var response = await handleTask;
+        Assert.True(response.CatalogReady);
+        Assert.Equal("Active", response.Diagnostics.Runtime.CapacityState);
+        Assert.Equal(["account"], queue.Enqueued);
+
+        capacityCompletion.SetResult(false);
+    }
+
+    [Fact]
     public async Task HandleAsync_surfaces_capacity_failure_over_a_concurrent_evaluate_failure()
     {
         var capacityError = new FabricQueryException("capacity_starting", "Capacity is starting.");

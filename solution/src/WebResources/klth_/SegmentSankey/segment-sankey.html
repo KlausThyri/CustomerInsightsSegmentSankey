@@ -680,7 +680,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.79">v1.1.0.79</span>
+          <span class="app-version" aria-label="Version 1.1.0.80">v1.1.0.80</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -1242,6 +1242,15 @@
             browserTotal: finiteMetric(diagnostic.browserTotalMs),
             dataverseAction: finiteMetric(
               timings.dataverseAction ?? diagnostic.dataverseActionMs
+            ),
+            dataverseSettings: finiteMetric(timings.dataverseSettings),
+            dataverseRequestBuild: finiteMetric(timings.dataverseRequestBuild),
+            dataverseDependencyResolution: finiteMetric(
+              timings.dataverseDependencyResolution
+            ),
+            dataverseApiRoundtrip: finiteMetric(timings.dataverseApiRoundtrip),
+            dataverseResponseMapping: finiteMetric(
+              timings.dataverseResponseMapping
             ),
             apiTotal: finiteMetric(timings.apiTotal),
             capacityReadiness: finiteMetric(timings.capacityReadiness),
