@@ -89,6 +89,16 @@ test("refresh keeps an existing visualization visible while counts update", () =
   );
 });
 
+test("progressive completion preserves the chart height until the final layout is ready", () => {
+  assert.match(html, /\.chart \{[\s\S]*?transition: min-height 180ms ease-out;/);
+  assert.match(html, /function lockChartHeight\(chart\)/);
+  assert.match(html, /chart\.style\.minHeight = currentHeight \+ "px"/);
+  assert.match(html, /function releaseChartHeight\(chart\)/);
+  assert.match(html, /svg\.getBoundingClientRect\(\)\.height/);
+  assert.match(html, /chart\.style\.removeProperty\("min-height"\)/);
+  assert.match(html, /elapsedMilliseconds,\s*true\s*\)/);
+});
+
 test("a response for a segment that is no longer active is discarded", () => {
   assert.match(html, /activeSegmentId && activeSegmentId !== segmentId/);
   assert.match(html, /queueMicrotask\(\(\) => \{/);

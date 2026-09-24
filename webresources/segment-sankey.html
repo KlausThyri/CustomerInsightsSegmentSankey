@@ -244,6 +244,7 @@
       min-height: 260px;
       padding: 12px 12px 4px;
       background: var(--cp-bg-elevated);
+      transition: min-height 180ms ease-out;
     }
     .chart.refreshing .sankey-svg {
       opacity: .62;
@@ -683,6 +684,9 @@
       .metric-value.loading-value {
         animation: none;
       }
+      .chart {
+        transition: none;
+      }
     }
     @media (max-width: 440px) {
       .app { padding-inline: 12px; }
@@ -706,7 +710,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.83">v1.1.0.83</span>
+          <span class="app-version" aria-label="Version 1.1.0.84">v1.1.0.84</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -809,6 +813,7 @@
       const DEFAULT_SKELETON_STAGE_COUNT = 3;
       const MAX_SKELETON_STAGE_COUNT = 8;
       const LOAD_TIMER_INTERVAL_MS = 200;
+      const CHART_HEIGHT_TRANSITION_MS = 180;
       const PANE_IDS = ["klth_segment_preview", "klth_segment_sankey"];
       const ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
       const state = {
@@ -829,7 +834,8 @@
         diagnostics: null,
         diagnosticsRenderPending: false,
         lastKnownStageCount: null,
-        loadTimerHandle: null
+        loadTimerHandle: null,
+        chartHeightReleaseHandle: null
       };
       const countRequestCache = new Map();
 
@@ -1619,9 +1625,13 @@
         return result;
       }
 
-      function render(result, elapsedMilliseconds) {
+      function render(result, elapsedMilliseconds, preserveChartHeight) {
         const stages = result.stages.filter(stage => stage.status !== "pending");
         state.evaluationToken = result.isComplete ? result.evaluationToken : "";
+        const chart = document.getElementById("chart");
+        if (preserveChartHeight) {
+          lockChartHeight(chart);
+        }
         document.getElementById("load-duration").textContent =
           "Load time " + new Intl.NumberFormat("en-US", {
             minimumFractionDigits: 1,
@@ -1629,18 +1639,21 @@
           }).format(elapsedMilliseconds / 1000) + " s";
         if (!stages.length) {
           document.getElementById("summary").hidden = true;
-          document.getElementById("chart").innerHTML =
+          chart.innerHTML =
             '<div class="empty">No supported filters were found for this segment.</div>';
+          releaseChartHeight(chart);
           return;
         }
         state.lastKnownStageCount = stages.length;
 
         const initial = stages[0].count;
         const final = stages[stages.length - 1].count;
-        const chart = document.getElementById("chart");
         chart.classList.remove("progressive-result");
         chart.replaceChildren();
         chart.append(createSankey(stages));
+        if (!preserveChartHeight) {
+          releaseChartHeight(chart);
+        }
 
         document.getElementById("summary").hidden = false;
         document.getElementById("initial-count").textContent = state.formatter.format(initial);
@@ -1661,6 +1674,41 @@
         );
       }
 
+      function lockChartHeight(chart) {
+        if (!chart) {
+          return;
+        }
+        if (state.chartHeightReleaseHandle) {
+          window.clearTimeout(state.chartHeightReleaseHandle);
+          state.chartHeightReleaseHandle = null;
+        }
+        const currentHeight = Math.ceil(chart.getBoundingClientRect().height);
+        if (currentHeight > 0) {
+          chart.style.minHeight = currentHeight + "px";
+        }
+      }
+
+      function releaseChartHeight(chart) {
+        if (!chart?.style.minHeight) {
+          return;
+        }
+        const svg = chart.querySelector(".sankey-svg");
+        if (!svg) {
+          chart.style.removeProperty("min-height");
+          return;
+        }
+        const style = window.getComputedStyle(chart);
+        const naturalHeight =
+          svg.getBoundingClientRect().height +
+          Number.parseFloat(style.paddingTop || "0") +
+          Number.parseFloat(style.paddingBottom || "0");
+        chart.style.minHeight = Math.ceil(naturalHeight) + "px";
+        state.chartHeightReleaseHandle = window.setTimeout(() => {
+          chart.style.removeProperty("min-height");
+          state.chartHeightReleaseHandle = null;
+        }, CHART_HEIGHT_TRANSITION_MS);
+      }
+
       function renderProgressive(result, elapsedMilliseconds) {
         const completed = result.stages.filter(stage => stage.status !== "pending");
         const pending = result.stages.filter(stage => stage.status === "pending");
@@ -1674,7 +1722,8 @@
             stages: completed,
             isComplete: false
           },
-          elapsedMilliseconds
+          elapsedMilliseconds,
+          true
         );
         state.lastKnownStageCount = result.stages.length;
         const chart = document.getElementById("chart");
