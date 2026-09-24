@@ -22,6 +22,12 @@ test("segment count requests coalesce safely and cache only a bounded number of 
   assert.match(countView, /!isAutomatic/);
 });
 
+test("segment diagnostics report browser-observed request source", () => {
+  assert.match(countView, /clientRequestSource === "client-cache"[\s\S]{0,80}return "client-cache-hit";/);
+  assert.match(countView, /clientRequestSource === "coalesced"[\s\S]{0,100}return "coalesced-with-in-flight-request";/);
+  assert.match(countView, /normalizedServerCache !== "not_reported"[\s\S]{0,80}: "network";/);
+});
+
 test("member requests use their full request shape as a bounded cache key", () => {
   assert.match(memberView, /const memberRequestCache = new Map\(\);/);
   assert.match(memberView, /JSON\.stringify\(request\),\s*\(\) => executeRequest\(request\)/);

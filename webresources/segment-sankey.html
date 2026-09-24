@@ -680,7 +680,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.78">v1.1.0.78</span>
+          <span class="app-version" aria-label="Version 1.1.0.79">v1.1.0.79</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -1213,7 +1213,10 @@
         if (clientRequestSource === "coalesced") {
           return "coalesced-with-in-flight-request";
         }
-        return safeDiagnosticText(serverCache, 20);
+        const normalizedServerCache = safeDiagnosticText(serverCache, 20);
+        return normalizedServerCache && normalizedServerCache !== "not_reported"
+          ? normalizedServerCache
+          : "network";
       }
 
       function buildDiagnosticsReport(includeIdentifiers, options) {
