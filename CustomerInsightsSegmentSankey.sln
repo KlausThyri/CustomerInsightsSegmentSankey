@@ -1,0 +1,52 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CustomerInsightsSegmentSankey", "CustomerInsightsSegmentSankey.csproj", "{DA848308-6745-4EC6-9BC6-5617D2BAC9D2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CustomerInsightsSegmentSankey.Broker", "Broker\CustomerInsightsSegmentSankey.Broker.csproj", "{E91EFA84-A83D-43F0-A501-77389A5EC05B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CustomerInsightsSegmentSankey.Broker.Tests", "Broker.Tests\CustomerInsightsSegmentSankey.Broker.Tests.csproj", "{1F20659C-AF01-413E-9BB0-CADEB009754C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CustomerInsightsSegmentSankey.CustomApi.Tests", "CustomApi.Tests\CustomerInsightsSegmentSankey.CustomApi.Tests.csproj", "{059387D2-A318-462E-BB38-0F5AC6831B82}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CustomerInsightsSegmentSankey.FabricApi", "FabricApi\CustomerInsightsSegmentSankey.FabricApi.csproj", "{6225D034-0D82-49F0-BD5E-708D13CD6971}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CustomerInsightsSegmentSankey.FabricApi.Tests", "FabricApi.Tests\CustomerInsightsSegmentSankey.FabricApi.Tests.csproj", "{7520A55B-A790-4561-98C2-22A976721F11}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DA848308-6745-4EC6-9BC6-5617D2BAC9D2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DA848308-6745-4EC6-9BC6-5617D2BAC9D2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DA848308-6745-4EC6-9BC6-5617D2BAC9D2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DA848308-6745-4EC6-9BC6-5617D2BAC9D2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E91EFA84-A83D-43F0-A501-77389A5EC05B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E91EFA84-A83D-43F0-A501-77389A5EC05B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E91EFA84-A83D-43F0-A501-77389A5EC05B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E91EFA84-A83D-43F0-A501-77389A5EC05B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1F20659C-AF01-413E-9BB0-CADEB009754C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1F20659C-AF01-413E-9BB0-CADEB009754C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1F20659C-AF01-413E-9BB0-CADEB009754C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1F20659C-AF01-413E-9BB0-CADEB009754C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{059387D2-A318-462E-BB38-0F5AC6831B82}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{059387D2-A318-462E-BB38-0F5AC6831B82}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{059387D2-A318-462E-BB38-0F5AC6831B82}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{059387D2-A318-462E-BB38-0F5AC6831B82}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6225D034-0D82-49F0-BD5E-708D13CD6971}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6225D034-0D82-49F0-BD5E-708D13CD6971}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6225D034-0D82-49F0-BD5E-708D13CD6971}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6225D034-0D82-49F0-BD5E-708D13CD6971}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7520A55B-A790-4561-98C2-22A976721F11}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7520A55B-A790-4561-98C2-22A976721F11}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7520A55B-A790-4561-98C2-22A976721F11}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7520A55B-A790-4561-98C2-22A976721F11}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
