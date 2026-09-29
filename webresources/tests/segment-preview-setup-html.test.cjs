@@ -176,14 +176,14 @@ test("every statically referenced element id exists in the markup", () => {
   assert.deepStrictEqual(missing, [], `missing element ids: ${missing.join(", ")}`);
 });
 
-test("the one-button provisioning controls are present", () => {
+test("the one-button provisioning controls are present", async () => {
   ["provisionButton", "panelProvisionButton"].forEach((id) => {
     assert.ok(new RegExp(`id="${id}"`).test(html), `${id} is missing`);
   });
   assert.doesNotMatch(html, /Preview run/);
   assert.doesNotMatch(html, /panelPreviewButton|previewButton/);
 
-  test("installation exposes an accessible visual progress bar", () => {
+  await test("installation exposes an accessible visual progress bar", () => {
     [
       "installProgress",
       "installProgressStatus",
@@ -194,7 +194,7 @@ test("the one-button provisioning controls are present", () => {
     assert.ok(inlineScripts(html).some(code => code.includes("function updateInstallProgress")));
   });
 
-  test("Start over clears progress but retains resource identities for rediscovery", () => {
+  await test("Start over clears progress but retains resource identities for rediscovery", () => {
     const code = inlineScripts(html).join("\n");
     assert.doesNotMatch(code, /resetEnvironmentVariables\(Object\.values\(engine\.ENV\)\)/);
     assert.match(code, /const retainedTarget = engine\.applyAutomaticTarget\(state\.setup\?\.target/);
@@ -203,7 +203,7 @@ test("the one-button provisioning controls are present", () => {
     assert.match(code, /engine\.clearBrokerSession/);
   });
 
-  test("discovered resources update Advanced options and persisted target values", () => {
+  await test("discovered resources update Advanced options and persisted target values", () => {
     const code = inlineScripts(html).join("\n");
     assert.match(code, /const resolvedTarget = engine\.applyAutomaticTarget\(result\.context\.target \|\| target\)/);
     assert.match(code, /state\.setup\.target = resolvedTarget/);

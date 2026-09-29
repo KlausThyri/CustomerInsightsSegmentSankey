@@ -81,12 +81,12 @@ test("the plugin assembly root component is untouched", () => {
   );
 });
 
-test("the build script copies the provisioning web resources", () => {
+test("the build script copies the provisioning web resources", async () => {
   NEW_WEB_RESOURCES.forEach((name) => {
     assert.ok(buildScript.includes(name), `build-solution.ps1 does not copy ${name}`);
   });
 
-  test("source and Solution web resources remain synchronized", () => {
+  await test("source and Solution web resources remain synchronized", () => {
     synchronizedWebResources.forEach((name) => {
       const source = fs.readFileSync(
         path.join(repoRoot, "webresources", name),

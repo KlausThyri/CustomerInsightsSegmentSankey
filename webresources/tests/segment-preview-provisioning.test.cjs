@@ -1828,7 +1828,7 @@ test("direct client discovers an existing deployment only inside the selected Re
     timer: immediateTimer
   });
 
-  test("Resource Group discovery follows every Web App result page", async () => {
+  await test("Resource Group discovery follows every Web App result page", async () => {
     const subscriptionId = "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6";
     const nextLink = "https://management.azure.com/next-web-app-page?api-version=2023-12-01";
     const fetchImpl = createFetchMock([
@@ -1873,7 +1873,7 @@ test("direct client discovers an existing deployment only inside the selected Re
     assert.equal(fetchImpl.calls[1].url, nextLink);
   });
 
-  test("Resource Group discovery never adopts a same-name Web App from another environment", async () => {
+  await test("Resource Group discovery never adopts a same-name Web App from another environment", async () => {
     const subscriptionId = "6f6c1f2e-6b47-4a1a-9d2c-33e1b2c4d5e6";
     const fetchImpl = createFetchMock([
       {
