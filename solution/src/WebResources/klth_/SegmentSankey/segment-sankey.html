@@ -462,6 +462,42 @@
       text-overflow: clip;
       white-space: normal;
     }
+    .journey-card-branches {
+      margin: 0;
+      color: var(--cp-text);
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 16px;
+      line-height: 22px;
+      overflow-wrap: anywhere;
+    }
+    .journey-card-branches-intro {
+      margin-bottom: 4px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--cp-text-muted);
+      text-transform: none;
+    }
+    .journey-card-branches-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .journey-card-branch {
+      display: flex;
+      gap: 6px;
+      align-items: baseline;
+      padding: 2px 0;
+      font-weight: 600;
+    }
+    .journey-card-branch-marker {
+      flex: 0 0 auto;
+      min-width: 28px;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 22px;
+      letter-spacing: 0.02em;
+      color: var(--cp-text-muted);
+    }
     .journey-card-toggle {
       appearance: none;
       display: flex;
@@ -819,9 +855,23 @@
       const CHART_HEIGHT_TRANSITION_MS = 180;
       const PANE_IDS = ["klth_segment_preview", "klth_segment_sankey"];
       const ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+      const LANGUAGE_ID_LOCALES = {
+        1025: "ar-SA", 1026: "bg-BG", 1027: "ca-ES", 1028: "zh-TW", 1029: "cs-CZ",
+        1030: "da-DK", 1031: "de-DE", 1032: "el-GR", 1033: "en-US", 1034: "es-ES",
+        1035: "fi-FI", 1036: "fr-FR", 1037: "he-IL", 1038: "hu-HU", 1039: "is-IS",
+        1040: "it-IT", 1041: "ja-JP", 1042: "ko-KR", 1043: "nl-NL", 1044: "nb-NO",
+        1045: "pl-PL", 1046: "pt-BR", 1048: "ro-RO", 1049: "ru-RU", 1050: "hr-HR",
+        1051: "sk-SK", 1053: "sv-SE", 1054: "th-TH", 1055: "tr-TR", 1057: "id-ID",
+        1058: "uk-UA", 1060: "sl-SI", 1061: "et-EE", 1062: "lv-LV", 1063: "lt-LT",
+        1066: "vi-VN", 1069: "eu-ES", 1081: "hi-IN", 1086: "ms-MY", 1087: "kk-KZ",
+        1110: "gl-ES", 2052: "zh-CN", 2070: "pt-PT", 2074: "sr-Latn-RS",
+        3076: "zh-HK", 3082: "es-ES"
+      };
+      const USER_LOCALE = resolveUserLocale();
       const state = {
         context: parseContext(),
-        formatter: new Intl.NumberFormat("en-US"),
+        locale: USER_LOCALE,
+        formatter: new Intl.NumberFormat(USER_LOCALE),
         expandedStages: new Set(),
         renderedSegmentId: "",
         attemptedSegmentId: "",
@@ -868,6 +918,37 @@
           return window.parent.Xrm;
         }
         return null;
+      }
+
+      function resolveUserLocale() {
+        const candidates = [];
+        try {
+          const xrm = getXrm();
+          const globalContext =
+            xrm && xrm.Utility && typeof xrm.Utility.getGlobalContext === "function"
+              ? xrm.Utility.getGlobalContext()
+              : null;
+          const userSettings = globalContext ? globalContext.userSettings : null;
+          const languageId = userSettings ? userSettings.languageId : null;
+          if (languageId && LANGUAGE_ID_LOCALES[languageId]) {
+            candidates.push(LANGUAGE_ID_LOCALES[languageId]);
+          }
+        } catch {
+          // The host does not expose Xrm, so fall back to the browser language.
+        }
+        if (typeof navigator !== "undefined" && navigator.language) {
+          candidates.push(navigator.language);
+        }
+        for (const candidate of candidates) {
+          try {
+            if (Intl.NumberFormat.supportedLocalesOf(candidate).length) {
+              return candidate;
+            }
+          } catch {
+            // A malformed tag must never break rendering.
+          }
+        }
+        return "en-US";
       }
 
       function getSegmentLauncher() {
@@ -1678,7 +1759,7 @@
           lockChartHeight(chart);
         }
         document.getElementById("load-duration").textContent =
-          "Load time " + new Intl.NumberFormat("en-US", {
+          "Load time " + new Intl.NumberFormat(USER_LOCALE, {
             minimumFractionDigits: 1,
             maximumFractionDigits: 1
           }).format(elapsedMilliseconds / 1000) + " s";
@@ -1704,12 +1785,12 @@
         document.getElementById("initial-count").textContent = state.formatter.format(initial);
         document.getElementById("result-count").textContent = state.formatter.format(final);
         document.getElementById("retention").textContent =
-          new Intl.NumberFormat("en-US", {
+          new Intl.NumberFormat(USER_LOCALE, {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
           }).format(initial ? (final / initial) * 100 : 0) + " %";
         document.getElementById("updated-at").textContent =
-          "Calculated " + new Intl.DateTimeFormat("en-GB", {
+          "Calculated " + new Intl.DateTimeFormat(USER_LOCALE, {
             dateStyle: "short",
             timeStyle: "short"
           }).format(new Date(result.generatedAt));
@@ -1780,7 +1861,7 @@
         chart.removeAttribute("inert");
         if (!pending.length) {
           document.getElementById("load-duration").textContent =
-            "Filter stages ready " + new Intl.NumberFormat("en-US", {
+            "Filter stages ready " + new Intl.NumberFormat(USER_LOCALE, {
               minimumFractionDigits: 1,
               maximumFractionDigits: 1
             }).format(elapsedMilliseconds / 1000) + " s";
@@ -1805,7 +1886,7 @@
         document.getElementById("result-count").textContent = "Pending";
         document.getElementById("retention").textContent = "Pending";
         document.getElementById("load-duration").textContent =
-          "Partial result " + new Intl.NumberFormat("en-US", {
+          "Partial result " + new Intl.NumberFormat(USER_LOCALE, {
             minimumFractionDigits: 1,
             maximumFractionDigits: 1
           }).format(elapsedMilliseconds / 1000) + " s";
@@ -2076,8 +2157,12 @@
       }
 
       function expandedCardHeight(stage) {
-        const probe = document.createElement("div");
-        probe.className = "journey-card-expression expanded";
+        const branchList = createBranchList(stage.detail);
+        const probe = branchList ? branchList.element : document.createElement("div");
+        if (!branchList) {
+          probe.className = "journey-card-expression expanded";
+          probe.textContent = stage.detail || "No expression";
+        }
         probe.style.position = "fixed";
         probe.style.left = "-10000px";
         probe.style.top = "0";
@@ -2085,7 +2170,6 @@
         probe.style.height = "auto";
         probe.style.visibility = "hidden";
         probe.style.pointerEvents = "none";
-        probe.textContent = stage.detail || "No expression";
         document.body.append(probe);
         const contentHeight = Math.ceil(probe.getBoundingClientRect().height);
         probe.remove();
@@ -2093,6 +2177,11 @@
       }
 
       function expressionNeedsExpansion(stage) {
+        // A multi-branch expression is always worth expanding: the collapsed
+        // single line hides whether the branches are combined with OR or AND.
+        if (splitBooleanExpression(stage.detail)) {
+          return true;
+        }
         const probe = document.createElement("div");
         probe.className = "journey-card-expression";
         probe.style.position = "fixed";
@@ -2121,10 +2210,112 @@
         if (!(whole > 0)) {
           return "";
         }
-        return new Intl.NumberFormat("en-US", {
+        return new Intl.NumberFormat(USER_LOCALE, {
           minimumFractionDigits: 1,
           maximumFractionDigits: 1
         }).format((part / whole) * 100) + "%";
+      }
+
+      function splitBooleanExpression(expression) {
+        const text = typeof expression === "string" ? expression.trim() : "";
+        if (text.length < 2 || !text.startsWith("(") || !text.endsWith(")")) {
+          return null;
+        }
+        const separators = [];
+        let depth = 0;
+        let quoted = false;
+        for (let index = 0; index < text.length; index++) {
+          const character = text[index];
+          if (quoted) {
+            if (character === "'") {
+              if (text[index + 1] === "'") {
+                index++;
+              } else {
+                quoted = false;
+              }
+            }
+            continue;
+          }
+          if (character === "'") {
+            quoted = true;
+            continue;
+          }
+          if (character === "(" || character === "[") {
+            depth++;
+            continue;
+          }
+          if (character === ")" || character === "]") {
+            depth--;
+            if (depth < 0) {
+              return null;
+            }
+            // The outer parentheses must wrap the whole expression, otherwise
+            // the string is a sequence such as "(a) AND (b)" that Describe()
+            // never emits and that this scanner must not reinterpret.
+            if (depth === 0 && index !== text.length - 1) {
+              return null;
+            }
+            continue;
+          }
+          if (depth !== 1 || character !== " ") {
+            continue;
+          }
+          for (const operator of [" AND ", " OR "]) {
+            if (text.startsWith(operator, index)) {
+              separators.push({ operator: operator.trim(), start: index, end: index + operator.length });
+              index = index + operator.length - 1;
+              break;
+            }
+          }
+        }
+        if (depth !== 0 || quoted || separators.length === 0) {
+          return null;
+        }
+        const operator = separators[0].operator;
+        if (separators.some((separator) => separator.operator !== operator)) {
+          return null;
+        }
+        const parts = [];
+        let cursor = 1;
+        for (const separator of separators) {
+          parts.push(text.slice(cursor, separator.start).trim());
+          cursor = separator.end;
+        }
+        parts.push(text.slice(cursor, text.length - 1).trim());
+        if (parts.some((part) => !part)) {
+          return null;
+        }
+        return { operator, parts };
+      }
+
+      function createBranchList(expression) {
+        const split = splitBooleanExpression(expression);
+        if (!split) {
+          return null;
+        }
+        const container = document.createElement("div");
+        container.className = "journey-card-branches";
+        const intro = document.createElement("div");
+        intro.className = "journey-card-branches-intro";
+        intro.textContent =
+          split.operator === "OR"
+            ? "Any of " + split.parts.length + " conditions"
+            : "All of " + split.parts.length + " conditions";
+        const list = document.createElement("ul");
+        list.className = "journey-card-branches-list";
+        split.parts.forEach((part, position) => {
+          const item = document.createElement("li");
+          item.className = "journey-card-branch";
+          const marker = document.createElement("span");
+          marker.className = "journey-card-branch-marker";
+          marker.textContent = position === 0 ? "" : split.operator;
+          const value = document.createElement("span");
+          value.textContent = part;
+          item.append(marker, value);
+          list.append(item);
+        });
+        container.append(intro, list);
+        return { element: container, count: split.parts.length };
       }
 
       function appendJourneyCard(
@@ -2210,6 +2401,7 @@
         svg.append(content);
 
         if (isExpanded) {
+          const branchList = createBranchList(stage.detail);
           const expressionContent = createSvgElement(namespace, "foreignObject", {
             x: x + 74,
             y: y + 58,
@@ -2218,7 +2410,7 @@
           });
           const expressionWrapper = document.createElement("div");
           expressionWrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
-          expressionWrapper.append(expression);
+          expressionWrapper.append(branchList ? branchList.element : expression);
           expressionContent.append(expressionWrapper);
           svg.append(expressionContent);
         }
