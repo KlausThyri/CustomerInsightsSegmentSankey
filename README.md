@@ -1,5 +1,7 @@
 # Customer Insights Segment Sankey
 
+[![Validate](https://github.com/KlausThyri/CustomerInsightsSegmentSankey/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/KlausThyri/CustomerInsightsSegmentSankey/actions/workflows/validate.yml)
+
 Side-pane preview for draft segments in Dynamics 365 Customer Insights - Journeys.
 
 ## Current stable release
@@ -551,6 +553,21 @@ plugin and Dataverse solution package in a fixed serial order. Serial execution
 is intentional because the plugin DLL and Solution Packager use shared output
 paths. Use `-SkipSolutionPackage` for a faster test-only run, or `-Detailed`
 to show individual Pester test results.
+
+Use the same Node.js version as the pipeline. It is pinned in `.nvmrc`; newer
+runtimes tolerate mistakes that the pipeline rejects, so a suite that passes
+on an unpinned local runtime can still fail in continuous integration.
+
+To run only the .NET tests, target the solution rather than the repository
+root directory:
+
+```powershell
+dotnet test CustomerInsightsSegmentSankey.sln -c Release
+```
+
+The solution file is required here. Without it, `dotnet test` resolves the
+root project file, which is the net462 plugin and contains no tests, and then
+reports success without having run anything.
 
 The Node.js packaging tests also verify that source web resources and their
 copies under `solution/src/WebResources/klth_/SegmentSankey` are byte-for-byte
