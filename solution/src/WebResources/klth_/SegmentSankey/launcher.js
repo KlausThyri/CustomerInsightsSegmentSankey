@@ -7,12 +7,16 @@
   const LEGACY_PANE_ID = "klth_segment_sankey";
   const SEGMENT_ENTITY_NAME = "msdynmkt_segmentdefinition";
   const MONITOR_INTERVAL_MS = 750;
+  const FORM_READY_RETRY_DELAY_MS = 250;
+  const FORM_READY_MAX_ATTEMPTS = 20;
   let activeFormContext = null;
   let monitoredSegmentId = "";
   let monitorHandle = null;
   let syncInProgress = false;
   let inactivePollCount = 0;
   let registeredFormContext = null;
+  let saveInProgress = null;
+  let saveInProgressSegmentId = "";
 
   function normalizeId(id) {
     const value = String(id || "").replace(/[{}]/g, "");
@@ -271,27 +275,55 @@
       normalizedRequestedId ||
       (page.isSegment ? page.segmentId : "") ||
       getFormRecordId(activeFormContext);
-    const formContext = resolveFormContext(segmentId);
-    const data = formContext?.data;
-    if (!data?.save) {
-      throw new Error("The active segment form is not ready. Try again after it has loaded.");
+    if (saveInProgress && saveInProgressSegmentId === segmentId) {
+      return saveInProgress;
     }
 
-    registerFormContext(formContext);
-    const dirtyStateAvailable = typeof data.getIsDirty === "function";
-    const isDirty = !dirtyStateAvailable || data.getIsDirty();
-    let durationMs = 0;
-    if (isDirty) {
-      const startedAt = Date.now();
-      await data.save();
-      durationMs = Date.now() - startedAt;
+    saveInProgressSegmentId = segmentId;
+    saveInProgress = saveReadyForm(segmentId);
+    try {
+      return await saveInProgress;
+    } finally {
+      saveInProgress = null;
+      saveInProgressSegmentId = "";
     }
-    return {
-      saved: isDirty,
-      dirty: isDirty,
-      dirtyStateAvailable: dirtyStateAvailable,
-      durationMs: durationMs
-    };
+  }
+
+  async function saveReadyForm(segmentId) {
+    for (let attempt = 0; attempt < FORM_READY_MAX_ATTEMPTS; attempt++) {
+      const page = getActivePage();
+      if (page.isSegment && page.segmentId !== segmentId) {
+        throw new Error("The active segment changed before it could be refreshed.");
+      }
+
+      const formContext = resolveFormContext(segmentId);
+      const data = formContext?.data;
+      if (typeof data?.save === "function") {
+        registerFormContext(formContext);
+        const dirtyStateAvailable = typeof data.getIsDirty === "function";
+        const isDirty = !dirtyStateAvailable || data.getIsDirty();
+        let durationMs = 0;
+        if (isDirty) {
+          const startedAt = Date.now();
+          await data.save();
+          durationMs = Date.now() - startedAt;
+        }
+        return {
+          saved: isDirty,
+          dirty: isDirty,
+          dirtyStateAvailable: dirtyStateAvailable,
+          durationMs: durationMs
+        };
+      }
+
+      await new Promise(function (resolve) {
+        window.setTimeout(resolve, FORM_READY_RETRY_DELAY_MS);
+      });
+    }
+
+    throw new Error(
+      "The active segment form did not finish loading. Close and reopen the preview."
+    );
   }
 
   global.CISegmentSankey = Object.freeze({
