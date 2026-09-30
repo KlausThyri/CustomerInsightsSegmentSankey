@@ -298,10 +298,11 @@
 
       const formContext = resolveFormContext(segmentId);
       const data = formContext?.data;
-      if (typeof data?.save === "function") {
+      const dirtyStateAvailable = typeof data?.getIsDirty === "function";
+      const isDirty = dirtyStateAvailable ? data.getIsDirty() : true;
+      const saveAvailable = typeof data?.save === "function";
+      if (data && (!isDirty || saveAvailable)) {
         registerFormContext(formContext);
-        const dirtyStateAvailable = typeof data.getIsDirty === "function";
-        const isDirty = !dirtyStateAvailable || data.getIsDirty();
         let durationMs = 0;
         if (isDirty) {
           const startedAt = Date.now();
