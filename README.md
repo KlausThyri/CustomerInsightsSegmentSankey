@@ -6,7 +6,7 @@ Side-pane preview for draft segments in Dynamics 365 Customer Insights - Journey
 
 ## Current stable release
 
-**v1.1.0.88 is the current accepted production baseline.** It is deployed and
+**v1.1.0.90 is the current accepted production baseline.** It is deployed and
 verified in a Customer Insights - Journeys environment with all 10 Setup Center
 checks ready. The release includes:
 
@@ -35,7 +35,7 @@ On a clean form, the measured save hook took about 1–2 ms and reported
 `skipped-clean`; a dirty form is still saved before evaluation so the preview
 never uses stale draft MQL. Cold-start and static-membership caching remain
 possible future optimizations, but are intentionally not part of the accepted
-v1.1.0.88 baseline.
+v1.1.0.90 baseline.
 
 ## Product experience
 
