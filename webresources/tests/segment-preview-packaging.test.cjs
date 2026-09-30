@@ -74,6 +74,12 @@ test("the provisioning web resources are declared as root components", () => {
   });
 });
 
+test("the build emits a verified unmanaged web resource update manifest", () => {
+  assert.match(buildScript, /CustomerInsightsSegmentPreview_webresources\.json/);
+  assert.match(buildScript, /\[Convert\]::ToBase64String/);
+  assert.match(buildScript, /solutionVersion = \$solutionVersion/);
+});
+
 test("the plugin assembly root component is untouched", () => {
   assert.ok(
     solutionXml.includes("PublicKeyToken=7723c9b9c78b183b"),

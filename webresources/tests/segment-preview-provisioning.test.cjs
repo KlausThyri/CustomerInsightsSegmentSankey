@@ -119,13 +119,18 @@ test("solution version comparison supports three and four numeric components", (
 
 test("solution update resolution selects the installed package type and requires a digest", () => {
   const digest = `sha256:${"a".repeat(64)}`;
+  const manifestDigest = `sha256:${"b".repeat(64)}`;
   const release = {
     tag_name: "v1.1.0.27",
     name: "v1.1.0.27",
     html_url: "https://github.com/example/releases/tag/v1.1.0.27",
     assets: [
       { name: "CustomerInsightsSegmentPreview-1.1.0.27-managed.zip", digest },
-      { name: "CustomerInsightsSegmentPreview-1.1.0.27-unmanaged.zip", digest }
+      { name: "CustomerInsightsSegmentPreview-1.1.0.27-unmanaged.zip", digest },
+      {
+        name: "CustomerInsightsSegmentPreview-1.1.0.27-webresources.json",
+        digest: manifestDigest
+      }
     ]
   };
   const managed = engine.resolveSolutionUpdate(release, { version: "1.1.0.26", ismanaged: true });
@@ -138,10 +143,23 @@ test("solution update resolution selects the installed package type and requires
   });
   assert.equal(unmanaged.assetName, "CustomerInsightsSegmentPreview-1.1.0.27-unmanaged.zip");
   assert.equal(unmanaged.rawFileName, "CustomerInsightsSegmentPreview.zip");
+  assert.deepEqual(unmanaged.webResourceManifest, {
+    assetName: "CustomerInsightsSegmentPreview-1.1.0.27-webresources.json",
+    digest: "b".repeat(64),
+    rawFileName: "CustomerInsightsSegmentPreview_webresources.json"
+  });
+  assert.equal(managed.webResourceManifest, null);
   assert.equal(
     engine.resolveSolutionUpdate(release, { version: "1.1.0.27", ismanaged: true }).available,
     false
   );
+  const repair = engine.resolveSolutionUpdate(release, {
+    version: "1.1.0.27",
+    webResourceVersion: "1.1.0.26",
+    ismanaged: false
+  });
+  assert.equal(repair.available, true);
+  assert.equal(repair.repair, true);
   assert.throws(
     () =>
       engine.resolveSolutionUpdate(
@@ -149,6 +167,14 @@ test("solution update resolution selects the installed package type and requires
         { version: "1.1.0.26", ismanaged: true }
       ),
     /SHA-256 protected/
+  );
+  assert.throws(
+    () =>
+      engine.resolveSolutionUpdate(
+        { ...release, assets: release.assets.slice(0, 2) },
+        { version: "1.1.0.26", ismanaged: false }
+      ),
+    /web resource manifest/
   );
 });
 

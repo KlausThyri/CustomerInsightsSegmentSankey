@@ -170,6 +170,33 @@ $artifactRoot = Join-Path $repositoryRoot 'artifacts'
 $releaseRoot = Join-Path $repositoryRoot 'deployment\dataverse'
 New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
+
+[xml] $solutionManifest = Get-Content `
+    -LiteralPath (Join-Path $solutionRoot 'Other\Solution.xml') `
+    -Raw
+$solutionVersion = [string] $solutionManifest.ImportExportXml.SolutionManifest.Version
+$manifestResources = foreach ($entry in ($webResources.GetEnumerator() | Sort-Object Value)) {
+    $sourcePath = Join-Path $repositoryRoot $entry.Key
+    [ordered]@{
+        name = "klth_/SegmentSankey/$($entry.Value)"
+        content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($sourcePath))
+    }
+}
+$webResourceManifest = [ordered]@{
+    schemaVersion = '1.0'
+    solutionVersion = $solutionVersion
+    resources = @($manifestResources)
+} | ConvertTo-Json -Depth 4 -Compress
+$webResourceManifestFile = 'CustomerInsightsSegmentPreview_webresources.json'
+[IO.File]::WriteAllText(
+    (Join-Path $artifactRoot $webResourceManifestFile),
+    $webResourceManifest,
+    [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText(
+    (Join-Path $releaseRoot $webResourceManifestFile),
+    $webResourceManifest,
+    [Text.UTF8Encoding]::new($false))
+
 Copy-Item `
     -LiteralPath $unmanagedPackage `
     -Destination (Join-Path $artifactRoot 'CustomerInsightsSegmentPreview.zip') `

@@ -398,7 +398,12 @@
       throw new Error("GitHub returned a release tag that is not a supported solution version.");
     }
     var comparison = compareSolutionVersions(latestVersion, installedSolution.version);
-    if (comparison <= 0) {
+    var webResourceVersion = String(installedSolution.webResourceVersion || "").trim();
+    var repair =
+      comparison === 0 &&
+      parseSolutionVersion(webResourceVersion) &&
+      compareSolutionVersions(latestVersion, webResourceVersion) > 0;
+    if (comparison < 0 || (comparison === 0 && !repair)) {
       return {
         available: false,
         currentVersion: installedSolution.version,
@@ -424,17 +429,38 @@
           " solution asset."
       );
     }
+    var webResourceManifest = null;
+    if (!managed) {
+      var manifestAssetName =
+        "CustomerInsightsSegmentPreview-" + latestVersion + "-webresources.json";
+      var manifestAsset = assets.find(function (candidate) {
+        return candidate && candidate.name === manifestAssetName;
+      });
+      var manifestDigest = String((manifestAsset && manifestAsset.digest) || "").toLowerCase();
+      if (!/^sha256:[0-9a-f]{64}$/.test(manifestDigest)) {
+        throw new Error(
+          "The latest GitHub release does not contain a SHA-256 protected web resource manifest."
+        );
+      }
+      webResourceManifest = {
+        assetName: manifestAssetName,
+        digest: manifestDigest.slice("sha256:".length),
+        rawFileName: "CustomerInsightsSegmentPreview_webresources.json"
+      };
+    }
     return {
       available: true,
       currentVersion: installedSolution.version,
       latestVersion: latestVersion,
       tagName: tagName,
+      repair: repair,
       managed: managed,
       assetName: assetName,
       digest: digest.slice("sha256:".length),
       rawFileName: managed
         ? "CustomerInsightsSegmentPreview_managed.zip"
         : "CustomerInsightsSegmentPreview.zip",
+      webResourceManifest: webResourceManifest,
       releaseUrl: String((release && release.html_url) || ""),
       releaseName: String((release && release.name) || tagName)
     };

@@ -300,10 +300,15 @@ test("the Setup Center can check and install verified solution updates", () => {
   assert.match(html, /api\.github\.com\/repos\/" \+ UPDATE_REPOSITORY \+ "\/releases\/latest"/);
   assert.match(html, /raw\.githubusercontent\.com/);
   assert.match(html, /engine\.resolveSolutionUpdate/);
+  assert.match(html, /webResourceVersion: currentWebResourceVersion\(\)/);
   assert.match(html, /sha256Hex\(bytes\)/);
-  assert.match(html, /digest !== update\.digest/);
+  assert.match(html, /downloadVerifiedUpdateFile/);
   assert.match(html, /dataverseRequest\("ImportSolution"/);
   assert.match(html, /OverwriteUnmanagedCustomizations: !update\.managed/);
+  assert.match(html, /overwriteUnmanagedWebResources/);
+  assert.match(html, /verifyUnmanagedWebResources/);
+  assert.match(html, /webresourceset\(" \+ record\.webresourceid \+ "\)"/);
+  assert.match(html, /Dataverse is still serving stale content/);
   assert.match(html, /PublishXml/);
   assert.match(html, /void checkForUpdates\(\)/);
   assert.doesNotMatch(html, /github\.com\/" \+ UPDATE_REPOSITORY \+ "\/releases\/download/);

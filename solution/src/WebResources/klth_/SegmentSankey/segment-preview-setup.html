@@ -699,7 +699,7 @@
         <p class="eyebrow">Customer Insights – Journeys</p>
         <div class="title-row">
           <h1>Segment Preview</h1>
-          <span class="app-version" aria-label="Version 1.1.0.88">v1.1.0.88</span>
+          <span class="app-version" aria-label="Version 1.1.0.89">v1.1.0.89</span>
         </div>
         <p class="intro">
           Check the installation, configure environment-specific dependencies, and
@@ -1053,9 +1053,9 @@
   </main>
 
   <!-- Explicit revisions prevent Dynamics from reusing an older relative web-resource script. -->
-  <script src="segment-preview-azure-template.js?rev=1.1.0.88"></script>
-  <script src="segment-preview-payload.js?rev=1.1.0.88"></script>
-  <script src="segment-preview-provisioning.js?rev=1.1.0.88"></script>
+  <script src="segment-preview-azure-template.js?rev=1.1.0.89"></script>
+  <script src="segment-preview-payload.js?rev=1.1.0.89"></script>
+  <script src="segment-preview-provisioning.js?rev=1.1.0.89"></script>
 
   <script>
     (() => {
@@ -1514,6 +1514,12 @@
         return solution;
       }
 
+      function currentWebResourceVersion() {
+        const label = document.querySelector(".app-version")?.getAttribute("aria-label") || "";
+        const match = /^Version (\d+\.\d+\.\d+(?:\.\d+)?)$/.exec(label);
+        return match ? match[1] : "";
+      }
+
       async function activeSolutionOperations() {
         const [importJobs, asyncOperations] = await Promise.all([
           dataverseRequest(
@@ -1590,7 +1596,10 @@
               release?.message || "GitHub returned HTTP " + response.status + "."
             );
           }
-          const update = engine.resolveSolutionUpdate(release, solution);
+          const update = engine.resolveSolutionUpdate(release, {
+            ...solution,
+            webResourceVersion: currentWebResourceVersion()
+          });
           appendInstallationLog(
             "info",
             "update.check-completed",
@@ -1658,6 +1667,37 @@
           .join("");
       }
 
+      function base64ToBytes(value) {
+        const binary = atob(value);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index++) {
+          bytes[index] = binary.charCodeAt(index);
+        }
+        return bytes;
+      }
+
+      async function downloadVerifiedUpdateFile(update, rawFileName, expectedDigest) {
+        const rawUrl =
+          "https://raw.githubusercontent.com/" +
+          UPDATE_REPOSITORY +
+          "/" +
+          encodeURIComponent(update.tagName) +
+          "/deployment/dataverse/" +
+          encodeURIComponent(rawFileName);
+        const response = await fetch(rawUrl, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("The update file download returned HTTP " + response.status + ".");
+        }
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        const digest = await sha256Hex(bytes);
+        if (digest !== expectedDigest) {
+          throw new Error(
+            "The downloaded update file failed SHA-256 verification. Nothing was imported."
+          );
+        }
+        return bytes;
+      }
+
       function importJobId() {
         if (typeof window.crypto?.randomUUID === "function") {
           return window.crypto.randomUUID();
@@ -1680,19 +1720,25 @@
         );
       }
 
-      async function publishOwnedWebResources() {
+      async function ownedWebResources(select) {
         const filter = UPDATE_WEB_RESOURCES.map(
           name => "name eq '" + name.replace(/'/g, "''") + "'"
         ).join(" or ");
         const result = await dataverseRequest(
-          "webresourceset?$select=webresourceid&$filter=" + encodeURIComponent(filter)
+          "webresourceset?$select=" + select + "&$filter=" + encodeURIComponent(filter)
         );
-        const ids = (result.value || []).map(record => record.webresourceid).filter(Boolean);
-        if (ids.length !== UPDATE_WEB_RESOURCES.length) {
+        const records = Array.isArray(result.value) ? result.value : [];
+        if (records.length !== UPDATE_WEB_RESOURCES.length) {
           throw new Error(
-            "The update was imported, but not all Segment Preview web resources were found for publishing."
+            "The update was imported, but not all Segment Preview web resources were found."
           );
         }
+        return records;
+      }
+
+      async function publishOwnedWebResources() {
+        const records = await ownedWebResources("webresourceid");
+        const ids = records.map(record => record.webresourceid).filter(Boolean);
         const parameterXml =
           "<importexportxml><webresources>" +
           ids.map(id => "<webresource>" + id + "</webresource>").join("") +
@@ -1701,6 +1747,88 @@
           method: "POST",
           body: { ParameterXml: parameterXml }
         });
+      }
+
+      function parseWebResourceManifest(bytes, update) {
+        let manifest;
+        try {
+          manifest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+        } catch {
+          throw new Error("The verified web resource manifest is not valid UTF-8 JSON.");
+        }
+        if (
+          manifest?.schemaVersion !== "1.0" ||
+          manifest?.solutionVersion !== update.latestVersion ||
+          !Array.isArray(manifest.resources)
+        ) {
+          throw new Error("The verified web resource manifest does not match this update.");
+        }
+        const byName = new Map();
+        manifest.resources.forEach(resource => {
+          if (
+            !resource ||
+            !UPDATE_WEB_RESOURCES.includes(resource.name) ||
+            typeof resource.content !== "string" ||
+            !/^[A-Za-z0-9+/]+={0,2}$/.test(resource.content) ||
+            byName.has(resource.name)
+          ) {
+            throw new Error("The verified web resource manifest contains an invalid entry.");
+          }
+          byName.set(resource.name, resource);
+        });
+        if (
+          byName.size !== UPDATE_WEB_RESOURCES.length ||
+          UPDATE_WEB_RESOURCES.some(name => !byName.has(name))
+        ) {
+          throw new Error("The verified web resource manifest is incomplete.");
+        }
+        return { manifest, byName };
+      }
+
+      async function overwriteUnmanagedWebResources(update, manifestBytes) {
+        const { manifest, byName } = parseWebResourceManifest(manifestBytes, update);
+        const records = await ownedWebResources("webresourceid,name");
+        for (const record of records) {
+          await dataverseRequest("webresourceset(" + record.webresourceid + ")", {
+            method: "PATCH",
+            body: { content: byName.get(record.name).content }
+          });
+        }
+        return manifest;
+      }
+
+      async function verifyUnmanagedWebResources(manifest) {
+        const records = await ownedWebResources("name,content");
+        const expected = new Map(
+          manifest.resources.map(resource => [resource.name, resource.content])
+        );
+        if (records.some(record => record.content !== expected.get(record.name))) {
+          throw new Error("Dataverse did not persist all verified web resource contents.");
+        }
+        for (const resource of manifest.resources) {
+          const path = resource.name.split("/").map(encodeURIComponent).join("/");
+          const response = await fetch(
+            "/WebResources/" + path + "?rev=" + encodeURIComponent(manifest.solutionVersion) +
+              "-" + Date.now(),
+            { cache: "no-store" }
+          );
+          if (!response.ok) {
+            throw new Error(
+              "Published web resource verification returned HTTP " + response.status + "."
+            );
+          }
+          const actualDigest = await sha256Hex(
+            new Uint8Array(await response.arrayBuffer())
+          );
+          const expectedDigest = await sha256Hex(base64ToBytes(resource.content));
+          if (actualDigest !== expectedDigest) {
+            throw new Error(
+              "Dataverse is still serving stale content for web resource '" +
+                resource.name +
+                "'."
+            );
+          }
+        }
       }
 
       async function importSolutionAndConfirm(update, bytes) {
@@ -1769,24 +1897,11 @@
         );
         try {
           await requireNoActiveSolutionOperations();
-          const rawUrl =
-            "https://raw.githubusercontent.com/" +
-            UPDATE_REPOSITORY +
-            "/" +
-            encodeURIComponent(update.tagName) +
-            "/deployment/dataverse/" +
-            encodeURIComponent(update.rawFileName);
-          const response = await fetch(rawUrl, { cache: "no-store" });
-          if (!response.ok) {
-            throw new Error("The solution package download returned HTTP " + response.status + ".");
-          }
-          const bytes = new Uint8Array(await response.arrayBuffer());
-          const digest = await sha256Hex(bytes);
-          if (digest !== update.digest) {
-            throw new Error(
-              "The downloaded solution package failed SHA-256 verification. Nothing was imported."
-            );
-          }
+          const bytes = await downloadVerifiedUpdateFile(
+            update,
+            update.rawFileName,
+            update.digest
+          );
           appendInstallationLog(
             "info",
             "update.package-verified",
@@ -1807,11 +1922,31 @@
             "Dataverse confirmed the target solution version.",
             { targetVersion: update.latestVersion }
           );
+          let webResourceManifest = null;
+          if (!update.managed) {
+            const manifestBytes = await downloadVerifiedUpdateFile(
+              update,
+              update.webResourceManifest.rawFileName,
+              update.webResourceManifest.digest
+            );
+            webResourceManifest = await overwriteUnmanagedWebResources(
+              update,
+              manifestBytes
+            );
+            appendInstallationLog(
+              "info",
+              "update.webresources-overwritten",
+              "Verified unmanaged web resource contents were applied."
+            );
+          }
           await publishOwnedWebResources();
+          if (webResourceManifest) {
+            await verifyUnmanagedWebResources(webResourceManifest);
+          }
           appendInstallationLog(
             "info",
             "update.webresources-published",
-            "Segment Preview web resources were published."
+            "Segment Preview web resources were published and verified."
           );
           state.availableUpdate = null;
           renderUpdateState(

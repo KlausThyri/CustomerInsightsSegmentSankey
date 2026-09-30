@@ -6,7 +6,7 @@ Side-pane preview for draft segments in Dynamics 365 Customer Insights - Journey
 
 ## Current stable release
 
-**v1.1.0.87 is the current accepted production baseline.** It is deployed and
+**v1.1.0.88 is the current accepted production baseline.** It is deployed and
 verified in a Customer Insights - Journeys environment with all 10 Setup Center
 checks ready. The release includes:
 
@@ -15,6 +15,8 @@ checks ready. The release includes:
 - stable chart dimensions while delayed stages arrive;
 - draft-safe refreshes that save dirty forms and skip clean-form saves;
 - cumulative stage, added-member, and removed-member navigation;
+- number and date formatting based on the signed-in Dataverse user's language;
+- readable branch lists for OR conditions in expanded stage details;
 - server-side member search, sorting, filtering, and paging;
 - self-service Dataverse, Azure, and Fabric provisioning and updates; and
 - sanitized end-to-end performance diagnostics.
@@ -33,7 +35,7 @@ On a clean form, the measured save hook took about 1–2 ms and reported
 `skipped-clean`; a dirty form is still saved before evaluation so the preview
 never uses stale draft MQL. Cold-start and static-membership caching remain
 possible future optimizations, but are intentionally not part of the accepted
-v1.1.0.87 baseline.
+v1.1.0.88 baseline.
 
 ## Product experience
 
