@@ -749,7 +749,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.91">v1.1.0.91</span>
+          <span class="app-version" aria-label="Version 1.1.0.92">v1.1.0.92</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -3004,7 +3004,7 @@
             const saveStartedAt = performance.now();
             try {
               const saveResult =
-                await segmentLauncher.saveCurrentSegment();
+                await segmentLauncher.saveCurrentSegment(segmentId);
               segmentSaved = Boolean(saveResult?.saved);
               segmentSaveOperationMs = finiteMetric(saveResult?.durationMs);
               segmentSaveStatus =

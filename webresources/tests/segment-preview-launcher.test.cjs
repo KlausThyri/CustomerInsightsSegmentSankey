@@ -166,3 +166,72 @@ test("launcher skips clean forms and conservatively saves without a dirty-state 
   );
   assert.equal(Number.isFinite(conservativeResult.durationMs), true);
 });
+
+test("launcher uses the requested record when a published form is absent from the shell URL", async () => {
+  const recordId = "F2E4EEAE-4C5F-F111-A825-6045BDE0D602";
+  let saves = 0;
+  let navigations = 0;
+  const formContext = {
+    data: {
+      entity: {
+        getId: () => `{${recordId}}`,
+        getPrimaryAttributeValue: () => "Published segment"
+      },
+      getIsDirty: () => false,
+      save: async () => {
+        saves++;
+      },
+      addOnLoad() {},
+      removeOnLoad() {}
+    }
+  };
+  const pane = {
+    async navigate() {
+      navigations++;
+    }
+  };
+  const Xrm = {
+    App: {
+      sidePanes: {
+        getPane: () => null,
+        createPane: async () => pane
+      }
+    },
+    Utility: {
+      getPageContext: () => ({ input: {} }),
+      getGlobalContext: () => ({
+        getClientUrl: () => "https://contoso.crm4.dynamics.com"
+      })
+    }
+  };
+  const window = {
+    top: {
+      location: {
+        href: "https://contoso.crm4.dynamics.com/main.aspx?appid=journeys"
+      }
+    },
+    setInterval: () => 1,
+    clearInterval() {}
+  };
+  const context = vm.createContext({
+    window,
+    Xrm,
+    document: { title: "Published segment - Dynamics 365" },
+    URL,
+    console
+  });
+  vm.runInContext(fs.readFileSync(launcherPath, "utf8"), context, {
+    filename: launcherPath
+  });
+
+  await window.CISegmentSankey.open(formContext);
+  const refreshResult =
+    await window.CISegmentSankey.saveCurrentSegment(recordId.toLowerCase());
+
+  assert.equal(saves, 0);
+  assert.equal(navigations, 1);
+  assert.deepStrictEqual(
+    { ...refreshResult },
+    { saved: false, dirty: false, dirtyStateAvailable: true, durationMs: 0 }
+  );
+});

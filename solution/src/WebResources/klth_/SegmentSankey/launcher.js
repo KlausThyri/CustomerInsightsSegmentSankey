@@ -219,7 +219,7 @@
       throw new Error("The active segment does not have a saved record ID.");
     }
 
-    await saveCurrentSegment();
+    await saveCurrentSegment(segmentId);
 
     const segmentName = getSegmentName(formContext);
     const legacyPane = Xrm.App.sidePanes.getPane(LEGACY_PANE_ID);
@@ -256,11 +256,22 @@
     startPaneMonitor();
   }
 
-  async function saveCurrentSegment() {
+  async function saveCurrentSegment(requestedSegmentId) {
     const page = getActivePage();
-    const formContext = page.isSegment
-      ? resolveFormContext(page.segmentId)
-      : null;
+    const normalizedRequestedId = normalizeId(requestedSegmentId);
+    if (
+      normalizedRequestedId &&
+      page.isSegment &&
+      page.segmentId !== normalizedRequestedId
+    ) {
+      throw new Error("The active segment changed before it could be refreshed.");
+    }
+
+    const segmentId =
+      normalizedRequestedId ||
+      (page.isSegment ? page.segmentId : "") ||
+      getFormRecordId(activeFormContext);
+    const formContext = resolveFormContext(segmentId);
     const data = formContext?.data;
     if (!data?.save) {
       throw new Error("The active segment form is not ready. Try again after it has loaded.");

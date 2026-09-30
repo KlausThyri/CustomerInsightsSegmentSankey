@@ -64,7 +64,7 @@ test("segment refresh resolves the launcher from Dynamics host frames", () => {
   assert.match(countView, /window\.top\.frames\.length/);
   assert.match(countView, /typeof launcher\?\.saveCurrentSegment === "function"/);
   assert.match(countView, /const segmentLauncher = getSegmentLauncher\(\)/);
-  assert.match(countView, /await segmentLauncher\.saveCurrentSegment\(\)/);
+  assert.match(countView, /await segmentLauncher\.saveCurrentSegment\(segmentId\)/);
   assert.doesNotMatch(
     countView,
     /await window\.parent\.CISegmentSankey\.saveCurrentSegment\(\)/
