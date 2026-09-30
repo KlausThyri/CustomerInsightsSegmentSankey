@@ -306,6 +306,74 @@ test("launcher accepts a clean read-only published form without a save API", asy
   );
 });
 
+test("launcher accepts a dirty disabled form without a save API", async () => {
+  const recordId = "F2E4EEAE-4C5F-F111-A825-6045BDE0D602";
+  let readinessWaits = 0;
+  const formContext = {
+    data: {
+      entity: {
+        getId: () => `{${recordId}}`,
+        getPrimaryAttributeValue: () => "Linked published segment"
+      },
+      getIsDirty: () => true,
+      addOnLoad() {},
+      removeOnLoad() {}
+    },
+    ui: {
+      getFormType: () => 4
+    }
+  };
+  const Xrm = {
+    Page: formContext,
+    App: {
+      sidePanes: {
+        getPane: () => null
+      }
+    },
+    Utility: {
+      getPageContext: () => ({ input: {} })
+    }
+  };
+  const window = {
+    top: {
+      location: {
+        href: "https://contoso.crm4.dynamics.com/main.aspx?appid=journeys"
+      }
+    },
+    setInterval: () => 1,
+    clearInterval() {},
+    setTimeout(resolve) {
+      readinessWaits++;
+      resolve();
+    }
+  };
+  const context = vm.createContext({
+    window,
+    Xrm,
+    document: { title: "Linked published segment - Dynamics 365" },
+    URL,
+    console
+  });
+  vm.runInContext(fs.readFileSync(launcherPath, "utf8"), context, {
+    filename: launcherPath
+  });
+
+  const result =
+    await window.CISegmentSankey.saveCurrentSegment(recordId.toLowerCase());
+
+  assert.equal(readinessWaits, 0);
+  assert.deepStrictEqual(
+    { ...result },
+    {
+      saved: false,
+      dirty: true,
+      dirtyStateAvailable: true,
+      durationMs: 0,
+      readOnly: true
+    }
+  );
+});
+
 test("launcher waits for a form that is still initializing after an early click", async () => {
   const recordId = "F2E4EEAE-4C5F-F111-A825-6045BDE0D602";
   let saves = 0;

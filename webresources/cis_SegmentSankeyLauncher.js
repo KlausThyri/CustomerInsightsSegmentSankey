@@ -298,23 +298,30 @@
 
       const formContext = resolveFormContext(segmentId);
       const data = formContext?.data;
+      const formType = formContext?.ui?.getFormType?.();
+      const isReadOnly = formType === 3 || formType === 4;
       const dirtyStateAvailable = typeof data?.getIsDirty === "function";
       const isDirty = dirtyStateAvailable ? data.getIsDirty() : true;
+      const shouldSave = isDirty && !isReadOnly;
       const saveAvailable = typeof data?.save === "function";
-      if (data && (!isDirty || saveAvailable)) {
+      if (data && (!shouldSave || saveAvailable)) {
         registerFormContext(formContext);
         let durationMs = 0;
-        if (isDirty) {
+        if (shouldSave) {
           const startedAt = Date.now();
           await data.save();
           durationMs = Date.now() - startedAt;
         }
-        return {
-          saved: isDirty,
+        const result = {
+          saved: shouldSave,
           dirty: isDirty,
           dirtyStateAvailable: dirtyStateAvailable,
           durationMs: durationMs
         };
+        if (isReadOnly) {
+          result.readOnly = true;
+        }
+        return result;
       }
 
       await new Promise(function (resolve) {

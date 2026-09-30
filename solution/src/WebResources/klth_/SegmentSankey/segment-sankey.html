@@ -749,7 +749,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.94">v1.1.0.94</span>
+          <span class="app-version" aria-label="Version 1.1.0.95">v1.1.0.95</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -3008,7 +3008,9 @@
               segmentSaved = Boolean(saveResult?.saved);
               segmentSaveOperationMs = finiteMetric(saveResult?.durationMs);
               segmentSaveStatus =
-                saveResult?.saved === true
+                saveResult?.readOnly === true
+                  ? "skipped-read-only"
+                  : saveResult?.saved === true
                   ? "saved"
                   : saveResult?.saved === false
                   ? "skipped-clean"
