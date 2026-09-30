@@ -749,7 +749,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.90">v1.1.0.90</span>
+          <span class="app-version" aria-label="Version 1.1.0.91">v1.1.0.91</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -2157,9 +2157,9 @@
       }
 
       function expandedCardHeight(stage) {
-        const branchList = createBranchList(stage.detail);
-        const probe = branchList ? branchList.element : document.createElement("div");
-        if (!branchList) {
+        const expandedDetail = createExpandedDetail(stage.detail);
+        const probe = expandedDetail || document.createElement("div");
+        if (!expandedDetail) {
           probe.className = "journey-card-expression expanded";
           probe.textContent = stage.detail || "No expression";
         }
@@ -2180,6 +2180,9 @@
         // A multi-branch expression is always worth expanding: the collapsed
         // single line hides whether the branches are combined with OR or AND.
         if (splitBooleanExpression(stage.detail)) {
+          return true;
+        }
+        if (splitPresentationDetail(stage.detail)) {
           return true;
         }
         const probe = document.createElement("div");
@@ -2324,6 +2327,61 @@
         return { element: container, count: split.parts.length };
       }
 
+      function splitPresentationDetail(expression) {
+        const lines = typeof expression === "string"
+          ? expression.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+          : [];
+        if (lines.length < 2) {
+          return null;
+        }
+        return {
+          title: lines[0],
+          items: lines.slice(1).map((line) => {
+            const separator = line.indexOf(":");
+            return separator > 0
+              ? {
+                  label: line.slice(0, separator).trim(),
+                  value: line.slice(separator + 1).trim()
+                }
+              : { label: "", value: line };
+          })
+        };
+      }
+
+      function createPresentationList(expression) {
+        const detail = splitPresentationDetail(expression);
+        if (!detail) {
+          return null;
+        }
+        const container = document.createElement("div");
+        container.className = "journey-card-branches";
+        const intro = document.createElement("div");
+        intro.className = "journey-card-branches-intro";
+        intro.textContent = detail.title;
+        const list = document.createElement("ul");
+        list.className = "journey-card-branches-list";
+        detail.items.forEach((detailItem) => {
+          const item = document.createElement("li");
+          item.className = "journey-card-branch";
+          const marker = document.createElement("span");
+          marker.className = "journey-card-branch-marker";
+          marker.textContent = detailItem.label;
+          const value = document.createElement("span");
+          value.textContent = detailItem.value;
+          item.append(marker, value);
+          list.append(item);
+        });
+        container.append(intro, list);
+        return container;
+      }
+
+      function createExpandedDetail(expression) {
+        const branchList = createBranchList(expression);
+        return branchList
+          ? branchList.element
+          : createPresentationList(expression);
+      }
+
       function appendJourneyCard(
         svg,
         namespace,
@@ -2407,7 +2465,7 @@
         svg.append(content);
 
         if (isExpanded) {
-          const branchList = createBranchList(stage.detail);
+          const expandedDetail = createExpandedDetail(stage.detail);
           const expressionContent = createSvgElement(namespace, "foreignObject", {
             x: x + 74,
             y: y + 58,
@@ -2416,7 +2474,7 @@
           });
           const expressionWrapper = document.createElement("div");
           expressionWrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
-          expressionWrapper.append(branchList ? branchList.element : expression);
+          expressionWrapper.append(expandedDetail || expression);
           expressionContent.append(expressionWrapper);
           svg.append(expressionContent);
         }

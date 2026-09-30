@@ -210,17 +210,21 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 var operation = query.SetOperations[index];
                 try
                 {
+                    var builtOperand = BuildOperand(
+                        operation.Operand,
+                        recursionPath);
                     result.SetOperations.Add(new FabricSegmentSetOperationRequest
                     {
                         Operator = operation.Operator.ToString().ToUpperInvariant(),
-                        Operand = BuildOperand(operation.Operand, recursionPath),
+                        Operand = builtOperand,
                         Label = operation.Operator == SetOperator.Intersect
                             ? "Intersection"
                             : operation.Operator == SetOperator.Union
                                 ? "Union"
                                 : "Exclusion",
-                        Detail = operation.Operator.ToString().ToUpperInvariant() +
-                            " " + DescribeSetOperand(operation.Operand)
+                        Detail = BuildSetOperationDetail(
+                            operation,
+                            builtOperand)
                     });
                 }
                 catch (DeferredStaticMembersException)
@@ -270,8 +274,11 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 {
                     Kind = "interaction",
                     ProfileEntity = profileEntity,
-                    BaseLabel = "Behavioral: " + interaction.EventLogicalName,
-                    BaseDetail = interaction.Describe(),
+                    BaseLabel = "Behavioral: " +
+                        HumanizeLogicalName(interaction.EventLogicalName),
+                    BaseDetail = BuildInteractionDetail(
+                        interaction,
+                        profileEntity),
                     EventLogicalName = interaction.EventLogicalName,
                     EntityIdField = interaction.EntityIdField,
                     Filter = ConvertCondition(interaction.Filter, false),
@@ -478,13 +485,16 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 try
                 {
                     var query = BuildDefinition(definition, recursionPath);
+                    var displayName =
+                        segment.GetAttributeValue<string>("msdynmkt_displayname");
                     return new FabricSegmentOperandRequest
                     {
                         Kind = "query",
                         ProfileEntity = query.FirstOperand.ProfileEntity,
                         BaseLabel = "Referenced segment",
-                        BaseDetail = "SEGMENT(SEGMENT_CJO_ID_" +
-                            segmentId.ToString("N") + ")",
+                        BaseDetail = BuildSegmentReferenceDetail(
+                            displayName,
+                            segmentId),
                         Query = query
                     };
                 }
@@ -504,8 +514,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     Kind = "static",
                     ProfileEntity = profileEntity,
                     BaseLabel = "Static segment",
-                    BaseDetail = "SEGMENT(SEGMENT_CJO_ID_" +
-                        segmentId.ToString("N") + ")",
+                    BaseDetail = BuildSegmentReferenceDetail(
+                        segment.GetAttributeValue<string>("msdynmkt_displayname"),
+                        segmentId),
                     ProfileIds = RetrieveStaticSegmentIds(
                         segmentId,
                         definition.GetAttributeValue<string>(
@@ -969,6 +980,160 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             return filters.Count == 0
                 ? profile.Describe()
                 : string.Join(" AND ", filters.ToArray());
+        }
+
+        private static string BuildSetOperationDetail(
+            SetOperation operation,
+            FabricSegmentOperandRequest builtOperand)
+        {
+            if (operation.Operand is InteractionOperand ||
+                operation.Operand is SegmentReferenceOperand)
+            {
+                return builtOperand.BaseDetail;
+            }
+
+            return operation.Operator.ToString().ToUpperInvariant() +
+                " " + DescribeSetOperand(operation.Operand);
+        }
+
+        private static string BuildInteractionDetail(
+            InteractionOperand interaction,
+            string profileEntity)
+        {
+            var lines = new List<string>
+            {
+                HumanizeLogicalName(interaction.EventLogicalName),
+                "Scope: " + DescribeInteractionScope(
+                    interaction,
+                    profileEntity)
+            };
+
+            if (interaction.Having != null)
+            {
+                lines.Add(
+                    "Frequency: " +
+                    DescribeInteractionFrequency(interaction.Having));
+                var window = DescribeInteractionWindow(interaction.Having);
+                if (!string.IsNullOrWhiteSpace(window))
+                {
+                    lines.Add("Period: " + window);
+                }
+            }
+
+            return string.Join("\n", lines.ToArray());
+        }
+
+        private static string DescribeInteractionScope(
+            InteractionOperand interaction,
+            string profileEntity)
+        {
+            var profileLabel = HumanizeLogicalName(profileEntity);
+            var filter = interaction.Filter == null
+                ? string.Empty
+                : interaction.Filter.Describe();
+            if (filter.IndexOf(
+                    "ISNOTNULL(msdynmkt_messagetemplateid)",
+                    StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return profileLabel + " interactions with a message template";
+            }
+
+            return string.IsNullOrWhiteSpace(filter)
+                ? profileLabel + " interactions"
+                : profileLabel + " interactions matching the configured filters";
+        }
+
+        private static string DescribeInteractionFrequency(HavingClause having)
+        {
+            var occurrence = having.Threshold == 1
+                ? " occurrence"
+                : " occurrences";
+            switch (having.ComparisonOperator)
+            {
+                case ">=":
+                    return "At least " + having.Threshold + occurrence;
+                case ">":
+                    return "More than " + having.Threshold + occurrence;
+                case "<=":
+                    return "At most " + having.Threshold + occurrence;
+                case "<":
+                    return "Fewer than " + having.Threshold + occurrence;
+                case "==":
+                case "=":
+                    return "Exactly " + having.Threshold + occurrence;
+                default:
+                    return having.Metric + " " + having.ComparisonOperator +
+                        " " + having.Threshold;
+            }
+        }
+
+        private static string DescribeInteractionWindow(HavingClause having)
+        {
+            if (!having.WindowValue.HasValue ||
+                string.IsNullOrWhiteSpace(having.WindowFunction))
+            {
+                return null;
+            }
+
+            var unit = having.WindowFunction.Equals(
+                "UTCMONTHS",
+                StringComparison.OrdinalIgnoreCase)
+                ? "month"
+                : having.WindowFunction.Equals(
+                    "UTCDAYS",
+                    StringComparison.OrdinalIgnoreCase)
+                    ? "day"
+                    : having.WindowFunction.Equals(
+                        "UTCHOURS",
+                        StringComparison.OrdinalIgnoreCase)
+                        ? "hour"
+                        : null;
+            if (unit == null)
+            {
+                return having.WindowFunction + "(" +
+                    having.WindowValue.Value + ")";
+            }
+
+            if (having.WindowValue.Value != 1)
+            {
+                unit += "s";
+            }
+
+            return "Last " + having.WindowValue.Value + " " + unit;
+        }
+
+        private static string BuildSegmentReferenceDetail(
+            string displayName,
+            Guid segmentId)
+        {
+            return !string.IsNullOrWhiteSpace(displayName)
+                ? displayName.Trim() + "\nSource: Referenced segment"
+                : "Referenced segment\nID: " + segmentId.ToString("D");
+        }
+
+        private static string HumanizeLogicalName(string logicalName)
+        {
+            if (string.IsNullOrWhiteSpace(logicalName))
+            {
+                return "Interaction";
+            }
+
+            if (logicalName.Equals(
+                "msdynmkt_emaildelivered",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return "Email delivered";
+            }
+
+            var value = logicalName.Trim();
+            var separator = value.IndexOf('_');
+            if (separator >= 0 && separator < value.Length - 1)
+            {
+                value = value.Substring(separator + 1);
+            }
+
+            value = value.Replace('_', ' ');
+            return char.ToUpperInvariant(value[0]) + value.Substring(1);
         }
 
         private string BuildRequestCacheKey(

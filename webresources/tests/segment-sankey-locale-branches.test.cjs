@@ -24,6 +24,17 @@ function loadSplitter() {
   };
 }
 
+function loadPresentationSplitter() {
+  const match = /function splitPresentationDetail\(expression\) \{[\s\S]*?^      \}/m.exec(sankeyHtml);
+  assert.ok(match, "splitPresentationDetail is missing");
+  const context = {};
+  vm.runInNewContext(`${match[0]}\nsplit = splitPresentationDetail;`, context);
+  return (expression) => {
+    const result = context.split(expression);
+    return result === null ? null : JSON.parse(JSON.stringify(result));
+  };
+}
+
 function loadSankeyLocaleResolver(globals) {
   const mapMatch = /const LANGUAGE_ID_LOCALES = \{[\s\S]*?^      \};/m.exec(sankeyHtml);
   assert.ok(mapMatch, "LANGUAGE_ID_LOCALES is missing");
@@ -156,9 +167,41 @@ test("malformed or ambiguous expressions degrade to the plain single line", () =
   assert.strictEqual(split("(a == 1 AND b == 2 OR c == 3)"), null, "mixed operators");
 });
 
+test("interaction details are split into a readable title and labeled facts", () => {
+  const split = loadPresentationSplitter();
+  assert.deepStrictEqual(
+    split(
+      "Email delivered\n" +
+      "Scope: Contact interactions with a message template\n" +
+      "Frequency: At least 1 occurrence\n" +
+      "Period: Last 24 months"
+    ),
+    {
+      title: "Email delivered",
+      items: [
+        { label: "Scope", value: "Contact interactions with a message template" },
+        { label: "Frequency", value: "At least 1 occurrence" },
+        { label: "Period", value: "Last 24 months" }
+      ]
+    }
+  );
+});
+
+test("a referenced segment detail keeps its business name", () => {
+  const split = loadPresentationSplitter();
+  assert.deepStrictEqual(
+    split("Newsletter 2026\nSource: Referenced segment"),
+    {
+      title: "Newsletter 2026",
+      items: [{ label: "Source", value: "Referenced segment" }]
+    }
+  );
+});
+
 test("the expanded card renders branches and grows to fit them", () => {
   assert.match(sankeyHtml, /function createBranchList\(expression\)/);
-  assert.match(sankeyHtml, /expressionWrapper\.append\(branchList \? branchList\.element : expression\);/);
+  assert.match(sankeyHtml, /function createPresentationList\(expression\)/);
+  assert.match(sankeyHtml, /expressionWrapper\.append\(expandedDetail \|\| expression\);/);
   assert.match(sankeyHtml, /if \(splitBooleanExpression\(stage\.detail\)\) \{\s*return true;/);
   assert.match(sankeyHtml, /"Any of " \+ split\.parts\.length \+ " conditions"/);
   assert.match(sankeyHtml, /"All of " \+ split\.parts\.length \+ " conditions"/);
