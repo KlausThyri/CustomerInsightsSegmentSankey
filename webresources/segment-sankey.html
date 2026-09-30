@@ -749,7 +749,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.89">v1.1.0.89</span>
+          <span class="app-version" aria-label="Version 1.1.0.90">v1.1.0.90</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -2218,17 +2218,23 @@
 
       function splitBooleanExpression(expression) {
         const text = typeof expression === "string" ? expression.trim() : "";
-        if (text.length < 2 || !text.startsWith("(") || !text.endsWith(")")) {
+        const setOperation = /^(?:INTERSECT|UNION)\s+(\([\s\S]*\))$/i.exec(text);
+        const groupedText = setOperation ? setOperation[1] : text;
+        if (
+          groupedText.length < 2 ||
+          !groupedText.startsWith("(") ||
+          !groupedText.endsWith(")")
+        ) {
           return null;
         }
         const separators = [];
         let depth = 0;
         let quoted = false;
-        for (let index = 0; index < text.length; index++) {
-          const character = text[index];
+        for (let index = 0; index < groupedText.length; index++) {
+          const character = groupedText[index];
           if (quoted) {
             if (character === "'") {
-              if (text[index + 1] === "'") {
+              if (groupedText[index + 1] === "'") {
                 index++;
               } else {
                 quoted = false;
@@ -2252,7 +2258,7 @@
             // The outer parentheses must wrap the whole expression, otherwise
             // the string is a sequence such as "(a) AND (b)" that Describe()
             // never emits and that this scanner must not reinterpret.
-            if (depth === 0 && index !== text.length - 1) {
+            if (depth === 0 && index !== groupedText.length - 1) {
               return null;
             }
             continue;
@@ -2261,7 +2267,7 @@
             continue;
           }
           for (const operator of [" AND ", " OR "]) {
-            if (text.startsWith(operator, index)) {
+            if (groupedText.startsWith(operator, index)) {
               separators.push({ operator: operator.trim(), start: index, end: index + operator.length });
               index = index + operator.length - 1;
               break;
@@ -2278,10 +2284,10 @@
         const parts = [];
         let cursor = 1;
         for (const separator of separators) {
-          parts.push(text.slice(cursor, separator.start).trim());
+          parts.push(groupedText.slice(cursor, separator.start).trim());
           cursor = separator.end;
         }
-        parts.push(text.slice(cursor, text.length - 1).trim());
+        parts.push(groupedText.slice(cursor, groupedText.length - 1).trim());
         if (parts.some((part) => !part)) {
           return null;
         }

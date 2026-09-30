@@ -112,6 +112,14 @@ test("an OR expression is split into its individual branches", () => {
   );
 });
 
+test("a real INTERSECT OR expression is split into its individual branches", () => {
+  const split = loadSplitter();
+  assert.deepStrictEqual(
+    split("INTERSECT (firstname CONTAINS 'a' OR firstname CONTAINS 'a')"),
+    { operator: "OR", parts: ["firstname CONTAINS 'a'", "firstname CONTAINS 'a'"] }
+  );
+});
+
 test("an AND expression keeps its branches and reports the AND operator", () => {
   const split = loadSplitter();
   assert.deepStrictEqual(
