@@ -749,7 +749,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.100">v1.1.0.100</span>
+          <span class="app-version" aria-label="Version 1.1.0.101">v1.1.0.101</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -1643,7 +1643,9 @@
         if (typeof label === "string") {
           return label;
         }
-        return label.UserLocalizedLabel?.Label ||
+        return label.text ||
+          label.Text ||
+          label.UserLocalizedLabel?.Label ||
           label.userLocalizedLabel?.label ||
           label.LocalizedLabels?.[0]?.Label ||
           label.localizedLabels?.[0]?.label ||

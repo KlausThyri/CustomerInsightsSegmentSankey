@@ -378,7 +378,10 @@ test("filter metadata resolves the Dynamics client attribute descriptor", async 
     Attributes: {
       klth_risikoprofil: {
         _displayName: "Risikoprofil",
-        _optionSet: null,
+        _optionSet: {
+          700370003: { text: "Risikobereit", value: 700370003 },
+          700370004: { text: "Spekulativ", value: 700370004 }
+        },
         attributeDescriptor: {
           DisplayName: "Risikoprofil",
           OptionSet: [
