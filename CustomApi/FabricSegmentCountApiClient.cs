@@ -139,8 +139,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         stage.Detail,
                         stage.Count,
                         "complete",
-                        stage.Presentation ??
-                            (metadata == null ? null : metadata.Presentation),
+                        metadata != null && metadata.Presentation != null
+                            ? metadata.Presentation
+                            : stage.Presentation,
                         metadata == null ? null : metadata.GroupLabel);
                 })
                 .ToList();
