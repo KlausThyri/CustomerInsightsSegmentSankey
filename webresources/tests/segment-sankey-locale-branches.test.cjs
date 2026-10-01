@@ -373,6 +373,39 @@ test("filter metadata resolves official key-value choice options and is cached",
   assert.strictEqual(metadata.calls(), 1);
 });
 
+test("filter metadata resolves the Dynamics client attribute descriptor", async () => {
+  const metadata = loadPresentationMetadataResolver({
+    Attributes: {
+      klth_risikoprofil: {
+        _displayName: "Risikoprofil",
+        _optionSet: null,
+        attributeDescriptor: {
+          DisplayName: "Risikoprofil",
+          OptionSet: [
+            { Label: "Risikobereit", Value: 700370003 },
+            { Label: "Spekulativ", Value: 700370004 }
+          ]
+        }
+      }
+    }
+  });
+
+  const resolved = await metadata.resolve({
+    entity: "contact",
+    field: "klth_risikoprofil"
+  });
+
+  assert.strictEqual(resolved.fieldLabel, "Risikoprofil");
+  assert.strictEqual(
+    resolved.optionLabels.get("700370003"),
+    "Risikobereit"
+  );
+  assert.strictEqual(
+    resolved.optionLabels.get("700370004"),
+    "Spekulativ"
+  );
+});
+
 test("filter metadata enrichment runs only after the first diagram render", () => {
   const renderPosition = sankeyHtml.indexOf(
     "render(result, performance.now() - startedAt);"

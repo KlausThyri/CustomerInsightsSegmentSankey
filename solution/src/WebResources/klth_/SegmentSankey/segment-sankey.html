@@ -749,7 +749,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.99">v1.1.0.99</span>
+          <span class="app-version" aria-label="Version 1.1.0.100">v1.1.0.100</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -1675,7 +1675,17 @@
             return null;
           }
 
-          const optionSet = attribute.OptionSet || attribute.optionSet || {};
+          const descriptor =
+            attribute.attributeDescriptor ||
+            attribute.AttributeDescriptor ||
+            {};
+          const optionSet =
+            attribute.OptionSet ||
+            attribute.optionSet ||
+            attribute._optionSet ||
+            descriptor.OptionSet ||
+            descriptor.optionSet ||
+            {};
           const options = optionSet.Options ||
             optionSet.options ||
             attribute.Options ||
@@ -1702,7 +1712,13 @@
           }
           return {
             fieldLabel:
-              getLocalizedLabel(attribute.DisplayName || attribute.displayName) ||
+              getLocalizedLabel(
+                attribute.DisplayName ||
+                attribute.displayName ||
+                attribute._displayName ||
+                descriptor.DisplayName ||
+                descriptor.displayName
+              ) ||
               "",
             optionLabels: optionLabels
           };

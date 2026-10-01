@@ -99,10 +99,30 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         " has no owning business unit.");
                 }
 
-                var query = BuildQuery(
-                    ParseMql(definition),
-                    recursionPath,
-                    deferStaticMembers);
+                var mql = definition.GetAttributeValue<string>(
+                    SegmentQueryAttribute);
+                FabricSegmentQueryRequest query;
+                if (string.IsNullOrWhiteSpace(mql))
+                {
+                    if (deferStaticMembers)
+                    {
+                        throw new InvalidPluginExecutionException(
+                            "The segment definition " +
+                            definition.Id.ToString("D") +
+                            " does not contain an MQL query.");
+                    }
+
+                    query = BuildStaticRootQuery(
+                        definition,
+                        segmentDefinitionId);
+                }
+                else
+                {
+                    query = BuildQuery(
+                        ParseMql(definition),
+                        recursionPath,
+                        deferStaticMembers);
+                }
                 query.BusinessUnitId = businessUnitScopingEnabled
                     ? (Guid?)businessUnit.Id
                     : null;
@@ -161,6 +181,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     definitionId,
                     new ColumnSet(
                         SegmentQueryAttribute,
+                        "msdynmkt_staticlistmembers",
                         "owningbusinessunit",
                         "modifiedon"));
             }
@@ -194,6 +215,63 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             }
 
             return mql;
+        }
+
+        private FabricSegmentQueryRequest BuildStaticRootQuery(
+            Entity definition,
+            Guid segmentDefinitionId)
+        {
+            var query = new QueryExpression("msdynmkt_segment")
+            {
+                ColumnSet = new ColumnSet(
+                    "msdynmkt_baseentitylogicalname",
+                    "msdynmkt_displayname"),
+                NoLock = true,
+                TopCount = 1
+            };
+            query.Criteria.AddCondition(
+                "msdynmkt_sourcesegmentuid",
+                ConditionOperator.In,
+                segmentDefinitionId.ToString("D"),
+                segmentDefinitionId.ToString("N"));
+            query.Orders.Add(
+                new OrderExpression("modifiedon", OrderType.Descending));
+
+            var segment = service.RetrieveMultiple(query)
+                .Entities
+                .FirstOrDefault();
+            if (segment == null)
+            {
+                throw new InvalidPluginExecutionException(
+                    "The static segment associated with definition " +
+                    segmentDefinitionId.ToString("D") +
+                    " could not be determined.");
+            }
+
+            var profileEntity = segment.GetAttributeValue<string>(
+                "msdynmkt_baseentitylogicalname");
+            if (string.IsNullOrWhiteSpace(profileEntity))
+            {
+                profileEntity = "contact";
+            }
+
+            return new FabricSegmentQueryRequest
+            {
+                FirstOperand = new FabricSegmentOperandRequest
+                {
+                    Kind = "static",
+                    ProfileEntity = profileEntity,
+                    BaseLabel = "Static list",
+                    BaseDetail = "Fixed member list",
+                    ProfileIds = RetrieveStaticSegmentIds(
+                        segment.Id,
+                        definition.GetAttributeValue<string>(
+                            "msdynmkt_staticlistmembers"),
+                        segment.GetAttributeValue<string>(
+                            "msdynmkt_displayname"))
+                        .ToList()
+                }
+            };
         }
 
         private FabricSegmentQueryRequest BuildQuery(
