@@ -749,7 +749,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.97">v1.1.0.97</span>
+          <span class="app-version" aria-label="Version 1.1.0.98">v1.1.0.98</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -892,6 +892,7 @@
       };
       const countRequestCache = new Map();
       const presentationMetadataCache = new Map();
+      const presentationRecordCache = new Map();
 
       window.addEventListener("pagehide", () => {
         state.requestController?.abort();
@@ -1573,6 +1574,7 @@
             ? null
             : Number(stage.count),
           status: stage.status === "pending" ? "pending" : "complete",
+          groupLabel: String(stage.groupLabel || ""),
           presentation:
             stage.presentation && typeof stage.presentation === "object"
               ? {
@@ -1581,7 +1583,13 @@
                   values: Array.isArray(stage.presentation.values)
                     ? stage.presentation.values.map(value => String(value))
                     : [],
-                  fieldAsTitle: Boolean(stage.presentation.fieldAsTitle)
+                  fieldAsTitle: Boolean(stage.presentation.fieldAsTitle),
+                  complianceProfileId:
+                    String(stage.presentation.complianceProfileId || ""),
+                  purposeId: String(stage.presentation.purposeId || ""),
+                  topicId: String(stage.presentation.topicId || ""),
+                  messageTemplateId:
+                    String(stage.presentation.messageTemplateId || "")
                 }
               : null
         }));
@@ -1709,6 +1717,62 @@
         return promise;
       }
 
+      function loadPresentationRecord(entityName, id) {
+        if (!id) {
+          return Promise.resolve("");
+        }
+        const key = entityName.toLowerCase() + "|" + id.toLowerCase();
+        if (presentationRecordCache.has(key)) {
+          return presentationRecordCache.get(key);
+        }
+
+        const promise = Promise.resolve().then(async () => {
+          const xrm = getXrm();
+          if (!xrm?.WebApi || typeof xrm.WebApi.retrieveRecord !== "function") {
+            return "";
+          }
+          const record = await xrm.WebApi.retrieveRecord(
+            entityName,
+            id.replace(/[{}]/g, ""),
+            "?$select=msdynmkt_name"
+          );
+          return String(record?.msdynmkt_name || "");
+        }).catch(error => {
+          console.warn(
+            "Segment preview: Consent name enrichment failed.",
+            error
+          );
+          return "";
+        });
+        presentationRecordCache.set(key, promise);
+        return promise;
+      }
+
+      async function loadConsentPresentation(presentation) {
+        const values = await Promise.all([
+          loadPresentationRecord(
+            "msdynmkt_compliancesettings4",
+            presentation.complianceProfileId
+          ),
+          loadPresentationRecord("msdynmkt_purpose", presentation.purposeId),
+          loadPresentationRecord("msdynmkt_topic", presentation.topicId)
+        ]);
+        return {
+          complianceProfile: values[0],
+          purpose: values[1],
+          topic: values[2]
+        };
+      }
+
+      async function loadInteractionPresentation(presentation) {
+        return {
+          email: await loadPresentationRecord(
+            "msdynmkt_email",
+            presentation.messageTemplateId
+          )
+        };
+      }
+
       function replaceFirst(text, search, replacement) {
         const position = text.indexOf(search);
         return position < 0
@@ -1740,11 +1804,21 @@
       async function enrichStagePresentations(result, requestGeneration) {
         const enrichments = await Promise.all(result.stages.map(async stage => {
           const presentation = stage.presentation;
-          if (!presentation?.entity || !presentation?.field) {
+          if (!presentation) {
             return null;
           }
-          const metadata = await loadPresentationMetadata(presentation);
-          if (!metadata) {
+          const metadata = presentation.entity && presentation.field
+            ? await loadPresentationMetadata(presentation)
+            : null;
+          const consent = presentation.complianceProfileId ||
+              presentation.purposeId ||
+              presentation.topicId
+            ? await loadConsentPresentation(presentation)
+            : null;
+          const interaction = presentation.messageTemplateId
+            ? await loadInteractionPresentation(presentation)
+            : null;
+          if (!metadata && !consent && !interaction) {
             return null;
           }
 
@@ -1754,15 +1828,15 @@
           }
           const fallbackField = humanizeLogicalName(presentation.field);
           let title = parsed.title;
-          if (presentation.fieldAsTitle && metadata.fieldLabel) {
+          if (presentation.fieldAsTitle && metadata?.fieldLabel) {
             title = metadata.fieldLabel;
           }
           const items = parsed.items.map(item => {
-            let value = metadata.fieldLabel
+            let value = metadata?.fieldLabel
               ? replaceFirst(item.value, fallbackField, metadata.fieldLabel)
               : item.value;
             presentation.values.forEach(rawValue => {
-              const optionLabel = metadata.optionLabels.get(rawValue);
+              const optionLabel = metadata?.optionLabels.get(rawValue);
               if (optionLabel) {
                 value = replaceChoiceValue(value, rawValue, optionLabel);
               }
@@ -1771,6 +1845,25 @@
               ? item.label + ": " + value
               : value;
           });
+          if (consent?.complianceProfile) {
+            items.push("Compliance profile: " + consent.complianceProfile);
+          }
+          if (consent?.purpose) {
+            items.push("Purpose: " + consent.purpose);
+          }
+          if (consent?.topic) {
+            items.push("Topic: " + consent.topic);
+          }
+          if (interaction?.email) {
+            const scopeIndex = items.findIndex(item =>
+              item.indexOf("Scope:") === 0
+            );
+            items.splice(
+              scopeIndex < 0 ? items.length : scopeIndex + 1,
+              0,
+              "Email: " + interaction.email
+            );
+          }
           const detail = [title].concat(items).join("\n");
           return detail === stage.detail ? null : { stage: stage, detail: detail };
         }));
@@ -2226,7 +2319,8 @@
               });
               additionPath.append(createSvgTitle(
                 namespace,
-                state.formatter.format(addition) + " members added by filter " + index +
+                state.formatter.format(addition) + " members added by Group " +
+                  (stage.groupLabel || index) +
                   (previous.count > 0
                     ? " (" + formatShareOfPrevious(addition, previous.count) + " of incoming population)"
                     : "")
@@ -2242,7 +2336,8 @@
                 addition,
                 hoverLayer,
                 stage.order,
-                previous.count
+                previous.count,
+                stage.groupLabel || String(index)
               );
             }
 
@@ -2272,7 +2367,8 @@
               });
               branch.append(createSvgTitle(
                 namespace,
-                state.formatter.format(loss) + " excluded by filter " + index +
+                state.formatter.format(loss) + " excluded by Group " +
+                  (stage.groupLabel || index) +
                   (previous.count > 0
                     ? " (" + formatShareOfPrevious(loss, previous.count) + " of incoming population)"
                     : "")
@@ -2288,7 +2384,8 @@
                 loss,
                 hoverLayer,
                 stage.order,
-                previous.count
+                previous.count,
+                stage.groupLabel || String(index)
               );
             }
 
@@ -2679,7 +2776,8 @@
         group.className = "journey-card-group";
         group.append(createGroupIcon(index === 0, stage.detail));
         const groupLabel = document.createElement("span");
-        groupLabel.textContent = index === 0 ? "Audience" : "Group " + index;
+        const displayGroup = stage.groupLabel || String(index);
+        groupLabel.textContent = index === 0 ? "Audience" : "Group " + displayGroup;
         group.append(groupLabel);
         countText.append(group);
         count.append(countText);
@@ -2724,7 +2822,8 @@
         toggle.setAttribute("aria-expanded", String(isExpanded));
         toggle.setAttribute(
           "aria-label",
-          (isExpanded ? "Collapse" : "Show full") + " filter criterion for Group " + index
+          (isExpanded ? "Collapse" : "Show full") +
+            " filter criterion for Group " + displayGroup
         );
         toggle.title = isExpanded ? "Collapse filter criterion" : "Show full filter criterion";
         const toggleIcon = document.createElement("span");
@@ -2779,7 +2878,8 @@
         count,
         hoverLayer,
         stageOrder,
-        previousCount
+        previousCount,
+        groupLabel
       ) {
         svg.append(createSvgElement(namespace, "rect", {
           class: "journey-add-card",
@@ -2821,7 +2921,7 @@
           () => openMembersDialog(
             stageOrder,
             "added",
-            "Members added by Group " + stageOrder,
+            "Members added by Group " + groupLabel,
             count
           )
         );
@@ -2978,7 +3078,8 @@
         loss,
         hoverLayer,
         stageOrder,
-        previousCount
+        previousCount,
+        groupLabel
       ) {
         svg.append(createSvgElement(namespace, "rect", {
           class: "journey-branch-card",
@@ -3020,7 +3121,7 @@
           () => openMembersDialog(
             stageOrder,
             "removed",
-            "Members excluded by Group " + stageOrder,
+            "Members excluded by Group " + groupLabel,
             loss
           )
         );

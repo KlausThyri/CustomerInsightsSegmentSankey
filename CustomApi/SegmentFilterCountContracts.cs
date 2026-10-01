@@ -89,7 +89,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             string detail,
             long? count,
             string status = "complete",
-            FabricSegmentPresentationHint presentation = null)
+            FabricSegmentPresentationHint presentation = null,
+            string groupLabel = null)
         {
             Order = order;
             Label = label;
@@ -97,6 +98,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             Count = count;
             Status = status;
             Presentation = presentation;
+            GroupLabel = groupLabel;
         }
 
         [DataMember(Name = "order", Order = 1)]
@@ -116,5 +118,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "presentation", Order = 6, EmitDefaultValue = false)]
         public FabricSegmentPresentationHint Presentation { get; private set; }
+
+        [DataMember(Name = "groupLabel", Order = 7, EmitDefaultValue = false)]
+        public string GroupLabel { get; private set; }
     }
 }

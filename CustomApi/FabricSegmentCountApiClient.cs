@@ -53,7 +53,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     var mappingTimer = Stopwatch.StartNew();
                     var result = FabricSegmentCountJsonSerialization
                         .Deserialize<FabricSegmentCountApiResponse>(responseBody);
-                    var mapped = MapResult(result, dependencies);
+                    var mapped = MapResult(result, dependencies, requestPayload);
                     if (mapped.Diagnostics != null &&
                         mapped.Diagnostics.TimingsMs != null)
                     {
@@ -94,7 +94,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         private FilterCountResult MapResult(
             FabricSegmentCountApiResponse result,
-            FabricDependencyStatus dependencies)
+            FabricDependencyStatus dependencies,
+            FabricSegmentCountApiRequest requestPayload)
         {
             if (!result.CatalogReady)
             {
@@ -123,15 +124,25 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     "The Fabric segment evaluation returned an invalid timestamp.");
             }
 
+            var stageMetadata = BuildStageMetadata(requestPayload.Query);
             var stages = result.Stages
                 .OrderBy(stage => stage.Order)
-                .Select(stage => new FilterCountStage(
-                    stage.Order,
-                    stage.Label,
-                    stage.Detail,
-                    stage.Count,
-                    "complete",
-                    stage.Presentation))
+                .Select(stage =>
+                {
+                    var metadata = stage.Order >= 0 &&
+                        stage.Order < stageMetadata.Count
+                            ? stageMetadata[stage.Order]
+                            : null;
+                    return new FilterCountStage(
+                        stage.Order,
+                        stage.Label,
+                        stage.Detail,
+                        stage.Count,
+                        "complete",
+                        stage.Presentation ??
+                            (metadata == null ? null : metadata.Presentation),
+                        metadata == null ? null : metadata.GroupLabel);
+                })
                 .ToList();
             tracing.Trace(
                 "Full Fabric segment API returned {0} stages.",
@@ -143,6 +154,54 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 dependencies,
                 result.QueryToken,
                 result.Diagnostics);
+        }
+
+        private static IList<StageMetadata> BuildStageMetadata(
+            FabricSegmentQueryRequest query)
+        {
+            var result = new List<StageMetadata>
+            {
+                new StageMetadata(null, null)
+            };
+            var firstOperand = query == null ? null : query.FirstOperand;
+            if (firstOperand != null &&
+                string.Equals(
+                    firstOperand.Kind,
+                    "profile",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                result.AddRange((firstOperand.Steps ??
+                    new List<FabricSegmentFilterStepRequest>())
+                    .Select(step => new StageMetadata(
+                        step.Presentation,
+                        step.GroupLabel)));
+            }
+
+            if (query != null)
+            {
+                result.AddRange((query.SetOperations ??
+                    new List<FabricSegmentSetOperationRequest>())
+                    .Select(operation => new StageMetadata(
+                        operation.Presentation,
+                        operation.GroupLabel)));
+            }
+
+            return result;
+        }
+
+        private sealed class StageMetadata
+        {
+            public StageMetadata(
+                FabricSegmentPresentationHint presentation,
+                string groupLabel)
+            {
+                Presentation = presentation;
+                GroupLabel = groupLabel;
+            }
+
+            public FabricSegmentPresentationHint Presentation { get; private set; }
+
+            public string GroupLabel { get; private set; }
         }
 
         private static HttpClient CreateHttpClient()

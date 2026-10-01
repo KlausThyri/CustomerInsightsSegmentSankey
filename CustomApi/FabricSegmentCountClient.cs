@@ -59,7 +59,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         stage.Label,
                         stage.Detail,
                         null,
-                        "pending")));
+                        "pending",
+                        null,
+                        stage.GroupLabel)));
                 result = new FilterCountResult(
                     DateTime.Parse(result.GeneratedAt),
                     result.IsEstimate,

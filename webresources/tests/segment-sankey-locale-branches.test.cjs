@@ -37,7 +37,7 @@ function loadPresentationSplitter() {
 
 function extractFunction(name) {
   const match = new RegExp(
-    `function ${name}\\([^)]*\\) \\{[\\s\\S]*?^      \\}`,
+    `(?:async )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?^      \\}`,
     "m"
   ).exec(sankeyHtml);
   assert.ok(match, `${name} is missing`);
@@ -71,6 +71,72 @@ function loadPresentationMetadataResolver(entityMetadata) {
       extractFunction("getLocalizedLabel"),
       extractFunction("loadPresentationMetadata"),
       "resolve = loadPresentationMetadata;"
+    ].join("\n"),
+    context
+  );
+  return {
+    resolve: context.resolve,
+    calls: () => calls
+  };
+}
+
+function loadConsentPresentationResolver(names) {
+  const calls = [];
+  const context = {
+    Map,
+    Promise,
+    String,
+    console,
+    presentationRecordCache: new Map(),
+    getXrm() {
+      return {
+        WebApi: {
+          async retrieveRecord(entityName, id) {
+            calls.push(`${entityName}|${id}`);
+            return { msdynmkt_name: names[entityName] || "" };
+          }
+        }
+      };
+    }
+  };
+  vm.runInNewContext(
+    [
+      extractFunction("loadPresentationRecord"),
+      extractFunction("loadConsentPresentation"),
+      "resolve = loadConsentPresentation;"
+    ].join("\n"),
+    context
+  );
+  return {
+    resolve: context.resolve,
+    calls: () => calls
+  };
+}
+
+function loadInteractionPresentationResolver(names) {
+  const calls = [];
+  const context = {
+    Map,
+    Promise,
+    String,
+    console,
+    presentationRecordCache: new Map(),
+    getXrm() {
+      return {
+        WebApi: {
+          async retrieveRecord(entityName, id) {
+            calls.push(`${entityName}|${id}`);
+            return { msdynmkt_name: names[entityName] || "" };
+          }
+        }
+      };
+    }
+  };
+  vm.runInNewContext(
+    [
+      extractFunction("loadPresentationRecord"),
+      extractFunction("loadInteractionPresentation"),
+      "resolve = loadInteractionPresentation;"
     ].join("\n"),
     context
   );
@@ -232,6 +298,54 @@ test("interaction details are split into a readable title and labeled facts", ()
   );
 });
 
+test("consent names are loaded asynchronously and cached by Dataverse record", async () => {
+  const records = loadConsentPresentationResolver({
+    msdynmkt_compliancesettings4: "Volksbank",
+    msdynmkt_purpose: "Commercial",
+    msdynmkt_topic: "Finanzieren"
+  });
+  const hint = {
+    complianceProfileId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    purposeId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    topicId: "cccccccc-cccc-cccc-cccc-cccccccccccc"
+  };
+
+  const first = await records.resolve(hint);
+  const second = await records.resolve(hint);
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(first)), {
+    complianceProfile: "Volksbank",
+    purpose: "Commercial",
+    topic: "Finanzieren"
+  });
+  assert.deepStrictEqual(
+    JSON.parse(JSON.stringify(second)),
+    JSON.parse(JSON.stringify(first))
+  );
+  assert.strictEqual(records.calls().length, 3);
+});
+
+test("the filtered email name is loaded asynchronously and cached", async () => {
+  const records = loadInteractionPresentationResolver({
+    msdynmkt_email: "bank99 - Bestätigung Termin"
+  });
+  const hint = {
+    messageTemplateId: "285c0765-7053-f111-bec6-6045bde0d602"
+  };
+
+  const first = await records.resolve(hint);
+  const second = await records.resolve(hint);
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(first)), {
+    email: "bank99 - Bestätigung Termin"
+  });
+  assert.deepStrictEqual(
+    JSON.parse(JSON.stringify(second)),
+    JSON.parse(JSON.stringify(first))
+  );
+  assert.strictEqual(records.calls().length, 1);
+});
+
 test("filter metadata resolves official key-value choice options and is cached", async () => {
   const metadata = loadPresentationMetadataResolver({
     Attributes: {
@@ -269,6 +383,25 @@ test("filter metadata enrichment runs only after the first diagram render", () =
 
   assert.ok(renderPosition >= 0, "the final diagram render is missing");
   assert.ok(enrichmentPosition > renderPosition, "metadata blocks the first render");
+  assert.ok(
+    sankeyHtml.indexOf("loadConsentPresentation(presentation)") < enrichmentPosition,
+    "consent enrichment is not part of the asynchronous enrichment pass"
+  );
+  assert.ok(
+    sankeyHtml.indexOf("loadInteractionPresentation(presentation)") < enrichmentPosition,
+    "email enrichment is not part of the asynchronous enrichment pass"
+  );
+});
+
+test("business group labels override technical stage indexes", () => {
+  assert.match(
+    sankeyHtml,
+    /const displayGroup = stage\.groupLabel \|\| String\(index\);/
+  );
+  assert.match(
+    sankeyHtml,
+    /"Group " \+ displayGroup/
+  );
 });
 
 test("choice labels replace whole numeric values without changing field names", () => {

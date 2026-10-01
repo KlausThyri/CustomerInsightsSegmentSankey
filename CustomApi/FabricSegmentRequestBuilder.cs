@@ -227,7 +227,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                             builtOperand),
                         Presentation = BuildSetOperationPresentation(
                             operation,
-                            builtOperand)
+                            builtOperand),
+                        GroupLabel = (index + 2).ToString(
+                            System.Globalization.CultureInfo.InvariantCulture)
                     });
                 }
                 catch (DeferredStaticMembersException)
@@ -249,7 +251,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                                     ? "Union"
                                     : "Exclusion",
                             pending.Operator.ToString().ToUpperInvariant() +
-                                " " + DescribeSetOperand(pending.Operand)));
+                                " " + DescribeSetOperand(pending.Operand),
+                            (pendingIndex + 2).ToString(
+                                System.Globalization.CultureInfo.InvariantCulture)));
                     }
 
                     break;
@@ -315,8 +319,15 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 BaseLabel = "Active " + profile.EntityName + " records",
                 BaseDetail = "PROFILE(" + profile.EntityName + ")"
             };
-            foreach (var filterStep in profile.FilterSteps)
+            for (var filterStepIndex = 0;
+                filterStepIndex < profile.FilterSteps.Count;
+                filterStepIndex++)
             {
+                var filterStep = profile.FilterSteps[filterStepIndex];
+                var groupLabel = filterStepIndex == 0
+                    ? "1"
+                    : "1." + filterStepIndex.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture);
                 var profileFilter = filterStep as ProfileFilterStep;
                 if (profileFilter != null)
                 {
@@ -331,7 +342,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                             Presentation = BuildPresentationHint(
                                 profile.EntityName,
                                 condition,
-                                true)
+                                true),
+                            GroupLabel = groupLabel
                         });
                     }
 
@@ -381,7 +393,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         Presentation = BuildPresentationHint(
                             relationships[relationships.Count - 1].RelatedEntity,
                             accumulated,
-                            false)
+                            false),
+                        GroupLabel = groupLabel
                     });
                 }
             }
@@ -1046,14 +1059,38 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             FabricSegmentOperandRequest builtOperand)
         {
             var profile = operation.Operand as ProfileOperand;
-            if (profile == null)
+            if (profile != null)
+            {
+                return builtOperand.Steps
+                    .Select(step => step.Presentation)
+                    .FirstOrDefault(presentation => presentation != null);
+            }
+
+            var interaction = operation.Operand as InteractionOperand;
+            if (interaction == null)
             {
                 return null;
             }
 
-            return builtOperand.Steps
-                .Select(step => step.Presentation)
-                .FirstOrDefault(presentation => presentation != null);
+            var predicate = FindPredicate(
+                interaction.Filter,
+                "msdynmkt_messagetemplateid");
+            if (predicate == null)
+            {
+                return null;
+            }
+
+            Guid messageTemplateId;
+            var value = predicate.Values
+                .Select(item => Convert.ToString(item.Value))
+                .FirstOrDefault(item => Guid.TryParse(item, out messageTemplateId));
+            return Guid.TryParse(value, out messageTemplateId)
+                ? new FabricSegmentPresentationHint
+                {
+                    Values = new List<string>(),
+                    MessageTemplateId = messageTemplateId
+                }
+                : null;
         }
 
         private static FabricSegmentPresentationHint BuildPresentationHint(
@@ -1062,9 +1099,24 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             bool fieldAsTitle)
         {
             var predicate = FindFirstPredicate(condition);
-            if (predicate == null ||
-                string.IsNullOrWhiteSpace(entityName) ||
-                IsConsentPseudoField(predicate.Field.Name))
+            if (predicate == null)
+            {
+                return null;
+            }
+
+            if (IsConsentPseudoField(predicate.Field.Name))
+            {
+                var consent = ConsentToken.Parse(predicate);
+                return new FabricSegmentPresentationHint
+                {
+                    Values = new List<string>(),
+                    ComplianceProfileId = consent.ComplianceProfileId,
+                    PurposeId = consent.PurposeId,
+                    TopicId = consent.TopicId
+                };
+            }
+
+            if (string.IsNullOrWhiteSpace(entityName))
             {
                 return null;
             }
@@ -1143,6 +1195,43 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 ? null
                 : or.Children
                     .Select(FindFirstPredicate)
+                    .FirstOrDefault(item => item != null);
+        }
+
+        private static PredicateCondition FindPredicate(
+            ConditionNode condition,
+            string fieldName)
+        {
+            var predicate = condition as PredicateCondition;
+            if (predicate != null)
+            {
+                return string.Equals(
+                    predicate.Field.Name,
+                    fieldName,
+                    StringComparison.OrdinalIgnoreCase)
+                    ? predicate
+                    : null;
+            }
+
+            var not = condition as NotCondition;
+            if (not != null)
+            {
+                return FindPredicate(not.Inner, fieldName);
+            }
+
+            var and = condition as AndCondition;
+            if (and != null)
+            {
+                return and.Children
+                    .Select(child => FindPredicate(child, fieldName))
+                    .FirstOrDefault(item => item != null);
+            }
+
+            var or = condition as OrCondition;
+            return or == null
+                ? null
+                : or.Children
+                    .Select(child => FindPredicate(child, fieldName))
                     .FirstOrDefault(item => item != null);
         }
 
@@ -1290,16 +1379,16 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             string profileEntity)
         {
             var profileLabel = HumanizeLogicalName(profileEntity);
-            var filter = interaction.Filter == null
-                ? string.Empty
-                : interaction.Filter.Describe();
-            if (filter.IndexOf(
-                    "ISNOTNULL(msdynmkt_messagetemplateid)",
-                    StringComparison.OrdinalIgnoreCase) >= 0)
+            if (FindPredicate(
+                    interaction.Filter,
+                    "msdynmkt_messagetemplateid") != null)
             {
                 return profileLabel + " interactions with a message template";
             }
 
+            var filter = interaction.Filter == null
+                ? string.Empty
+                : interaction.Filter.Describe();
             return string.IsNullOrWhiteSpace(filter)
                 ? profileLabel + " interactions"
                 : profileLabel + " interactions matching the configured filters";
@@ -1541,15 +1630,21 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         internal sealed class FabricDeferredStage
         {
-            public FabricDeferredStage(string label, string detail)
+            public FabricDeferredStage(
+                string label,
+                string detail,
+                string groupLabel)
             {
                 Label = label;
                 Detail = detail;
+                GroupLabel = groupLabel;
             }
 
             public string Label { get; private set; }
 
             public string Detail { get; private set; }
+
+            public string GroupLabel { get; private set; }
         }
 
         private sealed class FabricRelationshipResolution

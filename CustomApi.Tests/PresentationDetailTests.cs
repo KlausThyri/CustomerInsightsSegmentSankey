@@ -17,6 +17,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
         public void InteractionSetOperation_UsesReadableEventFrequencyAndPeriod()
         {
             var definitionId = Guid.NewGuid();
+            var messageTemplateId = Guid.NewGuid();
             var service = new StubOrganizationService(
                 new Entity("msdynmkt_segmentdefinition", definitionId)
                 {
@@ -24,7 +25,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
                         "PROFILE(contact) INTERSECT " +
                         "Interaction(msdynmkt_emaildelivered, msdynmkt_entityid)" +
                         ".FILTER((msdynmkt_entityid_LogicalName == 'contact' AND " +
-                        "ISNOTNULL(msdynmkt_messagetemplateid)))" +
+                        "msdynmkt_messagetemplateid == '" +
+                        messageTemplateId.ToString("D") + "'))" +
                         ".Having(Count() >= 1, UTCMONTHS(24))",
                     ["modifiedon"] = DateTime.UtcNow
                 });
@@ -37,6 +39,25 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
                 "Frequency: At least 1 occurrence\n" +
                 "Period: Last 24 months",
                 detail);
+
+            var request = BuildRequest(service, definitionId);
+            var query = request.GetType().GetProperty("Query").GetValue(request);
+            var operation = ((IEnumerable)query
+                .GetType()
+                .GetProperty("SetOperations")
+                .GetValue(query))
+                .Cast<object>()
+                .Single();
+            var presentation = operation
+                .GetType()
+                .GetProperty("Presentation")
+                .GetValue(operation);
+
+            Assert.Equal(
+                messageTemplateId,
+                presentation.GetType()
+                    .GetProperty("MessageTemplateId")
+                    .GetValue(presentation));
         }
 
         [Fact]
@@ -101,6 +122,36 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
                 detail);
             Assert.DoesNotContain("cp:", detail);
             Assert.DoesNotContain("06ba242267cf", detail);
+
+            var request = BuildRequest(service, definitionId);
+            var query = request.GetType().GetProperty("Query").GetValue(request);
+            var operand = query.GetType().GetProperty("FirstOperand").GetValue(query);
+            var step = ((IEnumerable)operand
+                .GetType()
+                .GetProperty("Steps")
+                .GetValue(operand))
+                .Cast<object>()
+                .Single();
+            var presentation = step
+                .GetType()
+                .GetProperty("Presentation")
+                .GetValue(step);
+
+            Assert.Equal(
+                Guid.Parse("ab3f8454-ac47-f111-bec7-6045bde0d602"),
+                presentation.GetType()
+                    .GetProperty("ComplianceProfileId")
+                    .GetValue(presentation));
+            Assert.Equal(
+                Guid.Parse("51cc8a5a-ac47-f111-bec7-6045bde0d602"),
+                presentation.GetType()
+                    .GetProperty("PurposeId")
+                    .GetValue(presentation));
+            Assert.Equal(
+                Guid.Parse("3d270eb3-ac47-f111-bec7-6045bde0d602"),
+                presentation.GetType()
+                    .GetProperty("TopicId")
+                    .GetValue(presentation));
         }
 
         [Fact]
@@ -144,6 +195,79 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
                 "Customer contacts\n" +
                 "Condition: Name does not contain Depot",
                 detail);
+        }
+
+        [Fact]
+        public void ProfileSubgroupsAndSetOperations_UseBusinessGroupNumbers()
+        {
+            var definitionId = Guid.NewGuid();
+            var service = new StubOrganizationService(
+                new Entity("msdynmkt_segmentdefinition", definitionId)
+                {
+                    ["msdynmkt_segmentquery"] =
+                        "PROFILE(contact)" +
+                        ".FILTER(ISNOTNULL(emailaddress1))" +
+                        ".FILTER(klth_risikoprofil IN [700370003, 700370004])" +
+                        " INTERSECT PROFILE(contact)" +
+                        ".FILTER(ISNOTNULL(firstname))",
+                    ["modifiedon"] = DateTime.UtcNow
+                });
+
+            var request = BuildRequest(service, definitionId);
+            var query = request.GetType().GetProperty("Query").GetValue(request);
+            var operand = query.GetType().GetProperty("FirstOperand").GetValue(query);
+            var steps = ((IEnumerable)operand
+                .GetType()
+                .GetProperty("Steps")
+                .GetValue(operand))
+                .Cast<object>()
+                .ToList();
+            var operations = ((IEnumerable)query
+                .GetType()
+                .GetProperty("SetOperations")
+                .GetValue(query))
+                .Cast<object>()
+                .ToList();
+
+            Assert.Equal(
+                new[] { "1", "1.1" },
+                steps.Select(step => (string)step
+                    .GetType()
+                    .GetProperty("GroupLabel")
+                    .GetValue(step)));
+            Assert.Equal(
+                "2",
+                operations[0]
+                    .GetType()
+                    .GetProperty("GroupLabel")
+                    .GetValue(operations[0]));
+
+            var assembly = typeof(
+                CustomerInsightsSegmentSankey.CustomApi.GetSegmentFilterCountsPlugin)
+                .Assembly;
+            var clientType = assembly.GetType(
+                "CustomerInsightsSegmentSankey.CustomApi.FabricSegmentCountApiClient",
+                true);
+            var metadata = ((IEnumerable)clientType
+                .GetMethod(
+                    "BuildStageMetadata",
+                    BindingFlags.Static | BindingFlags.NonPublic)
+                .Invoke(null, new[] { query }))
+                .Cast<object>()
+                .ToList();
+
+            Assert.Equal(4, metadata.Count);
+            Assert.Null(metadata[0].GetType().GetProperty("GroupLabel").GetValue(metadata[0]));
+            Assert.Equal(
+                new[] { "1", "1.1", "2" },
+                metadata.Skip(1).Select(item => (string)item
+                    .GetType()
+                    .GetProperty("GroupLabel")
+                    .GetValue(item)));
+            Assert.NotNull(metadata[2]
+                .GetType()
+                .GetProperty("Presentation")
+                .GetValue(metadata[2]));
         }
 
         private static string BuildFirstSetOperationDetail(

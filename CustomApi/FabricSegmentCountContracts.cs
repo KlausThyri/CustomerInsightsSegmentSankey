@@ -49,6 +49,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "presentation", Order = 5, EmitDefaultValue = false)]
         public FabricSegmentPresentationHint Presentation { get; set; }
+
+        [DataMember(Name = "groupLabel", Order = 6, EmitDefaultValue = false)]
+        public string GroupLabel { get; set; }
     }
 
     [DataContract]
@@ -126,6 +129,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "presentation", Order = 10, EmitDefaultValue = false)]
         public FabricSegmentPresentationHint Presentation { get; set; }
+
+        [DataMember(Name = "groupLabel", Order = 11, EmitDefaultValue = false)]
+        public string GroupLabel { get; set; }
     }
 
     [DataContract]
@@ -142,6 +148,18 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "fieldAsTitle", Order = 4)]
         public bool FieldAsTitle { get; set; }
+
+        [DataMember(Name = "complianceProfileId", Order = 5, EmitDefaultValue = false)]
+        public Guid? ComplianceProfileId { get; set; }
+
+        [DataMember(Name = "purposeId", Order = 6, EmitDefaultValue = false)]
+        public Guid? PurposeId { get; set; }
+
+        [DataMember(Name = "topicId", Order = 7, EmitDefaultValue = false)]
+        public Guid? TopicId { get; set; }
+
+        [DataMember(Name = "messageTemplateId", Order = 8, EmitDefaultValue = false)]
+        public Guid? MessageTemplateId { get; set; }
     }
 
     [DataContract]
