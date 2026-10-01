@@ -749,7 +749,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.95">v1.1.0.95</span>
+          <span class="app-version" aria-label="Version 1.1.0.96">v1.1.0.96</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -949,33 +949,6 @@
           }
         }
         return "en-US";
-      }
-
-      function getSegmentLauncher() {
-        const candidates = [window.parent, window.top];
-        try {
-          for (let index = 0; index < window.top.frames.length; index++) {
-            candidates.push(window.top.frames[index]);
-          }
-        } catch (error) {
-          if (error?.name !== "SecurityError") {
-            console.warn("Segment preview: Unable to inspect host frames.", error);
-          }
-        }
-
-        for (const candidate of candidates) {
-          try {
-            const launcher = candidate?.CISegmentSankey;
-            if (typeof launcher?.saveCurrentSegment === "function") {
-              return launcher;
-            }
-          } catch (error) {
-            if (error?.name !== "SecurityError") {
-              console.warn("Segment preview: Unable to inspect a host frame.", error);
-            }
-          }
-        }
-        return null;
       }
 
       function pruneRequestCache(cache) {
@@ -2999,31 +2972,6 @@
           const identityStartedAt = performance.now();
           await updateSegmentIdentity(segmentId);
           segmentIdentityMs = performance.now() - identityStartedAt;
-          const segmentLauncher = getSegmentLauncher();
-          if (segmentLauncher) {
-            const saveStartedAt = performance.now();
-            try {
-              const saveResult =
-                await segmentLauncher.saveCurrentSegment(segmentId);
-              segmentSaved = Boolean(saveResult?.saved);
-              segmentSaveOperationMs = finiteMetric(saveResult?.durationMs);
-              segmentSaveStatus =
-                saveResult?.readOnly === true
-                  ? "skipped-read-only"
-                  : saveResult?.saved === true
-                  ? "saved"
-                  : saveResult?.saved === false
-                  ? "skipped-clean"
-                  : "unavailable";
-            } catch (error) {
-              segmentSaveStatus = "failed";
-              throw createTransientError(
-                error?.message || "The active segment could not be saved yet."
-              );
-            } finally {
-              segmentSaveMs = performance.now() - saveStartedAt;
-            }
-          }
           const actionStartedAt = performance.now();
           let result;
           let requestSource = "network";

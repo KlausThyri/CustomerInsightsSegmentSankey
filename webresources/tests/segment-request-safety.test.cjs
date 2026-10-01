@@ -49,26 +49,12 @@ test("segment diagnostics preserve the Dataverse phase timing breakdown", () => 
   assert.match(countView, /requestBuildCache: safeDiagnosticText\([\s\S]{0,80}runtime\.requestBuildCache/);
 });
 
-test("segment refresh reuses known identity and records whether a draft was saved", () => {
+test("segment refresh reuses known identity after the launcher prepares the form", () => {
   assert.match(countView, /const contextMatchesSegment =[\s\S]{0,180}state\.context\.segmentName/);
   assert.match(countView, /if \(!contextMatchesSegment && xrm\?\.WebApi\?\.retrieveRecord\)/);
   assert.match(countView, /const identityStartedAt = performance\.now\(\)/);
-  assert.match(countView, /const saveStartedAt = performance\.now\(\)/);
-  assert.match(countView, /segmentSaved = Boolean\(saveResult\?\.saved\)/);
-  assert.match(countView, /segmentSaveOperationMs = finiteMetric\(saveResult\?\.durationMs\)/);
-  assert.match(countView, /"skipped-clean"/);
-});
-
-test("segment refresh resolves the launcher from Dynamics host frames", () => {
-  assert.match(countView, /function getSegmentLauncher\(\)/);
-  assert.match(countView, /window\.top\.frames\.length/);
-  assert.match(countView, /typeof launcher\?\.saveCurrentSegment === "function"/);
-  assert.match(countView, /const segmentLauncher = getSegmentLauncher\(\)/);
-  assert.match(countView, /await segmentLauncher\.saveCurrentSegment\(segmentId\)/);
-  assert.doesNotMatch(
-    countView,
-    /await window\.parent\.CISegmentSankey\.saveCurrentSegment\(\)/
-  );
+  assert.doesNotMatch(countView, /function getSegmentLauncher\(\)/);
+  assert.doesNotMatch(countView, /saveCurrentSegment\(segmentId\)/);
 });
 
 test("segment counts render progressive preview and final phases in parallel", () => {
