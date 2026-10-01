@@ -749,7 +749,7 @@
       <div class="header-copy">
         <div class="title-row">
           <h1 id="segment-name">Segment</h1>
-          <span class="app-version" aria-label="Version 1.1.0.96">v1.1.0.96</span>
+          <span class="app-version" aria-label="Version 1.1.0.97">v1.1.0.97</span>
         </div>
         <div class="metadata">
           <span id="updated-at">Not refreshed yet</span>
@@ -891,6 +891,7 @@
         chartHeightReleaseHandle: null
       };
       const countRequestCache = new Map();
+      const presentationMetadataCache = new Map();
 
       window.addEventListener("pagehide", () => {
         state.requestController?.abort();
@@ -1571,7 +1572,18 @@
           count: stage.count === null || stage.status === "pending"
             ? null
             : Number(stage.count),
-          status: stage.status === "pending" ? "pending" : "complete"
+          status: stage.status === "pending" ? "pending" : "complete",
+          presentation:
+            stage.presentation && typeof stage.presentation === "object"
+              ? {
+                  entity: stage.presentation.entity || "",
+                  field: stage.presentation.field || "",
+                  values: Array.isArray(stage.presentation.values)
+                    ? stage.presentation.values.map(value => String(value))
+                    : [],
+                  fieldAsTitle: Boolean(stage.presentation.fieldAsTitle)
+                }
+              : null
         }));
         if (stages.some(stage =>
           stage.status === "complete" &&
@@ -1591,6 +1603,206 @@
           isComplete: result.isComplete !== false,
           stages: stages
         };
+      }
+
+      function getCollectionItem(collection, logicalName) {
+        if (!collection) {
+          return null;
+        }
+        if (typeof collection.get === "function") {
+          return collection.get(logicalName) || null;
+        }
+        if (collection[logicalName]) {
+          return collection[logicalName];
+        }
+        const items = Array.isArray(collection)
+          ? collection
+          : typeof collection.getAll === "function"
+            ? collection.getAll()
+            : typeof collection === "object"
+              ? Object.values(collection)
+              : [];
+        return items.find(item =>
+          String(item.LogicalName || item.logicalName || "")
+            .toLowerCase() === logicalName.toLowerCase()
+        ) || null;
+      }
+
+      function getLocalizedLabel(label) {
+        if (!label) {
+          return "";
+        }
+        if (typeof label === "string") {
+          return label;
+        }
+        return label.UserLocalizedLabel?.Label ||
+          label.userLocalizedLabel?.label ||
+          label.LocalizedLabels?.[0]?.Label ||
+          label.localizedLabels?.[0]?.label ||
+          "";
+      }
+
+      function loadPresentationMetadata(presentation) {
+        const key =
+          presentation.entity.toLowerCase() + "|" +
+          presentation.field.toLowerCase();
+        if (presentationMetadataCache.has(key)) {
+          return presentationMetadataCache.get(key);
+        }
+
+        const promise = Promise.resolve().then(async () => {
+          const xrm = getXrm();
+          if (!xrm?.Utility || typeof xrm.Utility.getEntityMetadata !== "function") {
+            return null;
+          }
+          const metadata = await xrm.Utility.getEntityMetadata(
+            presentation.entity,
+            [presentation.field]
+          );
+          const attribute = getCollectionItem(
+            metadata?.Attributes || metadata?.attributes,
+            presentation.field
+          );
+          if (!attribute) {
+            return null;
+          }
+
+          const optionSet = attribute.OptionSet || attribute.optionSet || {};
+          const options = optionSet.Options ||
+            optionSet.options ||
+            attribute.Options ||
+            attribute.options ||
+            optionSet;
+          const optionLabels = new Map();
+          if (Array.isArray(options)) {
+            options.forEach(option => {
+              const value = option.Value ?? option.value;
+              const label = getLocalizedLabel(option.Label || option.label);
+              if (value !== undefined && value !== null && label) {
+                optionLabels.set(String(value), label);
+              }
+            });
+          } else {
+            Object.entries(options).forEach(([value, option]) => {
+              const label = getLocalizedLabel(
+                option?.Label || option?.label || option
+              );
+              if (label) {
+                optionLabels.set(String(value), label);
+              }
+            });
+          }
+          return {
+            fieldLabel:
+              getLocalizedLabel(attribute.DisplayName || attribute.displayName) ||
+              "",
+            optionLabels: optionLabels
+          };
+        }).catch(error => {
+          console.warn(
+            "Segment preview: Filter metadata enrichment failed.",
+            error
+          );
+          return null;
+        });
+        presentationMetadataCache.set(key, promise);
+        return promise;
+      }
+
+      function replaceFirst(text, search, replacement) {
+        const position = text.indexOf(search);
+        return position < 0
+          ? text
+          : text.slice(0, position) + replacement +
+            text.slice(position + search.length);
+      }
+
+      function replaceChoiceValue(text, rawValue, optionLabel) {
+        if (!/^-?\d+$/.test(rawValue)) {
+          return text;
+        }
+        const pattern = new RegExp(
+          "(^|[^0-9])" + rawValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+          "(?=$|[^0-9])",
+          "g"
+        );
+        const matches = Array.from(text.matchAll(pattern));
+        if (!matches.length) {
+          return text;
+        }
+        const match = matches[matches.length - 1];
+        const prefix = match[1] || "";
+        const valuePosition = match.index + prefix.length;
+        return text.slice(0, valuePosition) + optionLabel +
+          text.slice(valuePosition + rawValue.length);
+      }
+
+      async function enrichStagePresentations(result, requestGeneration) {
+        const enrichments = await Promise.all(result.stages.map(async stage => {
+          const presentation = stage.presentation;
+          if (!presentation?.entity || !presentation?.field) {
+            return null;
+          }
+          const metadata = await loadPresentationMetadata(presentation);
+          if (!metadata) {
+            return null;
+          }
+
+          const parsed = splitPresentationDetail(stage.detail);
+          if (!parsed) {
+            return null;
+          }
+          const fallbackField = humanizeLogicalName(presentation.field);
+          let title = parsed.title;
+          if (presentation.fieldAsTitle && metadata.fieldLabel) {
+            title = metadata.fieldLabel;
+          }
+          const items = parsed.items.map(item => {
+            let value = metadata.fieldLabel
+              ? replaceFirst(item.value, fallbackField, metadata.fieldLabel)
+              : item.value;
+            presentation.values.forEach(rawValue => {
+              const optionLabel = metadata.optionLabels.get(rawValue);
+              if (optionLabel) {
+                value = replaceChoiceValue(value, rawValue, optionLabel);
+              }
+            });
+            return item.label
+              ? item.label + ": " + value
+              : value;
+          });
+          const detail = [title].concat(items).join("\n");
+          return detail === stage.detail ? null : { stage: stage, detail: detail };
+        }));
+
+        if (requestGeneration !== state.requestGeneration) {
+          return;
+        }
+        const changed = enrichments.filter(Boolean);
+        if (!changed.length) {
+          return;
+        }
+        changed.forEach(item => {
+          item.stage.detail = item.detail;
+        });
+        render(result, null, true);
+      }
+
+      function humanizeLogicalName(logicalName) {
+        const value = String(logicalName || "").trim();
+        if (!value) {
+          return "";
+        }
+        if (value.toLowerCase() === "emailaddress1") {
+          return "Email address 1";
+        }
+        const separator = value.indexOf("_");
+        const withoutPrefix =
+          separator >= 0 && separator < value.length - 1
+            ? value.slice(separator + 1)
+            : value;
+        const spaced = withoutPrefix.replaceAll("_", " ");
+        return spaced.charAt(0).toUpperCase() + spaced.slice(1);
       }
 
       function extractEmbeddedDiagnostics(message) {
@@ -1731,11 +1943,13 @@
         if (preserveChartHeight) {
           lockChartHeight(chart);
         }
-        document.getElementById("load-duration").textContent =
-          "Load time " + new Intl.NumberFormat(USER_LOCALE, {
-            minimumFractionDigits: 1,
-            maximumFractionDigits: 1
-          }).format(elapsedMilliseconds / 1000) + " s";
+        if (Number.isFinite(elapsedMilliseconds)) {
+          document.getElementById("load-duration").textContent =
+            "Load time " + new Intl.NumberFormat(USER_LOCALE, {
+              minimumFractionDigits: 1,
+              maximumFractionDigits: 1
+            }).format(elapsedMilliseconds / 1000) + " s";
+        }
         if (!stages.length) {
           document.getElementById("summary").hidden = true;
           chart.innerHTML =
@@ -3029,6 +3243,12 @@
           }
           const renderingStartedAt = performance.now();
           render(result, performance.now() - startedAt);
+          enrichStagePresentations(result, requestGeneration).catch(error => {
+            console.warn(
+              "Segment preview: Asynchronous filter enrichment failed.",
+              error
+            );
+          });
           scheduleDiagnostics({
             status: "succeeded",
             segmentId: segmentId,

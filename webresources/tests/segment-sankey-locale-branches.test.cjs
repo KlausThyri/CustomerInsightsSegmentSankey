@@ -35,6 +35,51 @@ function loadPresentationSplitter() {
   };
 }
 
+function extractFunction(name) {
+  const match = new RegExp(
+    `function ${name}\\([^)]*\\) \\{[\\s\\S]*?^      \\}`,
+    "m"
+  ).exec(sankeyHtml);
+  assert.ok(match, `${name} is missing`);
+  return match[0];
+}
+
+function loadPresentationMetadataResolver(entityMetadata) {
+  let calls = 0;
+  const context = {
+    Map,
+    Promise,
+    Array,
+    Object,
+    String,
+    console,
+    presentationMetadataCache: new Map(),
+    getXrm() {
+      return {
+        Utility: {
+          async getEntityMetadata() {
+            calls += 1;
+            return entityMetadata;
+          }
+        }
+      };
+    }
+  };
+  vm.runInNewContext(
+    [
+      extractFunction("getCollectionItem"),
+      extractFunction("getLocalizedLabel"),
+      extractFunction("loadPresentationMetadata"),
+      "resolve = loadPresentationMetadata;"
+    ].join("\n"),
+    context
+  );
+  return {
+    resolve: context.resolve,
+    calls: () => calls
+  };
+}
+
 function loadSankeyLocaleResolver(globals) {
   const mapMatch = /const LANGUAGE_ID_LOCALES = \{[\s\S]*?^      \};/m.exec(sankeyHtml);
   assert.ok(mapMatch, "LANGUAGE_ID_LOCALES is missing");
@@ -184,6 +229,62 @@ test("interaction details are split into a readable title and labeled facts", ()
         { label: "Period", value: "Last 24 months" }
       ]
     }
+  );
+});
+
+test("filter metadata resolves official key-value choice options and is cached", async () => {
+  const metadata = loadPresentationMetadataResolver({
+    Attributes: {
+      klth_risikoprofil: {
+        DisplayName: "Risikoprofil",
+        OptionSet: {
+          700370003: "Hoch",
+          700370004: "Sehr hoch"
+        }
+      }
+    }
+  });
+  const hint = {
+    entity: "contact",
+    field: "klth_risikoprofil"
+  };
+
+  const first = await metadata.resolve(hint);
+  const second = await metadata.resolve(hint);
+
+  assert.strictEqual(first.fieldLabel, "Risikoprofil");
+  assert.strictEqual(first.optionLabels.get("700370003"), "Hoch");
+  assert.strictEqual(first.optionLabels.get("700370004"), "Sehr hoch");
+  assert.strictEqual(second, first);
+  assert.strictEqual(metadata.calls(), 1);
+});
+
+test("filter metadata enrichment runs only after the first diagram render", () => {
+  const renderPosition = sankeyHtml.indexOf(
+    "render(result, performance.now() - startedAt);"
+  );
+  const enrichmentPosition = sankeyHtml.lastIndexOf(
+    "enrichStagePresentations(result, requestGeneration)"
+  );
+
+  assert.ok(renderPosition >= 0, "the final diagram render is missing");
+  assert.ok(enrichmentPosition > renderPosition, "metadata blocks the first render");
+});
+
+test("choice labels replace whole numeric values without changing field names", () => {
+  const context = {};
+  vm.runInNewContext(
+    `${extractFunction("replaceChoiceValue")}\nreplace = replaceChoiceValue;`,
+    context
+  );
+
+  assert.strictEqual(
+    context.replace(
+      "Email address 1 is one of 1, 10",
+      "1",
+      "Allowed"
+    ),
+    "Email address 1 is one of Allowed, 10"
   );
 });
 

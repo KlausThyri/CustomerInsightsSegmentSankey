@@ -46,6 +46,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "detail", Order = 4)]
         public string Detail { get; set; }
+
+        [DataMember(Name = "presentation", Order = 5, EmitDefaultValue = false)]
+        public FabricSegmentPresentationHint Presentation { get; set; }
     }
 
     [DataContract]
@@ -120,6 +123,25 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "relationships", Order = 9, EmitDefaultValue = false)]
         public List<FabricRelationshipHopRequest> Relationships { get; set; }
+
+        [DataMember(Name = "presentation", Order = 10, EmitDefaultValue = false)]
+        public FabricSegmentPresentationHint Presentation { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class FabricSegmentPresentationHint
+    {
+        [DataMember(Name = "entity", Order = 1)]
+        public string Entity { get; set; }
+
+        [DataMember(Name = "field", Order = 2)]
+        public string Field { get; set; }
+
+        [DataMember(Name = "values", Order = 3)]
+        public List<string> Values { get; set; }
+
+        [DataMember(Name = "fieldAsTitle", Order = 4)]
+        public bool FieldAsTitle { get; set; }
     }
 
     [DataContract]
@@ -248,6 +270,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "count", Order = 4)]
         public long Count { get; set; }
+
+        [DataMember(Name = "presentation", Order = 5, EmitDefaultValue = false)]
+        public FabricSegmentPresentationHint Presentation { get; set; }
     }
 
     [DataContract]

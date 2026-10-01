@@ -60,7 +60,14 @@ public sealed class SegmentCountSqlCompilerTests
                     Kind = "profile",
                     Label = "Country filter",
                     Detail = "contact.address1_country == 'DE'",
-                    Condition = Predicate("contact.address1_country", "==", Json("\"DE\""))
+                    Condition = Predicate("contact.address1_country", "==", Json("\"DE\"")),
+                    Presentation = new SegmentPresentationHint
+                    {
+                        Entity = "contact",
+                        Field = "address1_country",
+                        Values = ["DE"],
+                        FieldAsTitle = true
+                    }
                 }
             ]
         });
@@ -81,6 +88,10 @@ public sealed class SegmentCountSqlCompilerTests
             result.Parameters.Select(parameter => parameter.Value).ToArray());
         Assert.Equal(2, result.Stages.Count);
         Assert.Equal("Country filter", result.Stages[1].Label);
+        Assert.Equal("contact", result.Stages[1].Presentation?.Entity);
+        Assert.Equal("address1_country", result.Stages[1].Presentation?.Field);
+        Assert.Equal(["DE"], result.Stages[1].Presentation?.Values);
+        Assert.True(result.Stages[1].Presentation?.FieldAsTitle == true);
         Assert.Collection(
             result.SourceTables,
             source =>

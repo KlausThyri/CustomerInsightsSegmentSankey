@@ -88,13 +88,15 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             string label,
             string detail,
             long? count,
-            string status = "complete")
+            string status = "complete",
+            FabricSegmentPresentationHint presentation = null)
         {
             Order = order;
             Label = label;
             Detail = detail;
             Count = count;
             Status = status;
+            Presentation = presentation;
         }
 
         [DataMember(Name = "order", Order = 1)]
@@ -111,5 +113,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "status", Order = 5)]
         public string Status { get; private set; }
+
+        [DataMember(Name = "presentation", Order = 6, EmitDefaultValue = false)]
+        public FabricSegmentPresentationHint Presentation { get; private set; }
     }
 }

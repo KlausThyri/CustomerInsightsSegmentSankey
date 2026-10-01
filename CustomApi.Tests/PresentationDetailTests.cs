@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Microsoft.Xrm.Sdk;
+using Microsoft.Xrm.Sdk.Messages;
+using Microsoft.Xrm.Sdk.Metadata;
 using Microsoft.Xrm.Sdk.Query;
 using Xunit;
 
@@ -72,6 +74,78 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
                 detail);
         }
 
+        [Fact]
+        public void ConsentProfileFilter_HidesTechnicalTokenIdentifiers()
+        {
+            var definitionId = Guid.NewGuid();
+            var service = new StubOrganizationService(
+                new Entity("msdynmkt_segmentdefinition", definitionId)
+                {
+                    ["msdynmkt_segmentquery"] =
+                        "PROFILE(contact).FILTER(" +
+                        "compliance_profile_06ba242267cf463d98c4e9aace82b774 ==" +
+                        "'cp:ab3f8454-ac47-f111-bec7-6045bde0d602;" +
+                        "p:51cc8a5a-ac47-f111-bec7-6045bde0d602;" +
+                        "ch:Email;ea:emailaddress1;" +
+                        "t:3d270eb3-ac47-f111-bec7-6045bde0d602;" +
+                        "v:OptedIn')",
+                    ["modifiedon"] = DateTime.UtcNow
+                });
+
+            var detail = BuildFirstProfileStepDetail(service, definitionId);
+
+            Assert.Equal(
+                "Email consent\n" +
+                "Status: Opted in\n" +
+                "Contact point: Email address 1",
+                detail);
+            Assert.DoesNotContain("cp:", detail);
+            Assert.DoesNotContain("06ba242267cf", detail);
+        }
+
+        [Fact]
+        public void ProfileIntersection_UsesReadableFieldAndOperator()
+        {
+            var definitionId = Guid.NewGuid();
+            var service = new StubOrganizationService(
+                new Entity("msdynmkt_segmentdefinition", definitionId)
+                {
+                    ["msdynmkt_segmentquery"] =
+                        "PROFILE(contact) INTERSECT PROFILE(contact)" +
+                        ".FILTER(klth_risikoprofil IN [700370003, 700370004])",
+                    ["modifiedon"] = DateTime.UtcNow
+                });
+
+            var detail = BuildFirstSetOperationDetail(service, definitionId);
+
+            Assert.Equal(
+                "Risikoprofil\n" +
+                "Condition: Risikoprofil is one of 700370003, 700370004",
+                detail);
+        }
+
+        [Fact]
+        public void RelationshipExclusion_UsesReadableRelationshipAndNegation()
+        {
+            var definitionId = Guid.NewGuid();
+            var service = new StubOrganizationService(
+                new Entity("msdynmkt_segmentdefinition", definitionId)
+                {
+                    ["msdynmkt_segmentquery"] =
+                        "PROFILE(contact) EXCEPT PROFILE(contact)" +
+                        ".RELATE(order_customer_contacts, salesorder_1)" +
+                        ".FILTER(NOT(salesorder_1.name CONTAINS 'Depot'))",
+                    ["modifiedon"] = DateTime.UtcNow
+                });
+
+            var detail = BuildFirstSetOperationDetail(service, definitionId);
+
+            Assert.Equal(
+                "Customer contacts\n" +
+                "Condition: Name does not contain Depot",
+                detail);
+        }
+
         private static string BuildFirstSetOperationDetail(
             IOrganizationService service,
             Guid definitionId)
@@ -104,6 +178,48 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
                 .GetType()
                 .GetProperty("Detail")
                 .GetValue(operations[0]);
+        }
+
+        private static string BuildFirstProfileStepDetail(
+            IOrganizationService service,
+            Guid definitionId)
+        {
+            var request = BuildRequest(service, definitionId);
+            var query = request.GetType().GetProperty("Query").GetValue(request);
+            var operand = query.GetType().GetProperty("FirstOperand").GetValue(query);
+            var steps = ((IEnumerable)operand
+                .GetType()
+                .GetProperty("Steps")
+                .GetValue(operand))
+                .Cast<object>()
+                .ToList();
+
+            Assert.Single(steps);
+            return (string)steps[0]
+                .GetType()
+                .GetProperty("Detail")
+                .GetValue(steps[0]);
+        }
+
+        private static object BuildRequest(
+            IOrganizationService service,
+            Guid definitionId)
+        {
+            var assembly = typeof(
+                CustomerInsightsSegmentSankey.CustomApi.GetSegmentFilterCountsPlugin)
+                .Assembly;
+            var builderType = assembly.GetType(
+                "CustomerInsightsSegmentSankey.CustomApi.FabricSegmentRequestBuilder",
+                true);
+            var builder = Activator.CreateInstance(
+                builderType,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                null,
+                new object[] { service, Guid.NewGuid() },
+                null);
+            return builderType.GetMethod("Build").Invoke(
+                builder,
+                new object[] { definitionId, false, false });
         }
 
         private sealed class StubOrganizationService : IOrganizationService
@@ -141,6 +257,29 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
             public void Delete(string entityName, Guid id) { throw new NotSupportedException(); }
             public OrganizationResponse Execute(OrganizationRequest request)
             {
+                var relationshipRequest = request as RetrieveRelationshipRequest;
+                if (relationshipRequest != null &&
+                    relationshipRequest.Name == "order_customer_contacts")
+                {
+                    return new RetrieveRelationshipResponse
+                    {
+                        Results = new ParameterCollection
+                        {
+                            {
+                                "RelationshipMetadata",
+                                new OneToManyRelationshipMetadata
+                                {
+                                    SchemaName = relationshipRequest.Name,
+                                    ReferencedEntity = "contact",
+                                    ReferencedAttribute = "contactid",
+                                    ReferencingEntity = "salesorder",
+                                    ReferencingAttribute = "customerid"
+                                }
+                            }
+                        }
+                    };
+                }
+
                 throw new NotSupportedException();
             }
             public void Associate(

@@ -91,7 +91,8 @@ internal sealed class FabricSegmentCountService(
                     Order = stage.Order,
                     Label = stage.Label,
                     Detail = stage.Detail,
-                    Count = counts[stage.Order]
+                    Count = counts[stage.Order],
+                    Presentation = stage.Presentation
                 })
                 .ToList(),
             SourceTables = compiled.SourceTables.ToList(),

@@ -38,6 +38,8 @@ public sealed class SegmentSetOperation
     public string Label { get; set; } = string.Empty;
 
     public string Detail { get; set; } = string.Empty;
+
+    public SegmentPresentationHint? Presentation { get; set; }
 }
 
 public sealed class SegmentOperand
@@ -84,6 +86,19 @@ public sealed class SegmentFilterStep
     public bool IsOptional { get; set; }
 
     public List<SegmentRelationshipHop> Relationships { get; set; } = [];
+
+    public SegmentPresentationHint? Presentation { get; set; }
+}
+
+public sealed class SegmentPresentationHint
+{
+    public string Entity { get; set; } = string.Empty;
+
+    public string Field { get; set; } = string.Empty;
+
+    public List<string> Values { get; set; } = [];
+
+    public bool FieldAsTitle { get; set; }
 }
 
 public sealed class SegmentRelationshipHop
@@ -270,6 +285,8 @@ public sealed class SegmentCountStage
     public string Detail { get; set; } = string.Empty;
 
     public long Count { get; set; }
+
+    public SegmentPresentationHint? Presentation { get; set; }
 }
 
 public sealed class SegmentSourceTable

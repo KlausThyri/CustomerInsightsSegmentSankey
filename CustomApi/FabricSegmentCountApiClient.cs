@@ -129,7 +129,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     stage.Order,
                     stage.Label,
                     stage.Detail,
-                    stage.Count))
+                    stage.Count,
+                    "complete",
+                    stage.Presentation))
                 .ToList();
             tracing.Trace(
                 "Full Fabric segment API returned {0} stages.",

@@ -108,7 +108,12 @@ internal sealed class SegmentCountSqlCompiler
                 current = new OperandResult(cte, current.ProfileEntity);
                 if (exposeStages)
                 {
-                    AddStage(cte, operation.Label, operation.Detail, current.ProfileEntity);
+                    AddStage(
+                        cte,
+                        operation.Label,
+                        operation.Detail,
+                        current.ProfileEntity,
+                        operation.Presentation);
                 }
             }
 
@@ -450,7 +455,12 @@ internal sealed class SegmentCountSqlCompiler
                 current = next;
                 if (exposeStages)
                 {
-                    AddStage(current, step.Label, step.Detail, operand.ProfileEntity);
+                    AddStage(
+                        current,
+                        step.Label,
+                        step.Detail,
+                        operand.ProfileEntity,
+                        step.Presentation);
                 }
             }
 
@@ -1146,7 +1156,8 @@ internal sealed class SegmentCountSqlCompiler
             string cte,
             string label,
             string detail,
-            string profileEntity)
+            string profileEntity,
+            SegmentPresentationHint? presentation = null)
         {
             if (string.IsNullOrWhiteSpace(label) || string.IsNullOrWhiteSpace(detail))
             {
@@ -1179,7 +1190,12 @@ internal sealed class SegmentCountSqlCompiler
                 stageCte = scoped;
             }
 
-            stages.Add(new CompiledSegmentStage(stages.Count, stageCte, label, detail));
+            stages.Add(new CompiledSegmentStage(
+                stages.Count,
+                stageCte,
+                label,
+                detail,
+                presentation));
         }
 
         private void AddSource(EventTableDescriptor table)
@@ -1364,7 +1380,8 @@ internal sealed record CompiledSegmentStage(
     int Order,
     string Cte,
     string Label,
-    string Detail);
+    string Detail,
+    SegmentPresentationHint? Presentation);
 
 internal sealed record CompiledSegmentMemberQuery(
     string Sql,

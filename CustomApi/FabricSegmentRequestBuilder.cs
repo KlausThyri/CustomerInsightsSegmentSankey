@@ -224,6 +224,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                                 : "Exclusion",
                         Detail = BuildSetOperationDetail(
                             operation,
+                            builtOperand),
+                        Presentation = BuildSetOperationPresentation(
+                            operation,
                             builtOperand)
                     });
                 }
@@ -323,8 +326,12 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         {
                             Kind = "profile",
                             Label = "Profile filter",
-                            Detail = condition.Describe(),
-                            Condition = ConvertCondition(condition, true)
+                            Detail = DescribeCondition(condition, true),
+                            Condition = ConvertCondition(condition, true),
+                            Presentation = BuildPresentationHint(
+                                profile.EntityName,
+                                condition,
+                                true)
                         });
                     }
 
@@ -355,7 +362,10 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     {
                         Kind = "relationship",
                         Label = "Relationship filter " + relationship.RelationshipSchema,
-                        Detail = accumulated.Describe(),
+                        Detail = HumanizeLogicalName(
+                                relationship.RelationshipSchema) +
+                            "\nCondition: " +
+                            DescribeConditionExpression(accumulated, false),
                         Condition = ConvertCondition(accumulated, false),
                         RelatedEntity = supportsLegacyRelationship
                             ? firstRelationship.RelatedEntity
@@ -367,7 +377,11 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                             ? firstRelationship.RelatedAttribute
                             : null,
                         IsOptional = relationship.IsOptional,
-                        Relationships = relationships
+                        Relationships = relationships,
+                        Presentation = BuildPresentationHint(
+                            relationships[relationships.Count - 1].RelatedEntity,
+                            accumulated,
+                            false)
                     });
                 }
             }
@@ -992,8 +1006,256 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 return builtOperand.BaseDetail;
             }
 
+            var profile = operation.Operand as ProfileOperand;
+            if (profile != null)
+            {
+                var details = new List<string>();
+                foreach (var step in profile.FilterSteps)
+                {
+                    var profileFilter = step as ProfileFilterStep;
+                    if (profileFilter != null)
+                    {
+                        details.Add(DescribeCondition(profileFilter.Condition, true));
+                        continue;
+                    }
+
+                    var relationship = step as RelationshipFilterStep;
+                    if (relationship != null)
+                    {
+                        details.Add(
+                            HumanizeLogicalName(relationship.RelationshipSchema) +
+                            "\nCondition: " +
+                            DescribeConditionExpression(
+                                relationship.Condition,
+                                false));
+                    }
+                }
+
+                if (details.Count > 0)
+                {
+                    return string.Join("\n", details.ToArray());
+                }
+            }
+
             return operation.Operator.ToString().ToUpperInvariant() +
                 " " + DescribeSetOperand(operation.Operand);
+        }
+
+        private static FabricSegmentPresentationHint BuildSetOperationPresentation(
+            SetOperation operation,
+            FabricSegmentOperandRequest builtOperand)
+        {
+            var profile = operation.Operand as ProfileOperand;
+            if (profile == null)
+            {
+                return null;
+            }
+
+            return builtOperand.Steps
+                .Select(step => step.Presentation)
+                .FirstOrDefault(presentation => presentation != null);
+        }
+
+        private static FabricSegmentPresentationHint BuildPresentationHint(
+            string entityName,
+            ConditionNode condition,
+            bool fieldAsTitle)
+        {
+            var predicate = FindFirstPredicate(condition);
+            if (predicate == null ||
+                string.IsNullOrWhiteSpace(entityName) ||
+                IsConsentPseudoField(predicate.Field.Name))
+            {
+                return null;
+            }
+
+            return new FabricSegmentPresentationHint
+            {
+                Entity = entityName,
+                Field = predicate.Field.Name,
+                Values = predicate.Values
+                    .Select(value => Convert.ToString(value.Value))
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .ToList(),
+                FieldAsTitle = fieldAsTitle
+            };
+        }
+
+        private static string DescribeCondition(
+            ConditionNode condition,
+            bool allowConsent)
+        {
+            var predicate = condition as PredicateCondition;
+            if (allowConsent &&
+                predicate != null &&
+                IsConsentPseudoField(predicate.Field.Name))
+            {
+                var consent = ConsentToken.Parse(predicate);
+                var consentTitle = string.IsNullOrWhiteSpace(consent.Channel)
+                    ? "Consent"
+                    : HumanizeLogicalName(consent.Channel) + " consent";
+                var lines = new List<string> { consentTitle };
+                if (!string.IsNullOrWhiteSpace(consent.Value))
+                {
+                    lines.Add(
+                        "Status: " +
+                        HumanizeConsentValue(consent.Value));
+                }
+                lines.Add(
+                    "Contact point: " +
+                    HumanizeLogicalName(consent.EmailAttribute));
+                return string.Join("\n", lines.ToArray());
+            }
+
+            var titlePredicate = FindFirstPredicate(condition);
+            var filterTitle = titlePredicate == null
+                ? "Configured filter"
+                : HumanizeLogicalName(titlePredicate.Field.Name);
+            return filterTitle + "\nCondition: " +
+                DescribeConditionExpression(condition, false);
+        }
+
+        private static PredicateCondition FindFirstPredicate(
+            ConditionNode condition)
+        {
+            var predicate = condition as PredicateCondition;
+            if (predicate != null)
+            {
+                return predicate;
+            }
+
+            var not = condition as NotCondition;
+            if (not != null)
+            {
+                return FindFirstPredicate(not.Inner);
+            }
+
+            var and = condition as AndCondition;
+            if (and != null)
+            {
+                return and.Children
+                    .Select(FindFirstPredicate)
+                    .FirstOrDefault(item => item != null);
+            }
+
+            var or = condition as OrCondition;
+            return or == null
+                ? null
+                : or.Children
+                    .Select(FindFirstPredicate)
+                    .FirstOrDefault(item => item != null);
+        }
+
+        private static string DescribeConditionExpression(
+            ConditionNode condition,
+            bool negated)
+        {
+            var not = condition as NotCondition;
+            if (not != null)
+            {
+                return DescribeConditionExpression(not.Inner, !negated);
+            }
+
+            var and = condition as AndCondition;
+            if (and != null)
+            {
+                return string.Join(
+                    negated ? " or " : " and ",
+                    and.Children
+                        .Select(child => DescribeConditionExpression(
+                            child,
+                            negated))
+                        .ToArray());
+            }
+
+            var or = condition as OrCondition;
+            if (or != null)
+            {
+                return string.Join(
+                    negated ? " and " : " or ",
+                    or.Children
+                        .Select(child => DescribeConditionExpression(
+                            child,
+                            negated))
+                        .ToArray());
+            }
+
+            var predicate = condition as PredicateCondition;
+            if (predicate == null)
+            {
+                return condition.Describe();
+            }
+
+            var field = HumanizeLogicalName(predicate.Field.Name);
+            var values = predicate.Values
+                .Select(DescribePresentationValue)
+                .ToArray();
+            return field + " " +
+                DescribePresentationOperator(predicate.Operator, negated) +
+                (values.Length == 0
+                    ? string.Empty
+                    : predicate.Operator == PredicateOperator.In
+                        ? " " + string.Join(", ", values)
+                        : " " + values[0]);
+        }
+
+        private static string DescribePresentationOperator(
+            PredicateOperator value,
+            bool negated)
+        {
+            switch (value)
+            {
+                case PredicateOperator.IsNull:
+                    return negated ? "has a value" : "is empty";
+                case PredicateOperator.IsNotNull:
+                    return negated ? "is empty" : "has a value";
+                case PredicateOperator.Equal:
+                    return negated ? "is not" : "is";
+                case PredicateOperator.NotEqual:
+                    return negated ? "is" : "is not";
+                case PredicateOperator.GreaterThan:
+                    return negated ? "is at most" : "is greater than";
+                case PredicateOperator.GreaterOrEqual:
+                    return negated ? "is less than" : "is at least";
+                case PredicateOperator.LessThan:
+                    return negated ? "is at least" : "is less than";
+                case PredicateOperator.LessOrEqual:
+                    return negated ? "is greater than" : "is at most";
+                case PredicateOperator.In:
+                    return negated ? "is none of" : "is one of";
+                case PredicateOperator.Contains:
+                    return negated ? "does not contain" : "contains";
+                default:
+                    return negated ? "does not match" : "matches";
+            }
+        }
+
+        private static string DescribePresentationValue(MqlLiteral literal)
+        {
+            var value = literal == null ? null : literal.Value;
+            var text = value as string;
+            return text == null
+                ? Convert.ToString(value)
+                : text;
+        }
+
+        private static string HumanizeConsentValue(string value)
+        {
+            if (value.Equals(
+                "OptedIn",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return "Opted in";
+            }
+
+            if (value.Equals(
+                "OptedOut",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return "Opted out";
+            }
+
+            return HumanizeLogicalName(value);
         }
 
         private static string BuildInteractionDetail(
@@ -1126,6 +1388,13 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             }
 
             var value = logicalName.Trim();
+            if (value.Equals(
+                "emailaddress1",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return "Email address 1";
+            }
+
             var separator = value.IndexOf('_');
             if (separator >= 0 && separator < value.Length - 1)
             {
