@@ -1,0 +1,90 @@
+- main [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - heading "Österreichische Post - Briefempfänger" [level=1] [ref=e6]
+        - generic "Version 1.1.0.100" [ref=e7]: v1.1.0.100
+      - generic [ref=e8]:
+        - generic [ref=e9]: Calculated 01.10.26, 11:01
+        - generic [ref=e10]: •Load time 0,0 s
+    - button "Refresh" [ref=e11] [cursor=pointer]
+  - status [ref=e15]: The displayed values are estimates from the count provider.
+  - region "Summary" [ref=e16]:
+    - generic [ref=e17]:
+      - generic [ref=e18]: Starting members
+      - generic [ref=e19]: "24.840"
+    - generic [ref=e20]:
+      - generic [ref=e21]: Result
+      - generic [ref=e22]: "5.870"
+    - generic [ref=e23]:
+      - generic [ref=e24]: Retention
+      - generic [ref=e25]: 23,63 %
+  - region "Cumulative member flow" [ref=e26]:
+    - generic [ref=e27]:
+      - heading "Member flow" [level=2] [ref=e28]
+      - generic [ref=e29]: Line width represents members
+    - group "Journey-style Sankey diagram with 4 cumulative filter stages" [ref=e31]:
+      - 'generic "All contacts: 24.840" [ref=e32]'
+      - generic [ref=e36]:
+        - generic [ref=e37]: Audience
+        - generic [ref=e38]: All contacts
+      - generic [ref=e40]:
+        - generic [ref=e41]: "24.840"
+        - generic [ref=e42]: members
+      - generic "5.280 excluded by Group 1 (21,3% of incoming population)" [ref=e43]
+      - generic [ref=e46]:
+        - generic [ref=e47]: − 5.280
+        - generic [ref=e48]: members · 21,3%
+      - 'generic "Email available: 19.560" [ref=e49]'
+      - generic [ref=e53]:
+        - generic [ref=e54]: Email available
+        - generic "Email contains data" [ref=e55]
+      - generic [ref=e56]: Group 1
+      - generic [ref=e64]:
+        - generic [ref=e65]: "19.560"
+        - generic [ref=e66]: members
+      - generic "5.350 excluded by Group 2 (27,4% of incoming population)" [ref=e67]
+      - generic [ref=e70]:
+        - generic [ref=e71]: − 5.350
+        - generic [ref=e72]: members · 27,4%
+      - 'generic "Consent: 14.210" [ref=e73]'
+      - generic [ref=e77]:
+        - generic [ref=e78]: Consent
+        - generic "Commercial email opted in" [ref=e79]
+      - generic [ref=e80]: Group 2
+      - generic [ref=e88]:
+        - generic [ref=e89]: "14.210"
+        - generic [ref=e90]: members
+      - generic "8.340 excluded by Group 3 (58,7% of incoming population)" [ref=e91]
+      - generic [ref=e94]:
+        - generic [ref=e95]: − 8.340
+        - generic [ref=e96]: members · 58,7%
+      - generic [ref=e98]:
+        - generic [ref=e99]: "5.870"
+        - generic [ref=e100]: members
+      - 'generic "Risk profile: 5.870" [ref=e101]'
+      - generic [ref=e105]:
+        - generic [ref=e106]: Risk profile
+        - generic "Risk-ready or speculative" [ref=e107]
+      - generic [ref=e108]: Group 3
+      - 'generic "Result: 5.870 members" [ref=e115]'
+      - generic [ref=e119]:
+        - generic [ref=e120]: Result
+        - generic [ref=e121]: 5.870 members
+      - generic [ref=e122]:
+        - 'button "Audience: All contacts. Open member list." [ref=e123] [cursor=pointer]'
+        - button "− 5.280 members (21,3%). Open member list." [ref=e124] [cursor=pointer]
+        - 'button "Email available: Email contains data. Open member list." [ref=e125] [cursor=pointer]'
+        - button "− 5.350 members (27,4%). Open member list." [ref=e126] [cursor=pointer]
+        - 'button "Consent: Commercial email opted in. Open member list." [ref=e127] [cursor=pointer]'
+        - button "− 8.340 members (58,7%). Open member list." [ref=e128] [cursor=pointer]
+        - 'button "Risk profile: Risk-ready or speculative. Open member list." [ref=e129] [cursor=pointer]'
+        - 'button "Result: 5.870 members. Open member list." [ref=e130] [cursor=pointer]'
+      - generic [ref=e131]:
+        - button "Show full filter criterion for Group 2" [ref=e134] [cursor=pointer]
+        - button "Show full filter criterion for Group 3" [ref=e138] [cursor=pointer]
+  - group [ref=e140]:
+    - 'generic "Performance diagnostics Last request: 0.1 s · Cache network ⌄" [ref=e141] [cursor=pointer]':
+      - generic [ref=e142]: Performance diagnostics
+      - generic [ref=e143]: "Last request: 0.1 s · Cache network"
+      - text: ⌄

@@ -1,0 +1,466 @@
+- generic [ref=f98e2]:
+  - generic:
+    - banner [ref=f98e3]:
+      - link "Weiter zu Hauptinhalt" [ref=f98e4] [cursor=pointer]:
+        - /url: "#"
+      - button "App-Startfeld" [ref=f98e7] [cursor=pointer]: 
+      - text: Dynamics 365
+      - button "Customer Insights - Journeys" [ref=f98e8] [cursor=pointer]
+      - generic [ref=f98e9]:
+        - generic [aria-hidden] [ref=f98e11]: 
+        - searchbox "Suchen" [ref=f98e12]
+      - alert
+      - region [ref=f98e13]:
+        - region "Globale Befehle" [ref=f98e14]:
+          - menubar "Globale Befehle" [ref=f98e15]:
+            - menuitem "Assistent Bleiben Sie auf dem Laufenden mit Benachrichtigungen und Einblicken darüber, was neu ist und was fällig ist." [ref=f98e16] [cursor=pointer]:
+              - generic [ref=f98e18]: 
+            - menuitem "Neu Neuen Datensatz erstellen" [ref=f98e20] [cursor=pointer]:
+              - generic [ref=f98e22]: 
+            - menuitem "Einstellungen Richten Sie persönliche Optionen ein, und zeigen Sie die Datenschutzbestimmungen an." [ref=f98e24] [cursor=pointer]:
+              - generic [ref=f98e26]: 
+            - menuitem "Hilfe Hier finden Sie Hilfe und Schulungen." [ref=f98e28] [cursor=pointer]:
+              - generic [ref=f98e30]: 
+            - menuitem "Teams chats and channels integration Chat, collaborate, and share files with coworkers right from Dynamics 365." [ref=f98e32] [cursor=pointer]:
+              - generic [ref=f98e34]: 
+        - button "Kontomanager für Klaus Thyri" [ref=f98e38] [cursor=pointer]:
+          - generic [ref=f98e39]:
+            - generic [ref=f98e40]: Kontomanager für Klaus Thyri
+            - generic [aria-hidden] [ref=f98e42]: KT
+    - generic [aria-hidden] [ref=f98e205]:
+      - navigation [ref=f98e206]:
+        - button [ref=f98e207] [cursor=pointer]:
+          - generic [ref=f98e45]: 
+        - tree [ref=f98e208]:
+          - treeitem [ref=f98e209] [cursor=pointer]:
+            - generic [ref=f98e49]: 
+          - treeitem [ref=f98e210] [cursor=pointer]:
+            - generic [ref=f98e51]: 
+          - treeitem [ref=f98e211]:
+            - group [ref=f98e212]:
+              - treeitem [ref=f98e213] [cursor=pointer]
+              - treeitem [ref=f98e214] [cursor=pointer]
+              - treeitem [ref=f98e215] [cursor=pointer]
+              - treeitem [ref=f98e216] [cursor=pointer]
+              - treeitem [ref=f98e217] [cursor=pointer]
+          - treeitem [ref=f98e218]:
+            - group [ref=f98e219]:
+              - treeitem [ref=f98e220] [cursor=pointer]
+              - treeitem [ref=f98e221] [cursor=pointer]
+              - treeitem [ref=f98e222] [cursor=pointer]
+              - treeitem [ref=f98e223] [cursor=pointer]
+          - treeitem [ref=f98e224]:
+            - group [ref=f98e225]:
+              - treeitem [ref=f98e226] [cursor=pointer]
+              - treeitem [ref=f98e227] [cursor=pointer]
+          - treeitem [ref=f98e228]:
+            - group [ref=f98e229]:
+              - treeitem [ref=f98e230] [cursor=pointer]
+              - treeitem [ref=f98e231] [cursor=pointer]
+              - treeitem [ref=f98e232] [cursor=pointer]
+              - treeitem [ref=f98e233] [cursor=pointer]
+              - treeitem [ref=f98e234] [cursor=pointer]
+          - treeitem [ref=f98e235]:
+            - group [ref=f98e236]:
+              - treeitem [ref=f98e237] [cursor=pointer]
+              - treeitem [ref=f98e238] [cursor=pointer]
+              - treeitem [ref=f98e239] [cursor=pointer]
+              - treeitem [ref=f98e240] [cursor=pointer]
+          - treeitem [ref=f98e241]:
+            - group [ref=f98e242]:
+              - treeitem [ref=f98e243] [cursor=pointer]
+              - treeitem [ref=f98e244] [cursor=pointer]
+              - treeitem [ref=f98e245] [cursor=pointer]
+              - treeitem [ref=f98e246] [cursor=pointer]
+              - treeitem [ref=f98e247] [cursor=pointer]
+          - treeitem [ref=f98e248]:
+            - group [ref=f98e249]:
+              - treeitem [ref=f98e250] [cursor=pointer]
+          - treeitem [ref=f98e251]:
+            - group [ref=f98e252]:
+              - treeitem [ref=f98e253] [cursor=pointer]
+              - treeitem [ref=f98e254] [cursor=pointer]
+              - treeitem [ref=f98e255] [cursor=pointer]
+        - button [ref=f98e256] [cursor=pointer]: E
+      - generic [ref=f98e177]:
+        - main [ref=f98e178]:
+          - text: 
+          - iframe [ref=f98e179]:
+            - main [ref=f102e2]:
+              - generic [ref=f102e3]:
+                - generic [ref=f102e4]:
+                  - paragraph [ref=f102e5]: Customer Insights – Journeys
+                  - generic [ref=f102e6]:
+                    - heading "Segment Preview" [level=1] [ref=f102e7]
+                    - generic "Version 1.1.0.101" [ref=f102e8]: v1.1.0.101
+                  - paragraph [ref=f102e9]: Check the installation, configure environment-specific dependencies, and provision missing Fabric components.
+                - generic [ref=f102e10]:
+                  - button "Refresh status" [ref=f102e11] [cursor=pointer]
+                  - button "Check for updates" [ref=f102e12] [cursor=pointer]
+                  - button "Start over" [ref=f102e13] [cursor=pointer]
+              - generic [ref=f102e14]:
+                - generic [ref=f102e18]:
+                  - paragraph [ref=f102e19]: Segment Preview is ready
+                  - paragraph [ref=f102e20]: 10 of 10 components are ready.
+                - generic [ref=f102e21]: API 1.0.0.0 · 1.10.2026, 11:20:21
+              - generic [ref=f102e23]:
+                - heading "Segment Preview is up to date" [level=2] [ref=f102e281]
+                - paragraph [ref=f102e25]: "Installed: 1.1.0.101 · Latest: 1.1.0.101"
+              - generic [ref=f102e26]:
+                - heading "One-click installation" [level=2] [ref=f102e27]
+                - paragraph [ref=f102e28]: Complete these three steps in order. Everything created by setup remains in your own tenant and subscription.
+                - navigation "Installation steps" [ref=f102e29]:
+                  - generic [ref=f102e30]:
+                    - generic [ref=f102e31]: "1"
+                    - generic [ref=f102e32]:
+                      - text: Connect
+                      - generic [ref=f102e33]: Connected
+                  - generic [ref=f102e34]:
+                    - generic [ref=f102e35]: "2"
+                    - generic [ref=f102e36]:
+                      - text: Choose Azure target
+                      - generic [ref=f102e37]: Target selected
+                  - generic [ref=f102e38]:
+                    - generic [ref=f102e39]: "3"
+                    - generic [ref=f102e40]:
+                      - text: Install
+                      - generic [ref=f102e41]: Installed
+                - generic [ref=f102e42]:
+                  - generic [ref=f102e43]:
+                    - generic [ref=f102e44]:
+                      - generic [ref=f102e45]: "1"
+                      - generic [ref=f102e46]:
+                        - heading "Connect this environment" [level=3] [ref=f102e47]
+                        - paragraph [ref=f102e48]: Register the tenant application once so setup can access Azure and Fabric.
+                      - generic [ref=f102e49]: Complete
+                    - generic [ref=f102e50]:
+                      - generic [ref=f102e52]:
+                        - strong [ref=f102e53]: Installation runs from this browser with your own tenant application
+                        - generic [ref=f102e54]: You will be asked to sign in to Microsoft once. Everything listed below then runs automatically, and every resource it creates belongs to your own tenant and subscription.
+                      - group [ref=f102e55]:
+                        - generic "Connection details (already connected)" [ref=f102e56] [cursor=pointer]
+                  - generic [ref=f102e57]:
+                    - generic [ref=f102e58]:
+                      - generic [ref=f102e59]: "2"
+                      - generic [ref=f102e60]:
+                        - heading "Choose Subscription and Resource Group" [level=3] [ref=f102e61]
+                        - paragraph [ref=f102e62]: These are the only two selections required for a new installation.
+                      - generic [ref=f102e63]: Complete
+                    - generic [ref=f102e64]:
+                      - generic [ref=f102e65]:
+                        - generic [ref=f102e66]:
+                          - generic [ref=f102e67]:
+                            - text: Azure subscription
+                            - generic [ref=f102e68]: Required
+                          - generic [ref=f102e69]:
+                            - combobox "Azure subscription Required" [ref=f102e70]:
+                              - option "Select an Azure subscription"
+                              - option "1c6f67f3-6a96-4594-8e8f-9c73d6ddc719 (configured)" [selected]
+                            - button "Load subscriptions" [ref=f102e71] [cursor=pointer]
+                          - paragraph [ref=f102e72]: Hosts the Azure API.
+                        - generic [ref=f102e73]:
+                          - generic [ref=f102e74]:
+                            - text: Resource group
+                            - generic [ref=f102e75]: Required
+                          - generic [ref=f102e77]:
+                            - combobox "Resource group Required" [ref=f102e78]:
+                              - option "Select a resource group"
+                              - option "D365DemoTSCE21021953CXCS (configured)" [selected]
+                              - option "Create a new resource group…"
+                            - button "Load groups" [ref=f102e79] [cursor=pointer]
+                          - paragraph [ref=f102e80]: Select an existing group or create a new one.
+                        - generic [ref=f102e81]:
+                          - generic [ref=f102e82]:
+                            - text: Business-unit scoping
+                            - generic [ref=f102e83]: Optional
+                          - generic [ref=f102e84] [cursor=pointer]:
+                            - switch "Business-unit scoping Optional On" [checked]
+                            - generic [ref=f102e86]: "On"
+                          - paragraph [ref=f102e87]: Turn this on when Business unit scoping is enabled under Customer Insights - Journeys > Settings > Feature switches. Segment counts will include only records owned by the segment's exact business unit; child business units are excluded.
+                      - group [ref=f102e88]:
+                        - generic "Advanced options (optional)" [ref=f102e89] [cursor=pointer]
+                      - generic [ref=f102e90]:
+                        - button "Save target settings" [ref=f102e91] [cursor=pointer]
+                        - generic [ref=f102e92]: Stores the Business-unit switch and all Advanced options in this environment.
+                  - generic [ref=f102e93]:
+                    - generic [ref=f102e94]:
+                      - generic [ref=f102e95]: "3"
+                      - generic [ref=f102e96]:
+                        - heading "Install everything" [level=3] [ref=f102e97]
+                        - paragraph [ref=f102e98]: Start the automated Azure and Fabric installation.
+                      - generic [ref=f102e99]: Complete
+                    - generic [ref=f102e100]:
+                      - generic [ref=f102e101]:
+                        - button "Install everything" [ref=f102e102] [cursor=pointer]
+                        - generic [ref=f102e103]: Contract 1.1 · mode direct
+                      - progressbar "Installation progress" [ref=f102e104]:
+                        - generic [ref=f102e105]:
+                          - generic [ref=f102e106]: Preparing installation…
+                          - generic [ref=f102e107]: 0%
+                      - list [ref=f102e109]:
+                        - listitem [ref=f102e110]:
+                          - generic [ref=f102e111]: •
+                          - generic [ref=f102e112]:
+                            - generic [ref=f102e113]: Validate configuration
+                            - paragraph
+                          - generic [ref=f102e114]: Preflight
+                        - listitem [ref=f102e115]:
+                          - generic [ref=f102e116]: •
+                          - generic [ref=f102e117]:
+                            - generic [ref=f102e118]: Sign in and grant consent (interactive)
+                            - paragraph
+                          - generic [ref=f102e119]: Preflight
+                        - listitem [ref=f102e120]:
+                          - generic [ref=f102e121]: •
+                          - generic [ref=f102e122]:
+                            - generic [ref=f102e123]: Generate the server-side API key
+                            - paragraph
+                          - generic [ref=f102e124]: Preflight
+                        - listitem [ref=f102e125]:
+                          - generic [ref=f102e126]: •
+                          - generic [ref=f102e127]:
+                            - generic [ref=f102e128]: Discover Fabric workspace and lakehouse
+                            - paragraph
+                          - generic [ref=f102e129]: Fabric
+                        - listitem [ref=f102e130]:
+                          - generic [ref=f102e131]: •
+                          - generic [ref=f102e132]:
+                            - generic [ref=f102e133]: Publish the serving bootstrap notebook
+                            - paragraph
+                          - generic [ref=f102e134]: Fabric
+                        - listitem [ref=f102e135]:
+                          - generic [ref=f102e136]: •
+                          - generic [ref=f102e137]:
+                            - generic [ref=f102e138]: Deploy the Azure infrastructure
+                            - paragraph
+                          - generic [ref=f102e139]: Azure
+                        - listitem [ref=f102e140]:
+                          - generic [ref=f102e141]: •
+                          - generic [ref=f102e142]:
+                            - generic [ref=f102e143]: Grant Fabric access to the managed identity
+                            - paragraph
+                          - generic [ref=f102e144]: Fabric
+                        - listitem [ref=f102e145]:
+                          - generic [ref=f102e146]: •
+                          - generic [ref=f102e147]:
+                            - generic [ref=f102e148]: Grant Dataverse connection access to the managed identity
+                            - paragraph
+                          - generic [ref=f102e149]: Fabric
+                        - listitem [ref=f102e150]:
+                          - generic [ref=f102e151]: •
+                          - generic [ref=f102e152]:
+                            - generic [ref=f102e153]: Deploy the Segment Preview API
+                            - paragraph
+                          - generic [ref=f102e154]: Azure
+                        - listitem [ref=f102e155]:
+                          - generic [ref=f102e156]: •
+                          - generic [ref=f102e157]:
+                            - generic [ref=f102e158]: Write the Dataverse environment variables
+                            - paragraph
+                          - generic [ref=f102e159]: Dataverse
+                        - listitem [ref=f102e160]:
+                          - generic [ref=f102e161]: •
+                          - generic [ref=f102e162]:
+                            - generic [ref=f102e163]: Verify the end-to-end setup
+                            - paragraph
+                          - generic [ref=f102e164]: Verify
+                      - group [ref=f102e165]:
+                        - generic "Interactive steps that Microsoft requires" [ref=f102e166] [cursor=pointer]
+                      - group [ref=f102e167]:
+                        - generic "API key rotation" [ref=f102e168] [cursor=pointer]
+              - generic [ref=f102e169]:
+                - generic [ref=f102e170]:
+                  - generic [ref=f102e171]:
+                    - heading "Dataverse" [level=2] [ref=f102e172]
+                    - generic [ref=f102e173]: 4 / 4 ready
+                  - generic [ref=f102e174]:
+                    - article [ref=f102e175]:
+                      - generic [ref=f102e179]:
+                        - generic [ref=f102e180]:
+                          - heading "Managed solution" [level=3] [ref=f102e181]
+                          - generic [ref=f102e182]: Installed
+                        - paragraph [ref=f102e183]: The Segment Preview Dataverse solution is installed.
+                    - article [ref=f102e184]:
+                      - generic [ref=f102e188]:
+                        - generic [ref=f102e189]:
+                          - heading "Plugins and Custom APIs" [level=3] [ref=f102e190]
+                          - generic [ref=f102e191]: Installed
+                        - paragraph [ref=f102e192]: The Segment Preview server components are registered.
+                    - article [ref=f102e193]:
+                      - generic [ref=f102e197]:
+                        - generic [ref=f102e198]:
+                          - heading "Web resources" [level=3] [ref=f102e199]
+                          - generic [ref=f102e200]: Installed
+                        - paragraph [ref=f102e201]: The Segment Preview user interfaces are installed.
+                    - article [ref=f102e202]:
+                      - generic [ref=f102e206]:
+                        - generic [ref=f102e207]:
+                          - heading "Environment configuration" [level=3] [ref=f102e208]
+                          - generic [ref=f102e209]: Installed
+                        - paragraph [ref=f102e210]: The Azure API URL and server-side API key are configured.
+                - generic [ref=f102e211]:
+                  - generic [ref=f102e212]:
+                    - heading "Azure" [level=2] [ref=f102e213]
+                    - generic [ref=f102e214]: 3 / 3 ready
+                  - generic [ref=f102e215]:
+                    - article [ref=f102e216]:
+                      - generic [ref=f102e220]:
+                        - generic [ref=f102e221]:
+                          - heading "Azure API" [level=3] [ref=f102e222]
+                          - generic [ref=f102e223]: Installed
+                        - paragraph [ref=f102e224]: The Segment Preview API is running.
+                    - article [ref=f102e225]:
+                      - generic [ref=f102e229]:
+                        - generic [ref=f102e230]:
+                          - heading "Application configuration" [level=3] [ref=f102e231]
+                          - generic [ref=f102e232]: Installed
+                        - paragraph [ref=f102e233]: All required application settings are configured.
+                    - article [ref=f102e234]:
+                      - generic [ref=f102e238]:
+                        - generic [ref=f102e239]:
+                          - heading "Managed Identity" [level=3] [ref=f102e240]
+                          - generic [ref=f102e241]: Installed
+                        - paragraph [ref=f102e242]: The Web App identity can access the Fabric REST API.
+                - generic [ref=f102e243]:
+                  - generic [ref=f102e244]:
+                    - heading "Fabric" [level=2] [ref=f102e245]
+                    - generic [ref=f102e246]: 3 / 3 ready
+                  - generic [ref=f102e247]:
+                    - article [ref=f102e248]:
+                      - generic [ref=f102e252]:
+                        - generic [ref=f102e253]:
+                          - heading "Dataverse shortcuts" [level=3] [ref=f102e254]
+                          - generic [ref=f102e255]: Installed
+                        - paragraph [ref=f102e256]: All 4 required Dataverse shortcuts are available.
+                    - article [ref=f102e257]:
+                      - generic [ref=f102e261]:
+                        - generic [ref=f102e262]:
+                          - heading "Fabric SQL endpoint" [level=3] [ref=f102e263]
+                          - generic [ref=f102e264]: Installed
+                        - paragraph [ref=f102e265]: The Web App identity can connect to the Fabric SQL endpoint.
+                    - article [ref=f102e266]:
+                      - generic [ref=f102e270]:
+                        - generic [ref=f102e271]:
+                          - heading "Journeys event tables" [level=3] [ref=f102e272]
+                          - generic [ref=f102e273]: Installed
+                        - paragraph [ref=f102e274]: 153 Journeys event table(s) are available.
+              - region [ref=f102e275]:
+                - generic [ref=f102e276]:
+                  - generic [ref=f102e277]:
+                    - heading "Installation log" [level=2] [ref=f102e278]
+                    - paragraph [ref=f102e279]: 195 diagnostic events from this browser session. Secrets are excluded.
+                  - button "View installation log (195)" [ref=f102e282] [cursor=pointer]
+        - complementary [ref=f98e257]:
+          - separator [ref=f98e195]
+          - text: 
+          - tabpanel [ref=f98e258]:
+            - heading [level=2] [ref=f98e259]: Segment preview
+            - button [ref=f98e260] [cursor=pointer]:
+              - generic [ref=f98e199]: 
+            - text: 
+            - iframe [ref=f98e204]:
+              - main [ref=f112e2]:
+                - generic [ref=f112e3]:
+                  - generic [ref=f112e4]:
+                    - generic [ref=f112e5]:
+                      - heading "Österreichische Post - Briefempfänger" [level=1] [ref=f112e6]
+                      - generic "Version 1.1.0.101" [ref=f112e7]: v1.1.0.101
+                    - generic [ref=f112e8]:
+                      - generic [ref=f112e9]: Calculated 01.10.26, 11:21
+                      - generic [ref=f112e10]: •Load time 2,1 s
+                  - button "Refresh" [ref=f112e11] [cursor=pointer]
+                - region "Summary" [ref=f112e15]:
+                  - generic [ref=f112e16]:
+                    - generic [ref=f112e17]: Starting members
+                    - generic [ref=f112e18]: "1"
+                  - generic [ref=f112e19]:
+                    - generic [ref=f112e20]: Result
+                    - generic [ref=f112e21]: "1"
+                  - generic [ref=f112e22]:
+                    - generic [ref=f112e23]: Retention
+                    - generic [ref=f112e24]: 100,00 %
+                - region "Cumulative member flow" [ref=f112e25]:
+                  - generic [ref=f112e26]:
+                    - heading "Member flow" [level=2] [ref=f112e27]
+                    - generic [ref=f112e28]: Line width represents members
+                  - group "Journey-style Sankey diagram with 1 cumulative filter stages" [ref=f112e30]:
+                    - 'generic "Static list: 1" [ref=f112e31]'
+                    - generic [ref=f112e35]:
+                      - generic [ref=f112e36]: Audience
+                      - generic [ref=f112e37]: Static list
+                    - 'generic "Result: 1 members" [ref=f112e38]'
+                    - generic [ref=f112e42]:
+                      - generic [ref=f112e43]: Result
+                      - generic [ref=f112e44]: 1 members
+                    - generic [ref=f112e45]:
+                      - 'button "Audience: Static list. Open member list." [ref=f112e46] [cursor=pointer]'
+                      - 'button "Result: 1 members. Open member list." [ref=f112e47] [cursor=pointer]'
+                - group [ref=f112e48]:
+                  - 'generic "Performance diagnostics Last request: 2.1 s · Fabric SQL: 0.1 s · Cache network ⌄" [ref=f112e49] [cursor=pointer]':
+                    - generic [ref=f112e50]: Performance diagnostics
+                    - generic [ref=f112e51]: "Last request: 2.1 s · Fabric SQL: 0.1 s · Cache network"
+                    - text: ⌄
+          - tablist [ref=f98e181]:
+            - generic [ref=f98e182]:
+              - tab [ref=f98e261] [cursor=pointer]
+              - tab [expanded] [selected] [ref=f98e262] [cursor=pointer]:
+                - generic [aria-hidden] [ref=f98e203]: 
+    - dialog [ref=f98e266]:
+      - heading "Result" [level=1] [ref=f98e267]
+      - button "Enter full screen mode" [ref=f98e268] [cursor=pointer]:
+        - generic [ref=f98e269]: 
+      - button "Schließen" [active] [ref=f98e270] [cursor=pointer]:
+        - generic [ref=f98e271]: 
+      - text: 
+      - iframe [ref=f98e272]:
+        - main [ref=f116e2]:
+          - generic [ref=f116e3]:
+            - generic [ref=f116e4]:
+              - generic [ref=f116e5]:
+                - heading "Result" [level=1] [ref=f116e6]
+                - generic "Version 1.1.0.101" [ref=f116e7]: v1.1.0.101
+              - generic [ref=f116e8]: Contacts remaining in this element
+            - generic [ref=f116e9]: 1 members
+          - region "Member search and filters" [ref=f116e10]:
+            - generic [ref=f116e11]:
+              - searchbox "Search name or email" [ref=f116e12]
+              - combobox "Filter field" [ref=f116e13]:
+                - option "No field filter" [selected]
+                - option "Full name"
+                - option "First name"
+                - option "Last name"
+                - option "Email"
+                - option "Phone"
+                - option "City"
+              - combobox "Filter operator" [ref=f116e14]:
+                - option "Contains" [selected]
+                - option "Starts with"
+                - option "Equals"
+              - textbox "Filter value" [ref=f116e15]
+              - button "Apply" [ref=f116e16] [cursor=pointer]
+            - generic [ref=f116e17]:
+              - table [ref=f116e19]:
+                - rowgroup [ref=f116e20]:
+                  - row [ref=f116e21]:
+                    - columnheader [ref=f116e22]:
+                      - button "Full name ↑" [ref=f116e23] [cursor=pointer]
+                    - columnheader [ref=f116e24]:
+                      - button "Email" [ref=f116e25] [cursor=pointer]
+                    - columnheader [ref=f116e26]:
+                      - button "Phone" [ref=f116e27] [cursor=pointer]
+                    - columnheader [ref=f116e28]:
+                      - button "City" [ref=f116e29] [cursor=pointer]
+                    - columnheader "Company" [ref=f116e30]
+                - rowgroup [ref=f116e31]:
+                  - row [ref=f116e32]:
+                    - cell [ref=f116e33]:
+                      - button "Amanda Hegg" [ref=f116e34] [cursor=pointer]
+                    - cell "amanda@bestforyouorganicscompany.com" [ref=f116e35]
+                    - cell "412-555-0123" [ref=f116e36]
+                    - cell "Pittsburgh" [ref=f116e37]
+                    - cell "Best For You Organics Company" [ref=f116e38]
+              - generic [ref=f116e39]:
+                - generic [ref=f116e40]: Page 1
+                - generic [ref=f116e41]:
+                  - button "Previous" [disabled] [ref=f116e42]
+                  - button "Next" [disabled] [ref=f116e43]

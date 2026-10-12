@@ -1,0 +1,20 @@
+- generic [ref=f2e5]:
+  - main [ref=f2e7]:
+    - generic [ref=f2e13]:
+      - progressbar "Bitte warten" [ref=f2e14]
+      - img "Microsoft" [ref=f2e20]
+      - generic [ref=f2e21]:
+        - button "Zurück" [ref=f2e22]
+        - generic [ref=f2e23]: klaus@d365demotsce21021953.onmicrosoft.com
+      - generic [ref=f2e25]:
+        - heading "Gesichtserkennung, Fingerabdruck, PIN oder Sicherheitsschlüssel" [level=1] [ref=f2e28]
+        - generic [ref=f2e29]: Ihr Gerät öffnet ein Sicherheitsfenster. Befolgen Sie die angezeigten Anweisungen, um sich anzumelden.
+  - contentinfo [ref=f2e32]:
+    - generic [ref=f2e33]:
+      - link "Nutzungsbedingungen" [ref=f2e34] [cursor=pointer]:
+        - /url: https://www.microsoft.com/servicesagreement/de
+      - link "Datenschutz und Cookies" [ref=f2e35] [cursor=pointer]:
+        - /url: https://privacy.microsoft.com/de-de
+      - link "Impressum" [ref=f2e36] [cursor=pointer]:
+        - /url: https://www.microsoft.com/de-de/impressum
+      - button "Klicken Sie hier, um weitere Informationen zur Problembehandlung zu erhalten." [ref=f2e37] [cursor=pointer]: ...

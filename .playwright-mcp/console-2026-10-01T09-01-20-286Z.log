@@ -1,0 +1,1 @@
+[   94163ms] [ERROR] Failed to load resource: the server responded with a status of 400 () @ https://orga7223214.crm4.dynamics.com/api/data/v9.2/msdynmkt_segmentdefinitions?$select=msdynmkt_segmentdefinitionid,msdynmkt_mql,msdynmkt_staticlistmembers,modifiedon&$filter=msdynmkt_mql%20eq%20null&$orderby=modifiedon%20desc&$top=50:0

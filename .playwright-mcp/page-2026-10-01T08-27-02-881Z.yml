@@ -1,0 +1,38 @@
+- generic [ref=e5]:
+  - img "Hintergrundbild der Organisation" [ref=e7]
+  - generic [ref=e8]:
+    - generic [ref=e14]:
+      - img "Microsoft" [ref=e17]
+      - main [ref=e18]:
+        - generic [ref=e21]:
+          - heading "Konto auswählen" [level=1] [ref=e25]
+          - list "Konto auswählen" [ref=e28]:
+            - listitem [ref=e30] [cursor=pointer]:
+              - button "Melden Sie sich mit dem Geschäfts-, Schul- oder Unikonto \"klaus@D365DemoTSCE21021953.OnMicrosoft.com\" an." [active] [ref=e31]:
+                - generic [ref=e34]:
+                  - generic [ref=e35]: Klaus Thyri
+                  - generic [ref=e36]: klaus@D365DemoTSCE21021953.OnMicrosoft.com
+                  - generic [ref=e37]: Mit Windows verbunden
+            - listitem [ref=e39] [cursor=pointer]:
+              - button "Melden Sie sich mit dem Geschäfts-, Schul- oder Unikonto \"klaus@D365DemoTSCE24634431.onmicrosoft.com\" an." [ref=e40]:
+                - generic [ref=e43]:
+                  - generic [ref=e44]: Klaus Thyri
+                  - generic [ref=e45]: klaus@D365DemoTSCE24634431.onmicrosoft.com
+                  - generic [ref=e46]: Mit Windows verbunden
+            - listitem [ref=e48] [cursor=pointer]:
+              - button "Melden Sie sich mit dem Geschäfts-, Schul- oder Unikonto \"kthyri@microsoft.com\" an." [ref=e49]:
+                - generic [ref=e52]:
+                  - generic [ref=e53]: Klaus Thyri
+                  - generic [ref=e54]: kthyri@microsoft.com
+                  - generic [ref=e55]: Mit Windows verbunden
+            - listitem [ref=e56] [cursor=pointer]:
+              - button "Anderes Konto verwenden" [ref=e57]
+    - contentinfo [ref=e62]:
+      - generic [ref=e63]:
+        - link "Nutzungsbedingungen" [ref=e64] [cursor=pointer]:
+          - /url: https://www.microsoft.com/de-DE/servicesagreement/
+        - link "Datenschutz und Cookies" [ref=e65] [cursor=pointer]:
+          - /url: https://privacy.microsoft.com/de-DE/privacystatement
+        - link "Haftungsausschluss" [ref=e66] [cursor=pointer]:
+          - /url: https://www.microsoft.com/de-de/corporate/rechtliche-hinweise/impressum.aspx
+        - button "Klicken Sie hier, um weitere Informationen zur Problembehandlung zu erhalten." [ref=e67] [cursor=pointer]: ...

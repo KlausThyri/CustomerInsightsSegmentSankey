@@ -1,0 +1,358 @@
+- generic [ref=f30e1]:
+  - generic [ref=f30e2]:
+    - generic:
+      - banner [ref=f30e3]:
+        - link "Weiter zu Hauptinhalt" [ref=f30e4] [cursor=pointer]:
+          - /url: "#"
+        - button "App-Startfeld" [ref=f30e7] [cursor=pointer]: 
+        - text: Dynamics 365
+        - button "Customer Insights - Journeys" [ref=f30e8] [cursor=pointer]
+        - generic [ref=f30e9]:
+          - generic [aria-hidden] [ref=f30e11]: 
+          - searchbox "Suchen" [ref=f30e12]
+        - alert
+        - region [ref=f30e13]:
+          - region "Globale Befehle" [ref=f30e14]:
+            - menubar "Globale Befehle" [ref=f30e15]:
+              - menuitem "Assistent Bleiben Sie auf dem Laufenden mit Benachrichtigungen und Einblicken darüber, was neu ist und was fällig ist." [ref=f30e16] [cursor=pointer]:
+                - generic [ref=f30e18]: 
+              - menuitem "Neu Neuen Datensatz erstellen" [ref=f30e20] [cursor=pointer]:
+                - generic [ref=f30e22]: 
+              - menuitem "Einstellungen Richten Sie persönliche Optionen ein, und zeigen Sie die Datenschutzbestimmungen an." [ref=f30e24] [cursor=pointer]:
+                - generic [ref=f30e26]: 
+              - menuitem "Hilfe Hier finden Sie Hilfe und Schulungen." [ref=f30e28] [cursor=pointer]:
+                - generic [ref=f30e30]: 
+              - menuitem "Teams chats and channels integration Chat, collaborate, and share files with coworkers right from Dynamics 365." [ref=f30e32] [cursor=pointer]:
+                - generic [ref=f30e34]: 
+          - button "Kontomanager für Klaus Thyri" [ref=f30e38] [cursor=pointer]:
+            - generic [ref=f30e39]:
+              - generic [ref=f30e40]: Kontomanager für Klaus Thyri
+              - generic [aria-hidden] [ref=f30e42]: KT
+      - navigation "In Dynamics 365 navigieren" [ref=f30e43]:
+        - button "Siteübersicht" [ref=f30e44] [cursor=pointer]:
+          - generic [ref=f30e45]: 
+        - tree "In Dynamics 365 navigieren" [ref=f30e47]:
+          - treeitem "Letzte" [ref=f30e48] [cursor=pointer]:
+            - generic [ref=f30e49]: 
+          - treeitem "Angeheftet" [ref=f30e50] [cursor=pointer]:
+            - generic [ref=f30e51]: 
+          - treeitem "Interaktionen" [ref=f30e52]:
+            - group "Interaktionen" [ref=f30e53]:
+              - treeitem "Erste Schritte" [ref=f30e54] [cursor=pointer]
+              - treeitem "Kontaktverläufe" [ref=f30e57] [cursor=pointer]
+              - treeitem "Analyse" [ref=f30e60] [cursor=pointer]
+              - treeitem "Dashboard" [ref=f30e63] [cursor=pointer]
+              - treeitem "Auslöser" [ref=f30e66] [cursor=pointer]
+          - treeitem "Zielgruppe" [ref=f30e69]:
+            - group "Zielgruppe" [ref=f30e70]:
+              - treeitem "Segmente" [ref=f30e71] [cursor=pointer]
+              - treeitem "Kontakte" [ref=f30e74] [cursor=pointer]
+              - treeitem "Leads" [ref=f30e78] [cursor=pointer]
+              - treeitem "Zustimmungscenter" [ref=f30e83] [cursor=pointer]
+          - treeitem "Leadverwaltung" [ref=f30e86]:
+            - group "Leadverwaltung" [ref=f30e87]:
+              - treeitem "Bewertungsmodelle" [ref=f30e88] [cursor=pointer]
+              - treeitem "Qualifizierung" [ref=f30e100] [cursor=pointer]
+          - treeitem "Kanäle" [ref=f30e103]:
+            - group "Kanäle" [ref=f30e104]:
+              - treeitem "E-Mails" [ref=f30e105] [cursor=pointer]
+              - treeitem "Formulare" [ref=f30e108] [cursor=pointer]
+              - treeitem "Pushbenachrichtigungen" [ref=f30e111] [cursor=pointer]
+              - treeitem "Textnachrichten" [ref=f30e114] [cursor=pointer]
+              - treeitem "Weitere Kanäle" [ref=f30e117] [cursor=pointer]
+          - treeitem "Anlagen" [ref=f30e120]:
+            - group "Anlagen" [ref=f30e121]:
+              - treeitem "Bibliothek" [ref=f30e122] [cursor=pointer]
+              - treeitem "Vorlagen" [ref=f30e125] [cursor=pointer]
+              - treeitem "Inhaltsblöcke" [ref=f30e128] [cursor=pointer]
+              - treeitem "Text blocks" [ref=f30e131] [cursor=pointer]
+          - treeitem "Loyalty" [ref=f30e135]:
+            - group "Loyalty" [ref=f30e136]:
+              - treeitem "Loyalty Programs" [ref=f30e137] [cursor=pointer]
+              - treeitem "Loyalty Tiers" [ref=f30e141] [cursor=pointer]
+              - treeitem "Loyalty Profiles" [ref=f30e145] [cursor=pointer]
+              - treeitem "Coupon Codes" [ref=f30e149] [cursor=pointer]
+              - treeitem "Product Recommendations" [ref=f30e153] [cursor=pointer]
+          - treeitem "Meine Arbeit" [ref=f30e157]:
+            - group "Meine Arbeit" [ref=f30e158]:
+              - treeitem "Aktivitäten" [ref=f30e159] [cursor=pointer]
+          - treeitem "Settings" [ref=f30e164]:
+            - group "Settings" [ref=f30e165]:
+              - treeitem "Settings" [ref=f30e166] [cursor=pointer]
+              - treeitem "Countries" [ref=f30e170] [cursor=pointer]
+              - treeitem "Languages" [ref=f30e173] [cursor=pointer]
+        - button "Echtzeitkontaktverläufe (Bereich ändern)" [ref=f30e176] [cursor=pointer]: E
+      - generic [ref=f30e177]:
+        - main [ref=f30e178]:
+          - text: 
+          - iframe [ref=f30e179]:
+            - main [ref=f34e2]:
+              - generic [ref=f34e3]:
+                - generic [ref=f34e4]:
+                  - paragraph [ref=f34e5]: Customer Insights – Journeys
+                  - generic [ref=f34e6]:
+                    - heading "Segment Preview" [level=1] [ref=f34e7]
+                    - generic "Version 1.1.0.99" [ref=f34e8]: v1.1.0.99
+                  - paragraph [ref=f34e9]: Check the installation, configure environment-specific dependencies, and provision missing Fabric components.
+                - generic [ref=f34e10]:
+                  - button "Refresh status" [ref=f34e11] [cursor=pointer]
+                  - button "Check for updates" [ref=f34e12] [cursor=pointer]
+                  - button "Start over" [ref=f34e13] [cursor=pointer]
+              - generic [ref=f34e14]:
+                - generic [ref=f34e18]:
+                  - paragraph [ref=f34e19]: Segment Preview is ready
+                  - paragraph [ref=f34e20]: 10 of 10 components are ready.
+                - generic [ref=f34e21]: API 1.0.0.0 · 1.10.2026, 10:40:10
+              - generic [ref=f34e23]:
+                - heading "Segment Preview is up to date" [level=2] [ref=f34e24]
+                - paragraph [ref=f34e25]: "Installed: 1.1.0.99 · Latest: 1.1.0.99"
+              - generic [ref=f34e26]:
+                - heading "One-click installation" [level=2] [ref=f34e27]
+                - paragraph [ref=f34e28]: Complete these three steps in order. Everything created by setup remains in your own tenant and subscription.
+                - navigation "Installation steps" [ref=f34e29]:
+                  - generic [ref=f34e30]:
+                    - generic [ref=f34e31]: "1"
+                    - generic [ref=f34e32]:
+                      - text: Connect
+                      - generic [ref=f34e33]: Connected
+                  - generic [ref=f34e34]:
+                    - generic [ref=f34e35]: "2"
+                    - generic [ref=f34e36]:
+                      - text: Choose Azure target
+                      - generic [ref=f34e37]: Target selected
+                  - generic [ref=f34e38]:
+                    - generic [ref=f34e39]: "3"
+                    - generic [ref=f34e40]:
+                      - text: Install
+                      - generic [ref=f34e41]: Installed
+                - generic [ref=f34e42]:
+                  - generic [ref=f34e43]:
+                    - generic [ref=f34e44]:
+                      - generic [ref=f34e45]: "1"
+                      - generic [ref=f34e46]:
+                        - heading "Connect this environment" [level=3] [ref=f34e47]
+                        - paragraph [ref=f34e48]: Register the tenant application once so setup can access Azure and Fabric.
+                      - generic [ref=f34e49]: Complete
+                    - generic [ref=f34e50]:
+                      - generic [ref=f34e52]:
+                        - strong [ref=f34e53]: Installation runs from this browser with your own tenant application
+                        - generic [ref=f34e54]: You will be asked to sign in to Microsoft once. Everything listed below then runs automatically, and every resource it creates belongs to your own tenant and subscription.
+                      - group [ref=f34e55]:
+                        - generic "Connection details (already connected)" [ref=f34e56] [cursor=pointer]
+                  - generic [ref=f34e57]:
+                    - generic [ref=f34e58]:
+                      - generic [ref=f34e59]: "2"
+                      - generic [ref=f34e60]:
+                        - heading "Choose Subscription and Resource Group" [level=3] [ref=f34e61]
+                        - paragraph [ref=f34e62]: These are the only two selections required for a new installation.
+                      - generic [ref=f34e63]: Complete
+                    - generic [ref=f34e64]:
+                      - generic [ref=f34e65]:
+                        - generic [ref=f34e66]:
+                          - generic [ref=f34e67]:
+                            - text: Azure subscription
+                            - generic [ref=f34e68]: Required
+                          - generic [ref=f34e69]:
+                            - combobox "Azure subscription Required" [ref=f34e70]:
+                              - option "Select an Azure subscription"
+                              - option "1c6f67f3-6a96-4594-8e8f-9c73d6ddc719 (configured)" [selected]
+                            - button "Load subscriptions" [ref=f34e71] [cursor=pointer]
+                          - paragraph [ref=f34e72]: Hosts the Azure API.
+                        - generic [ref=f34e73]:
+                          - generic [ref=f34e74]:
+                            - text: Resource group
+                            - generic [ref=f34e75]: Required
+                          - generic [ref=f34e77]:
+                            - combobox "Resource group Required" [ref=f34e78]:
+                              - option "Select a resource group"
+                              - option "D365DemoTSCE21021953CXCS (configured)" [selected]
+                              - option "Create a new resource group…"
+                            - button "Load groups" [ref=f34e79] [cursor=pointer]
+                          - paragraph [ref=f34e80]: Select an existing group or create a new one.
+                        - generic [ref=f34e81]:
+                          - generic [ref=f34e82]:
+                            - text: Business-unit scoping
+                            - generic [ref=f34e83]: Optional
+                          - generic [ref=f34e84] [cursor=pointer]:
+                            - switch "Business-unit scoping Optional On" [checked]
+                            - generic [ref=f34e86]: "On"
+                          - paragraph [ref=f34e87]: Turn this on when Business unit scoping is enabled under Customer Insights - Journeys > Settings > Feature switches. Segment counts will include only records owned by the segment's exact business unit; child business units are excluded.
+                      - group [ref=f34e88]:
+                        - generic "Advanced options (optional)" [ref=f34e89] [cursor=pointer]
+                      - generic [ref=f34e90]:
+                        - button "Save target settings" [ref=f34e91] [cursor=pointer]
+                        - generic [ref=f34e92]: Stores the Business-unit switch and all Advanced options in this environment.
+                  - generic [ref=f34e93]:
+                    - generic [ref=f34e94]:
+                      - generic [ref=f34e95]: "3"
+                      - generic [ref=f34e96]:
+                        - heading "Install everything" [level=3] [ref=f34e97]
+                        - paragraph [ref=f34e98]: Start the automated Azure and Fabric installation.
+                      - generic [ref=f34e99]: Complete
+                    - generic [ref=f34e100]:
+                      - generic [ref=f34e101]:
+                        - button "Install everything" [ref=f34e102] [cursor=pointer]
+                        - generic [ref=f34e103]: Contract 1.1 · mode direct
+                      - progressbar "Installation progress" [ref=f34e104]:
+                        - generic [ref=f34e105]:
+                          - generic [ref=f34e106]: Preparing installation…
+                          - generic [ref=f34e107]: 0%
+                      - list [ref=f34e109]:
+                        - listitem [ref=f34e110]:
+                          - generic [ref=f34e111]: •
+                          - generic [ref=f34e112]:
+                            - generic [ref=f34e113]: Validate configuration
+                            - paragraph
+                          - generic [ref=f34e114]: Preflight
+                        - listitem [ref=f34e115]:
+                          - generic [ref=f34e116]: •
+                          - generic [ref=f34e117]:
+                            - generic [ref=f34e118]: Sign in and grant consent (interactive)
+                            - paragraph
+                          - generic [ref=f34e119]: Preflight
+                        - listitem [ref=f34e120]:
+                          - generic [ref=f34e121]: •
+                          - generic [ref=f34e122]:
+                            - generic [ref=f34e123]: Generate the server-side API key
+                            - paragraph
+                          - generic [ref=f34e124]: Preflight
+                        - listitem [ref=f34e125]:
+                          - generic [ref=f34e126]: •
+                          - generic [ref=f34e127]:
+                            - generic [ref=f34e128]: Discover Fabric workspace and lakehouse
+                            - paragraph
+                          - generic [ref=f34e129]: Fabric
+                        - listitem [ref=f34e130]:
+                          - generic [ref=f34e131]: •
+                          - generic [ref=f34e132]:
+                            - generic [ref=f34e133]: Publish the serving bootstrap notebook
+                            - paragraph
+                          - generic [ref=f34e134]: Fabric
+                        - listitem [ref=f34e135]:
+                          - generic [ref=f34e136]: •
+                          - generic [ref=f34e137]:
+                            - generic [ref=f34e138]: Deploy the Azure infrastructure
+                            - paragraph
+                          - generic [ref=f34e139]: Azure
+                        - listitem [ref=f34e140]:
+                          - generic [ref=f34e141]: •
+                          - generic [ref=f34e142]:
+                            - generic [ref=f34e143]: Grant Fabric access to the managed identity
+                            - paragraph
+                          - generic [ref=f34e144]: Fabric
+                        - listitem [ref=f34e145]:
+                          - generic [ref=f34e146]: •
+                          - generic [ref=f34e147]:
+                            - generic [ref=f34e148]: Grant Dataverse connection access to the managed identity
+                            - paragraph
+                          - generic [ref=f34e149]: Fabric
+                        - listitem [ref=f34e150]:
+                          - generic [ref=f34e151]: •
+                          - generic [ref=f34e152]:
+                            - generic [ref=f34e153]: Deploy the Segment Preview API
+                            - paragraph
+                          - generic [ref=f34e154]: Azure
+                        - listitem [ref=f34e155]:
+                          - generic [ref=f34e156]: •
+                          - generic [ref=f34e157]:
+                            - generic [ref=f34e158]: Write the Dataverse environment variables
+                            - paragraph
+                          - generic [ref=f34e159]: Dataverse
+                        - listitem [ref=f34e160]:
+                          - generic [ref=f34e161]: •
+                          - generic [ref=f34e162]:
+                            - generic [ref=f34e163]: Verify the end-to-end setup
+                            - paragraph
+                          - generic [ref=f34e164]: Verify
+                      - group [ref=f34e165]:
+                        - generic "Interactive steps that Microsoft requires" [ref=f34e166] [cursor=pointer]
+                      - group [ref=f34e167]:
+                        - generic "API key rotation" [ref=f34e168] [cursor=pointer]
+              - generic [ref=f34e169]:
+                - generic [ref=f34e170]:
+                  - generic [ref=f34e171]:
+                    - heading "Dataverse" [level=2] [ref=f34e172]
+                    - generic [ref=f34e173]: 4 / 4 ready
+                  - generic [ref=f34e174]:
+                    - article [ref=f34e175]:
+                      - generic [ref=f34e179]:
+                        - generic [ref=f34e180]:
+                          - heading "Managed solution" [level=3] [ref=f34e181]
+                          - generic [ref=f34e182]: Installed
+                        - paragraph [ref=f34e183]: The Segment Preview Dataverse solution is installed.
+                    - article [ref=f34e184]:
+                      - generic [ref=f34e188]:
+                        - generic [ref=f34e189]:
+                          - heading "Plugins and Custom APIs" [level=3] [ref=f34e190]
+                          - generic [ref=f34e191]: Installed
+                        - paragraph [ref=f34e192]: The Segment Preview server components are registered.
+                    - article [ref=f34e193]:
+                      - generic [ref=f34e197]:
+                        - generic [ref=f34e198]:
+                          - heading "Web resources" [level=3] [ref=f34e199]
+                          - generic [ref=f34e200]: Installed
+                        - paragraph [ref=f34e201]: The Segment Preview user interfaces are installed.
+                    - article [ref=f34e202]:
+                      - generic [ref=f34e206]:
+                        - generic [ref=f34e207]:
+                          - heading "Environment configuration" [level=3] [ref=f34e208]
+                          - generic [ref=f34e209]: Installed
+                        - paragraph [ref=f34e210]: The Azure API URL and server-side API key are configured.
+                - generic [ref=f34e211]:
+                  - generic [ref=f34e212]:
+                    - heading "Azure" [level=2] [ref=f34e213]
+                    - generic [ref=f34e214]: 3 / 3 ready
+                  - generic [ref=f34e215]:
+                    - article [ref=f34e216]:
+                      - generic [ref=f34e220]:
+                        - generic [ref=f34e221]:
+                          - heading "Azure API" [level=3] [ref=f34e222]
+                          - generic [ref=f34e223]: Installed
+                        - paragraph [ref=f34e224]: The Segment Preview API is running.
+                    - article [ref=f34e225]:
+                      - generic [ref=f34e229]:
+                        - generic [ref=f34e230]:
+                          - heading "Application configuration" [level=3] [ref=f34e231]
+                          - generic [ref=f34e232]: Installed
+                        - paragraph [ref=f34e233]: All required application settings are configured.
+                    - article [ref=f34e234]:
+                      - generic [ref=f34e238]:
+                        - generic [ref=f34e239]:
+                          - heading "Managed Identity" [level=3] [ref=f34e240]
+                          - generic [ref=f34e241]: Installed
+                        - paragraph [ref=f34e242]: The Web App identity can access the Fabric REST API.
+                - generic [ref=f34e243]:
+                  - generic [ref=f34e244]:
+                    - heading "Fabric" [level=2] [ref=f34e245]
+                    - generic [ref=f34e246]: 3 / 3 ready
+                  - generic [ref=f34e247]:
+                    - article [ref=f34e248]:
+                      - generic [ref=f34e252]:
+                        - generic [ref=f34e253]:
+                          - heading "Dataverse shortcuts" [level=3] [ref=f34e254]
+                          - generic [ref=f34e255]: Installed
+                        - paragraph [ref=f34e256]: All 4 required Dataverse shortcuts are available.
+                    - article [ref=f34e257]:
+                      - generic [ref=f34e261]:
+                        - generic [ref=f34e262]:
+                          - heading "Fabric SQL endpoint" [level=3] [ref=f34e263]
+                          - generic [ref=f34e264]: Installed
+                        - paragraph [ref=f34e265]: The Web App identity can connect to the Fabric SQL endpoint.
+                    - article [ref=f34e266]:
+                      - generic [ref=f34e270]:
+                        - generic [ref=f34e271]:
+                          - heading "Journeys event tables" [level=3] [ref=f34e272]
+                          - generic [ref=f34e273]: Installed
+                        - paragraph [ref=f34e274]: 153 Journeys event table(s) are available.
+              - region [ref=f34e275]:
+                - generic [ref=f34e276]:
+                  - generic [ref=f34e277]:
+                    - heading "Installation log" [level=2] [ref=f34e278]
+                    - paragraph [ref=f34e279]: 65 diagnostic events from this browser session. Secrets are excluded.
+                  - button "View installation log (65)" [ref=f34e280] [cursor=pointer]
+        - complementary [ref=f30e180]:
+          - text: 
+          - tablist [ref=f30e181]:
+            - tab "Chatten hier in Teams" [active] [ref=f30e184] [cursor=pointer]
+  - paragraph [ref=f30e193]: Chatten hier in Teams
+  - iframe

@@ -1,0 +1,199 @@
+- generic [ref=f42e1]:
+  - generic [ref=f42e2]:
+    - generic:
+      - banner [ref=f42e3]:
+        - link "Weiter zu Hauptinhalt" [ref=f42e4] [cursor=pointer]:
+          - /url: "#"
+        - button "App-Startfeld" [ref=f42e7] [cursor=pointer]: 
+        - text: Dynamics 365
+        - button "Customer Insights - Journeys" [ref=f42e8] [cursor=pointer]
+        - generic [ref=f42e9]:
+          - generic [aria-hidden] [ref=f42e11]: 
+          - searchbox "Suchen" [ref=f42e12]
+        - alert
+        - region [ref=f42e13]:
+          - region "Globale Befehle" [ref=f42e14]:
+            - menubar "Globale Befehle" [ref=f42e15]:
+              - menuitem "Assistent Bleiben Sie auf dem Laufenden mit Benachrichtigungen und Einblicken darüber, was neu ist und was fällig ist." [ref=f42e16] [cursor=pointer]:
+                - generic [ref=f42e18]: 
+              - menuitem "Neu Neuen Datensatz erstellen" [ref=f42e20] [cursor=pointer]:
+                - generic [ref=f42e22]: 
+              - menuitem "Einstellungen Richten Sie persönliche Optionen ein, und zeigen Sie die Datenschutzbestimmungen an." [ref=f42e24] [cursor=pointer]:
+                - generic [ref=f42e26]: 
+              - menuitem "Hilfe Hier finden Sie Hilfe und Schulungen." [ref=f42e28] [cursor=pointer]:
+                - generic [ref=f42e30]: 
+              - menuitem "Teams chats and channels integration Chat, collaborate, and share files with coworkers right from Dynamics 365." [ref=f42e32] [cursor=pointer]:
+                - generic [ref=f42e34]: 
+          - button "Kontomanager für Klaus Thyri" [ref=f42e38] [cursor=pointer]:
+            - generic [ref=f42e39]:
+              - generic [ref=f42e40]: Kontomanager für Klaus Thyri
+              - generic [aria-hidden] [ref=f42e42]: KT
+      - navigation "In Dynamics 365 navigieren" [ref=f42e43]:
+        - button "Siteübersicht" [ref=f42e44] [cursor=pointer]:
+          - generic [ref=f42e45]: 
+        - tree "In Dynamics 365 navigieren" [ref=f42e47]:
+          - treeitem "Letzte" [ref=f42e48] [cursor=pointer]:
+            - generic [ref=f42e49]: 
+          - treeitem "Angeheftet" [ref=f42e50] [cursor=pointer]:
+            - generic [ref=f42e51]: 
+          - treeitem "Interaktionen" [ref=f42e52]:
+            - group "Interaktionen" [ref=f42e53]:
+              - treeitem "Erste Schritte" [ref=f42e54] [cursor=pointer]
+              - treeitem "Kontaktverläufe" [ref=f42e57] [cursor=pointer]
+              - treeitem "Analyse" [ref=f42e60] [cursor=pointer]
+              - treeitem "Dashboard" [ref=f42e63] [cursor=pointer]
+              - treeitem "Auslöser" [ref=f42e66] [cursor=pointer]
+          - treeitem "Zielgruppe" [ref=f42e69]:
+            - group "Zielgruppe" [ref=f42e70]:
+              - treeitem "Segmente" [ref=f42e71] [cursor=pointer]
+              - treeitem "Kontakte" [ref=f42e74] [cursor=pointer]
+              - treeitem "Leads" [ref=f42e78] [cursor=pointer]
+              - treeitem "Zustimmungscenter" [ref=f42e83] [cursor=pointer]
+          - treeitem "Leadverwaltung" [ref=f42e86]:
+            - group "Leadverwaltung" [ref=f42e87]:
+              - treeitem "Bewertungsmodelle" [ref=f42e88] [cursor=pointer]
+              - treeitem "Qualifizierung" [ref=f42e100] [cursor=pointer]
+          - treeitem "Kanäle" [ref=f42e103]:
+            - group "Kanäle" [ref=f42e104]:
+              - treeitem "E-Mails" [ref=f42e105] [cursor=pointer]
+              - treeitem "Formulare" [ref=f42e108] [cursor=pointer]
+              - treeitem "Pushbenachrichtigungen" [ref=f42e111] [cursor=pointer]
+              - treeitem "Textnachrichten" [ref=f42e114] [cursor=pointer]
+              - treeitem "Weitere Kanäle" [ref=f42e117] [cursor=pointer]
+          - treeitem "Anlagen" [ref=f42e120]:
+            - group "Anlagen" [ref=f42e121]:
+              - treeitem "Bibliothek" [ref=f42e122] [cursor=pointer]
+              - treeitem "Vorlagen" [ref=f42e125] [cursor=pointer]
+              - treeitem "Inhaltsblöcke" [ref=f42e128] [cursor=pointer]
+              - treeitem "Text blocks" [ref=f42e131] [cursor=pointer]
+          - treeitem "Loyalty" [ref=f42e135]:
+            - group "Loyalty" [ref=f42e136]:
+              - treeitem "Loyalty Programs" [ref=f42e137] [cursor=pointer]
+              - treeitem "Loyalty Tiers" [ref=f42e141] [cursor=pointer]
+              - treeitem "Loyalty Profiles" [ref=f42e145] [cursor=pointer]
+              - treeitem "Coupon Codes" [ref=f42e149] [cursor=pointer]
+              - treeitem "Product Recommendations" [ref=f42e153] [cursor=pointer]
+          - treeitem "Meine Arbeit" [ref=f42e157]:
+            - group "Meine Arbeit" [ref=f42e158]:
+              - treeitem "Aktivitäten" [ref=f42e159] [cursor=pointer]
+          - treeitem "Settings" [ref=f42e164]:
+            - group "Settings" [ref=f42e165]:
+              - treeitem "Settings" [ref=f42e166] [cursor=pointer]
+              - treeitem "Countries" [ref=f42e170] [cursor=pointer]
+              - treeitem "Languages" [ref=f42e173] [cursor=pointer]
+        - button "Echtzeitkontaktverläufe (Bereich ändern)" [ref=f42e176] [cursor=pointer]: E
+      - generic [ref=f42e177]:
+        - main [ref=f42e178]:
+          - text: 
+          - iframe [ref=f42e179]:
+            - main [ref=f46e2]:
+              - generic [ref=f46e3]:
+                - generic [ref=f46e4]:
+                  - generic [ref=f46e5]:
+                    - heading "Sankey Test" [level=1] [ref=f46e6]
+                    - generic "Version 1.1.0.99" [ref=f46e7]: v1.1.0.99
+                  - generic [ref=f46e8]:
+                    - generic [ref=f46e9]: Calculated 01.10.26, 10:40
+                    - generic [ref=f46e10]: •Load time 7,0 s
+                - button "Refresh" [ref=f46e11] [cursor=pointer]
+              - region "Summary" [ref=f46e15]:
+                - generic [ref=f46e16]:
+                  - generic [ref=f46e17]: Starting members
+                  - generic [ref=f46e18]: "658"
+                - generic [ref=f46e19]:
+                  - generic [ref=f46e20]: Result
+                  - generic [ref=f46e21]: "73"
+                - generic [ref=f46e22]:
+                  - generic [ref=f46e23]: Retention
+                  - generic [ref=f46e24]: 11,09 %
+              - region "Cumulative member flow" [ref=f46e25]:
+                - generic [ref=f46e26]:
+                  - heading "Member flow" [level=2] [ref=f46e27]
+                  - generic [ref=f46e28]: Line width represents members
+                - group "Journey-style Sankey diagram with 5 cumulative filter stages" [ref=f46e30]:
+                  - 'generic "Active contact records: 658" [ref=f46e31]'
+                  - generic [ref=f46e35]:
+                    - generic [ref=f46e36]: Audience
+                    - generic [ref=f46e37]: Active contact records
+                  - generic [ref=f46e39]:
+                    - generic [ref=f46e40]: "658"
+                    - generic [ref=f46e41]: members
+                  - generic "22 excluded by Group 1 (3,3% of incoming population)" [ref=f46e42]
+                  - generic [ref=f46e45]:
+                    - generic [ref=f46e46]: − 22
+                    - generic [ref=f46e47]: members · 3,3%
+                  - 'generic "Profile filter: 636" [ref=f46e48]'
+                  - generic [ref=f46e52]:
+                    - generic [ref=f46e53]: Profile filter
+                    - 'generic "E-Mail Condition: E-Mail has a value" [ref=f46e54]'
+                  - generic [ref=f46e55]: Group 1
+                  - generic [ref=f46e63]:
+                    - generic [ref=f46e64]: "636"
+                    - generic [ref=f46e65]: members
+                  - generic "220 excluded by Group 2 (34,6% of incoming population)" [ref=f46e66]
+                  - generic [ref=f46e69]:
+                    - generic [ref=f46e70]: − 220
+                    - generic [ref=f46e71]: members · 34,6%
+                  - 'generic "Intersection: 416" [ref=f46e72]'
+                  - generic [ref=f46e76]:
+                    - generic [ref=f46e77]: Intersection
+                    - 'generic "Vorname Condition: Vorname contains a or Firstname contains a" [ref=f46e78]'
+                  - generic [ref=f46e79]: Group 2
+                  - generic [ref=f46e87]:
+                    - generic [ref=f46e88]: "416"
+                    - generic [ref=f46e89]: members
+                  - generic "416 excluded by Group 3 (100,0% of incoming population)" [ref=f46e90]
+                  - generic [ref=f46e93]:
+                    - generic [ref=f46e94]: − 416
+                    - generic [ref=f46e95]: members · 100,0%
+                  - 'generic "Intersection: 0" [ref=f46e96]'
+                  - generic [ref=f46e100]:
+                    - generic [ref=f46e101]: Intersection
+                    - 'generic "Email delivered Scope: Contact interactions with a message template Email: bank99 - Bestätigung Termin Frequency: At least 1 occurrence Period: Last 24 months" [ref=f46e102]'
+                  - generic [ref=f46e103]: Group 3
+                  - generic [ref=f46e111]:
+                    - generic [ref=f46e112]: "0"
+                    - generic [ref=f46e113]: members
+                  - generic "73 members added by Group 4" [ref=f46e114]
+                  - generic [ref=f46e117]:
+                    - generic [ref=f46e118]: "+73"
+                    - generic [ref=f46e119]: members
+                  - generic [ref=f46e121]:
+                    - generic [ref=f46e122]: "73"
+                    - generic [ref=f46e123]: members
+                  - 'generic "Union: 73" [ref=f46e124]'
+                  - generic [ref=f46e128]:
+                    - generic [ref=f46e129]: Union
+                    - 'generic "Newsletter 2026, 73 static Contacts Source: Referenced segment" [ref=f46e130]'
+                  - generic [ref=f46e131]: Group 4
+                  - 'generic "Result: 73 members" [ref=f46e138]'
+                  - generic [ref=f46e142]:
+                    - generic [ref=f46e143]: Result
+                    - generic [ref=f46e144]: 73 members
+                  - generic [ref=f46e145]:
+                    - 'button "Audience: Active contact records. Open member list." [ref=f46e146] [cursor=pointer]'
+                    - button "− 22 members (3,3%). Open member list." [ref=f46e147] [cursor=pointer]
+                    - 'button "Profile filter: E-Mail Condition: E-Mail has a value. Open member list." [ref=f46e148] [cursor=pointer]'
+                    - button "− 220 members (34,6%). Open member list." [ref=f46e149] [cursor=pointer]
+                    - 'button "Intersection: Vorname Condition: Vorname contains a or Firstname contains a. Open member list." [ref=f46e150] [cursor=pointer]'
+                    - button "− 416 members (100,0%). Open member list." [ref=f46e151] [cursor=pointer]
+                    - 'button "Intersection: Email delivered Scope: Contact interactions with a message template Email: bank99 - Bestätigung Termin Frequency: At least 1 occurrence Period: Last 24 months. Open member list." [ref=f46e152] [cursor=pointer]'
+                    - button "+73 members. Open member list." [ref=f46e153] [cursor=pointer]
+                    - 'button "Union: Newsletter 2026, 73 static Contacts Source: Referenced segment. Open member list." [ref=f46e154] [cursor=pointer]'
+                    - 'button "Result: 73 members. Open member list." [ref=f46e155] [cursor=pointer]'
+                  - generic [ref=f46e156]:
+                    - button "Show full filter criterion for Group 1" [ref=f46e159] [cursor=pointer]
+                    - button "Show full filter criterion for Group 2" [ref=f46e163] [cursor=pointer]
+                    - button "Show full filter criterion for Group 3" [ref=f46e167] [cursor=pointer]
+                    - button "Show full filter criterion for Group 4" [ref=f46e171] [cursor=pointer]
+              - group [ref=f46e173]:
+                - 'generic "Performance diagnostics Last request: 7.0 s · Fabric SQL: 0.4 s · Cache network ⌄" [ref=f46e174] [cursor=pointer]':
+                  - generic [ref=f46e175]: Performance diagnostics
+                  - generic [ref=f46e176]: "Last request: 7.0 s · Fabric SQL: 0.4 s · Cache network"
+                  - text: ⌄
+        - complementary [ref=f42e180]:
+          - text: 
+          - tablist [ref=f42e181]:
+            - tab "Chatten hier in Teams" [active] [ref=f42e184] [cursor=pointer]
+  - iframe
+  - paragraph [ref=f42e193]: Chatten hier in Teams
