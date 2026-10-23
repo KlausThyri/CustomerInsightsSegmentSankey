@@ -7,6 +7,196 @@ namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
 
 public sealed class SegmentCountSqlCompilerTests
 {
+    [Theory]
+    [InlineData("and")]
+    [InlineData("or")]
+    public void Compile_SiblingPaths_CorrelatesEachRootAndPreservesSharedFilter(string kind)
+    {
+        var profile = SiblingProfile(new SegmentCondition
+        {
+            Kind = kind,
+            Children =
+            [
+                QualifiedPredicate("tier", "name", "==", Json("\"Gold\"")),
+                QualifiedPredicate("program", "name", "==", Json("\"Rewards\""))
+            ]
+        });
+        var result = Compile(Request(profile),
+            Table("dataverse", "contact", "contactid", "statecode"),
+            Table("dataverse", "loyalty", "contactid", "tierid", "programid"),
+            Table("dataverse", "tier", "tierid", "name"),
+            Table("dataverse", "program", "programid", "name"));
+
+        Assert.Contains("r1.[contactid] = p.[contactid]", result.Sql);
+        Assert.Contains("r3.[contactid] = p.[contactid]", result.Sql);
+        Assert.Contains("r2.[tierid] = r1.[tierid]", result.Sql);
+        Assert.Contains("r4.[programid] = r3.[programid]", result.Sql);
+        Assert.Contains("r2.[name] = @p1", result.Sql);
+        Assert.Contains("r4.[name] = @p2", result.Sql);
+        Assert.Contains(kind == "or" ? " OR " : " AND ", result.Sql);
+        Assert.Contains("LEFT JOIN", result.Sql);
+        Assert.Contains("SELECT DISTINCT previous.ProfileId", result.Sql);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("program")]
+    public void Compile_SiblingPaths_RejectsUnknownAndForwardSources(string source)
+    {
+        var profile = SiblingProfile(QualifiedPredicate("tier", "name", "==", Json("\"Gold\"")));
+        profile.Steps[0].Relationships[0].SourceAlias = source;
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(Request(profile),
+            Table("dataverse", "contact", "contactid", "statecode")));
+
+        Assert.Equal("invalid_relationship", exception.Code);
+        Assert.Contains("unknown or forward-referenced", exception.Message);
+    }
+
+    [Fact]
+    public void Compile_SiblingPaths_RootNotUsesAntiExistence()
+    {
+        var profile = SiblingProfile(new SegmentCondition
+        {
+            Kind = "not",
+            Children =
+            [
+                new SegmentCondition
+                {
+                    Kind = "or",
+                    Children =
+                    [
+                        QualifiedPredicate("tier", "name", "==", Json("\"Gold\"")),
+                        QualifiedPredicate("program", "name", "==", Json("\"Rewards\""))
+                    ]
+                }
+            ]
+        });
+        var result = CompileSibling(profile);
+
+        Assert.Contains("NOT EXISTS (SELECT 1", result.Sql);
+        Assert.Contains("(r2.[name] = @p1 OR r4.[name] = @p2)", result.Sql);
+    }
+
+    [Fact]
+    public void Compile_SiblingPaths_OptionalMissingRowsDoNotEliminateRootOrPredicate()
+    {
+        var profile = SiblingProfile(new SegmentCondition
+        {
+            Kind = "or",
+            Children =
+            [
+                Predicate("statecode", "==", Json("0")),
+                QualifiedPredicate("tier", "name", "ISNULL", default)
+            ]
+        });
+        var result = CompileSibling(profile);
+
+        Assert.Contains("(p.[statecode] = @p1 OR r2.[name] IS NULL)", result.Sql);
+        Assert.DoesNotContain(" INNER JOIN [dataverse].[loyalty]", result.Sql);
+    }
+
+    [Theory]
+    [InlineData(null, "mixed")]
+    [InlineData("tier_source", "duplicated")]
+    public void Compile_SiblingPaths_RejectsMixedContractsAndDuplicateAliases(
+        string? source, string error)
+    {
+        var profile = SiblingProfile(QualifiedPredicate("tier", "name", "==", Json("\"Gold\"")));
+        if (source == null)
+        {
+            profile.Steps[0].Relationships[1].SourceAlias = null;
+        }
+        else
+        {
+            profile.Steps[0].Relationships[1].Alias = source;
+        }
+
+        var exception = Assert.Throws<SegmentQueryException>(() => CompileSibling(profile));
+        Assert.Equal("invalid_relationship", exception.Code);
+        Assert.Contains(error, exception.Message);
+    }
+
+    [Fact]
+    public void Compile_SiblingPaths_ManyToManyKeepsJunctionWithItsBranch()
+    {
+        var profile = SiblingProfile(QualifiedPredicate("tier", "name", "==", Json("\"Gold\"")));
+        var hop = profile.Steps[0].Relationships[1];
+        hop.IntersectEntity = "loyalty_tier";
+        hop.SourcePrimaryAttribute = "loyaltyid";
+        hop.RelatedPrimaryAttribute = "tierid";
+        hop.SourceIntersectAttribute = "loyaltyid";
+        hop.RelatedIntersectAttribute = "tierid";
+        var result = Compile(Request(profile),
+            Table("dataverse", "contact", "contactid", "statecode"),
+            Table("dataverse", "loyalty", "loyaltyid", "contactid", "tierid", "programid"),
+            Table("dataverse", "tier", "tierid", "name"),
+            Table("dataverse", "program", "programid", "name"),
+            Table("dataverse", "loyalty_tier", "loyaltyid", "tierid"));
+
+        Assert.Contains("LEFT JOIN ([dataverse].[loyalty_tier] AS j2 INNER JOIN", result.Sql);
+        Assert.Contains("r2.[tierid] = j2.[tierid]", result.Sql);
+        Assert.Contains("j2.[loyaltyid] = r1.[loyaltyid]", result.Sql);
+        Assert.Contains("r3.[contactid] = p.[contactid]", result.Sql);
+    }
+
+    private static CompiledSegmentCountQuery CompileSibling(SegmentOperand profile) =>
+        Compile(Request(profile),
+            Table("dataverse", "contact", "contactid", "statecode"),
+            Table("dataverse", "loyalty", "contactid", "tierid", "programid"),
+            Table("dataverse", "tier", "tierid", "name"),
+            Table("dataverse", "program", "programid", "name"));
+
+    [Fact]
+    public void Compile_SiblingPaths_MemberQueryReusesTheSameRelationshipStages()
+    {
+        var request = Request(SiblingProfile(
+            QualifiedPredicate("tier", "name", "==", Json("\"Gold\""))));
+        var catalog = Catalog(
+            Table("dataverse", "contact", "contactid", "statecode", "fullname"),
+            Table("dataverse", "loyalty", "contactid", "tierid", "programid"),
+            Table("dataverse", "tier", "tierid", "name"),
+            Table("dataverse", "program", "programid", "name"));
+        var compiler = new SegmentCountSqlCompiler();
+        var counts = compiler.Compile(request, catalog);
+        var members = compiler.CompileMemberQuery(request.Query, catalog,
+            new SegmentMemberCompileOptions(1, "stage", "fullname", true,
+                null, null, null, null, 10, null));
+
+        var stageStart = counts.Sql.IndexOf("[profile_step_", StringComparison.Ordinal);
+        var stageEnd = counts.Sql.IndexOf("\nSELECT", stageStart, StringComparison.Ordinal);
+        Assert.True(stageStart >= 0 && stageEnd > stageStart);
+        Assert.Contains(counts.Sql[stageStart..stageEnd].TrimEnd(), members.Sql);
+    }
+
+    private static SegmentOperand SiblingProfile(SegmentCondition condition) => new()
+    {
+        Kind = "profile",
+        ProfileEntity = "contact",
+        BaseLabel = "Contacts",
+        BaseDetail = "Sibling paths",
+        Steps =
+        [
+            new SegmentFilterStep
+            {
+                Kind = "relationship",
+                Label = "Tier and program",
+                Detail = "Shared filter over sibling paths",
+                Condition = condition,
+                Relationships =
+                [
+                    new() { Alias = "tier_source", SourceAlias = "", RelatedEntity = "loyalty",
+                        SourceAttribute = "contactid", RelatedAttribute = "contactid", IsOptional = true },
+                    new() { Alias = "tier", SourceAlias = "tier_source", RelatedEntity = "tier",
+                        SourceAttribute = "tierid", RelatedAttribute = "tierid", IsOptional = true },
+                    new() { Alias = "program_source", SourceAlias = "", RelatedEntity = "loyalty",
+                        SourceAttribute = "contactid", RelatedAttribute = "contactid", IsOptional = true },
+                    new() { Alias = "program", SourceAlias = "program_source", RelatedEntity = "program",
+                        SourceAttribute = "programid", RelatedAttribute = "programid", IsOptional = true }
+                ]
+            }
+        ]
+    };
+
     [Fact]
     public void Ast_CamelCaseUnionShape_DeserializesOperandAndSteps()
     {
@@ -256,6 +446,116 @@ public sealed class SegmentCountSqlCompilerTests
         Assert.Contains("r.[accountid] = p.[parentcustomerid]", result.Sql);
         Assert.Equal(3, result.Stages.Count);
         Assert.Equal(2, result.SourceTables.Count);
+    }
+
+    [Fact]
+    public void Compile_RelationshipFilter_ResolvesUnqualifiedProfileFieldsAlongsideRelatedFields()
+    {
+        var step = new SegmentFilterStep
+        {
+            Kind = "relationship",
+            Label = "Tier and country",
+            Detail = "Related loyalty tier and contact country",
+            Relationships =
+            [
+                new SegmentRelationshipHop
+                {
+                    Alias = "klth_loyaltyprofile_1",
+                    RelatedEntity = "klth_loyaltyprofile",
+                    SourceAttribute = "contactid",
+                    RelatedAttribute = "klth_contactid",
+                    IsOptional = true
+                }
+            ],
+            Condition = new SegmentCondition
+            {
+                Kind = "and",
+                Children =
+                [
+                    QualifiedPredicate("klth_loyaltyprofile_1", "klth_loyaltytierid", "==",
+                        Json("\"281ee42c-5421-f111-8341-7c1e5236d7ff\"")),
+                    new SegmentCondition
+                    {
+                        Kind = "predicate",
+                        Field = "klth_countryid",
+                        Operator = "in",
+                        Values = [Json("\"6d21de77-e021-f111-8341-7c1e5236d7ff\"")]
+                    },
+                    Predicate("statecode", "==", Json("0")),
+                    QualifiedPredicate("klth_loyaltyprofile_1", "statecode", "==", Json("0"))
+                ]
+            }
+        };
+        var profile = new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Contacts",
+            BaseDetail = "PROFILE(contact)",
+            Steps = [step]
+        };
+        var result = Compile(
+            Request(profile),
+            Table("dataverse", "contact", "contactid", "statecode", "klth_countryid"),
+            Table("dataverse", "klth_loyaltyprofile", "klth_contactid", "klth_loyaltytierid", "statecode"));
+
+        Assert.Contains("r.[klth_loyaltytierid] = @p1", result.Sql);
+        Assert.Contains("p.[klth_countryid]", result.Sql);
+        Assert.DoesNotContain("r.[klth_countryid]", result.Sql);
+        Assert.Contains("p.[statecode] = @p3", result.Sql);
+        Assert.Contains("r.[statecode] = @p4", result.Sql);
+    }
+
+    [Theory]
+    [InlineData(null, "klth_countryid", "contact")]
+    [InlineData("missing_alias", "klth_countryid", "missing_alias")]
+    public void Compile_RelationshipPath_DoesNotGuessFieldScopeFromAvailableColumns(
+        string? qualifier,
+        string field,
+        string expectedErrorTable)
+    {
+        var profile = new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Contacts",
+            BaseDetail = "PROFILE(contact)",
+            Steps =
+            [
+                new SegmentFilterStep
+                {
+                    Kind = "relationship",
+                    Label = "Related filter",
+                    Detail = "Unqualified fields belong to the profile",
+                    Relationships =
+                    [
+                        new SegmentRelationshipHop
+                        {
+                            Alias = "loyalty_1",
+                            RelatedEntity = "klth_loyaltyprofile",
+                            SourceAttribute = "contactid",
+                            RelatedAttribute = "klth_contactid"
+                        }
+                    ],
+                    Condition = new SegmentCondition
+                    {
+                        Kind = "predicate",
+                        Qualifier = qualifier,
+                        Field = field,
+                        Operator = "==",
+                        Value = Json("\"country\"")
+                    }
+                }
+            ]
+        };
+
+        var exception = Assert.Throws<SegmentQueryException>(() => Compile(
+            Request(profile),
+            Table("dataverse", "contact", "contactid", "statecode"),
+            Table("dataverse", "klth_loyaltyprofile", "klth_contactid", "klth_countryid")));
+
+        Assert.Equal("invalid_identifier", exception.Code);
+        Assert.Contains(expectedErrorTable, exception.Message);
     }
 
     [Fact]

@@ -14,6 +14,100 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
     public sealed class PresentationDetailTests
     {
         [Fact]
+        public void SiblingRelationships_DiscoverDependenciesFromEveryBranch()
+        {
+            const string mql =
+                "PROFILE(contact).RELATEOPTIONAL(order_customer_contacts, order_1)" +
+                ".RELATEOPTIONAL(contact_accounts, account_1)" +
+                ".FILTER(order_1.name == 'First' OR account_1.name == 'Second')";
+            var definitionId = Guid.NewGuid();
+            var service = new StubOrganizationService(
+                new Entity("msdynmkt_segmentdefinition", definitionId)
+                {
+                    ["msdynmkt_segmentquery"] = mql,
+                    ["modifiedon"] = DateTime.UtcNow
+                });
+            var assembly = typeof(
+                CustomerInsightsSegmentSankey.CustomApi.GetSegmentFilterCountsPlugin).Assembly;
+            var resolverType = assembly.GetType(
+                "CustomerInsightsSegmentSankey.CustomApi.FabricTableDependencyResolver", true);
+            var resolver = Activator.CreateInstance(resolverType,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                null, new object[] { service, null }, null);
+            var parserType = assembly.GetType(
+                "CustomerInsightsSegmentSankey.CustomApi.MqlParser", true);
+            var parser = Activator.CreateInstance(parserType,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                null, new object[] { mql }, null);
+            var query = parserType.GetMethod("Parse").Invoke(parser, null);
+            var operand = query.GetType().GetProperty("FirstOperand").GetValue(query);
+            var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var events = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            resolverType.GetMethod("ResolveOperand", BindingFlags.Instance | BindingFlags.NonPublic)
+                .Invoke(resolver, new object[] { operand, tables, events, new HashSet<Guid>() });
+            Assert.Equal(new[] { "account", "contact", "salesorder" }, tables.OrderBy(name => name));
+
+            var request = BuildRequest(service, definitionId);
+            var builtQuery = request.GetType().GetProperty("Query").GetValue(request);
+            var builtOperand = builtQuery.GetType().GetProperty("FirstOperand").GetValue(builtQuery);
+            tables.Clear();
+            resolverType.GetMethod("ResolveBuiltOperand", BindingFlags.Static | BindingFlags.NonPublic)
+                .Invoke(null, new object[] { builtOperand, tables, events });
+            Assert.Equal(new[] { "account", "contact", "salesorder" }, tables.OrderBy(name => name));
+        }
+
+        [Fact]
+        public void SiblingRelationships_PreserveSourceBindingsAndPresentationEntities()
+        {
+            var definitionId = Guid.NewGuid();
+            var service = new StubOrganizationService(
+                new Entity("msdynmkt_segmentdefinition", definitionId)
+                {
+                    ["msdynmkt_segmentquery"] =
+                        "PROFILE(contact)" +
+                        ".RELATEOPTIONAL(order_customer_contacts, order_1, RELATEOPTIONAL(order_details, detail_1))" +
+                        ".RELATEOPTIONAL(order_customer_contacts, order_2)" +
+                        ".FILTER(detail_1.name == 'First' AND order_2.name == 'Second' AND firstname == 'Ada')",
+                    ["modifiedon"] = DateTime.UtcNow
+                });
+
+            var request = BuildRequest(service, definitionId);
+            var query = request.GetType().GetProperty("Query").GetValue(request);
+            var operand = query.GetType().GetProperty("FirstOperand").GetValue(query);
+            var steps = ((IEnumerable)operand.GetType().GetProperty("Steps").GetValue(operand))
+                .Cast<object>().ToList();
+
+            Assert.Equal(3, steps.Count);
+            foreach (var step in steps)
+            {
+                var hops = ((IEnumerable)step.GetType().GetProperty("Relationships").GetValue(step))
+                    .Cast<object>().ToList();
+                Assert.Equal(3, hops.Count);
+                Assert.Equal(new[] { "", "order_1", "" },
+                    hops.Select(hop => (string)hop.GetType().GetProperty("SourceAlias").GetValue(hop)));
+                Assert.Equal(new[] { "order_1", "detail_1", "order_2" },
+                    hops.Select(hop => (string)hop.GetType().GetProperty("Alias").GetValue(hop)));
+            }
+
+            Assert.Equal(new[] { "salesorderdetail", "salesorder", "contact" },
+                steps.Select(step =>
+                {
+                    var hint = step.GetType().GetProperty("Presentation").GetValue(step);
+                    return (string)hint.GetType().GetProperty("Entity").GetValue(hint);
+                }));
+            using (var stream = new System.IO.MemoryStream())
+            {
+                var serializer = new System.Runtime.Serialization.Json.DataContractJsonSerializer(
+                    request.GetType());
+                serializer.WriteObject(stream, request);
+                var json = System.Text.Encoding.UTF8.GetString(stream.ToArray());
+                Assert.Contains("\"sourceAlias\":\"\"", json);
+                Assert.Contains("\"sourceAlias\":\"order_1\"", json);
+            }
+        }
+
+        [Fact]
         public void InteractionSetOperation_UsesReadableEventFrequencyAndPeriod()
         {
             var definitionId = Guid.NewGuid();
@@ -383,7 +477,30 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
             {
                 var relationshipRequest = request as RetrieveRelationshipRequest;
                 if (relationshipRequest != null &&
-                    relationshipRequest.Name == "order_customer_contacts")
+                    relationshipRequest.Name == "order_details")
+                {
+                    return new RetrieveRelationshipResponse
+                    {
+                        Results = new ParameterCollection
+                        {
+                            {
+                                "RelationshipMetadata",
+                                new OneToManyRelationshipMetadata
+                                {
+                                    SchemaName = relationshipRequest.Name,
+                                    ReferencedEntity = "salesorder",
+                                    ReferencedAttribute = "salesorderid",
+                                    ReferencingEntity = "salesorderdetail",
+                                    ReferencingAttribute = "salesorderid"
+                                }
+                            }
+                        }
+                    };
+                }
+
+                if (relationshipRequest != null &&
+                    (relationshipRequest.Name == "order_customer_contacts" ||
+                     relationshipRequest.Name == "contact_accounts"))
                 {
                     return new RetrieveRelationshipResponse
                     {
@@ -396,7 +513,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
                                     SchemaName = relationshipRequest.Name,
                                     ReferencedEntity = "contact",
                                     ReferencedAttribute = "contactid",
-                                    ReferencingEntity = "salesorder",
+                                    ReferencingEntity = relationshipRequest.Name == "contact_accounts"
+                                        ? "account"
+                                        : "salesorder",
                                     ReferencingAttribute = "customerid"
                                 }
                             }

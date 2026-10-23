@@ -72,12 +72,17 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
                 if (IsWord("RELATE") || IsWord("RELATEOPTIONAL"))
                 {
-                    var relationship = ParseRelationshipPath();
-                    Expect(MqlTokenKind.Dot, "'.FILTER' after relationship path");
+                    var relationships = new List<RelationshipPath>();
+                    do
+                    {
+                        relationships.Add(ParseRelationshipPath());
+                        Expect(MqlTokenKind.Dot, "'.FILTER' after relationship path");
+                    }
+                    while (IsWord("RELATE") || IsWord("RELATEOPTIONAL"));
                     steps.Add(new RelationshipFilterStep(
-                        relationship,
+                        relationships,
                         ParseFilter(),
-                        relationship.IsOptional));
+                        relationships[0].IsOptional));
                     continue;
                 }
 

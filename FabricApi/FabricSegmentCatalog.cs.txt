@@ -4,17 +4,37 @@ using Microsoft.Data.SqlClient;
 
 namespace CustomerInsightsSegmentSankey.FabricApi;
 
-internal sealed class FabricSegmentCatalog(
-    FabricConnectionFactory connectionFactory,
-    FabricRuntimeOptions runtimeOptions,
-    ILogger<FabricSegmentCatalog> logger)
+internal sealed class FabricSegmentCatalog
 {
     private static readonly string[] Schemas = ["dataverse", "journeys"];
     private static readonly TimeSpan DataverseTableWaitTimeout =
         TimeSpan.FromSeconds(15);
     private readonly SemaphoreSlim refreshLock = new(1, 1);
-    private readonly TimeSpan cacheDuration = runtimeOptions.CatalogCacheDuration;
+    private readonly TimeSpan cacheDuration;
+    private readonly ILogger<FabricSegmentCatalog> logger;
+    private readonly Func<IReadOnlyList<string>?, CancellationToken, Task<FabricSegmentCatalogSnapshot>> loadSnapshot;
     private volatile FabricSegmentCatalogSnapshot? snapshot;
+
+    public FabricSegmentCatalog(
+        FabricConnectionFactory connectionFactory,
+        FabricRuntimeOptions runtimeOptions,
+        ILogger<FabricSegmentCatalog> logger)
+        : this(
+            (tables, token) => LoadAsync(connectionFactory, tables, token),
+            runtimeOptions.CatalogCacheDuration,
+            logger)
+    {
+    }
+
+    internal FabricSegmentCatalog(
+        Func<IReadOnlyList<string>?, CancellationToken, Task<FabricSegmentCatalogSnapshot>> loadSnapshot,
+        TimeSpan cacheDuration,
+        ILogger<FabricSegmentCatalog> logger)
+    {
+        this.loadSnapshot = loadSnapshot;
+        this.cacheDuration = cacheDuration;
+        this.logger = logger;
+    }
 
     public async Task<FabricSegmentCatalogSnapshot> GetSnapshotAsync(
         CancellationToken cancellationToken)
@@ -28,11 +48,6 @@ internal sealed class FabricSegmentCatalog(
         await RefreshAsync(cancellationToken);
         return snapshot ?? throw new InvalidOperationException(
             "The Fabric segment catalog could not be initialized.");
-    }
-
-    public async Task RefreshAsync(CancellationToken cancellationToken)
-    {
-        await RefreshAsync(cancellationToken, false);
     }
 
     public async Task WaitForDataverseTablesAsync(
@@ -61,7 +76,7 @@ internal sealed class FabricSegmentCatalog(
                 .ToList();
             while (missing.Count > 0)
             {
-                await RefreshAsync(waitToken, true);
+                await RefreshMissingDataverseTablesAsync(missing, waitToken);
                 current = snapshot;
                 missing = current is null
                     ? required
@@ -86,6 +101,43 @@ internal sealed class FabricSegmentCatalog(
         }
     }
 
+    private async Task RefreshMissingDataverseTablesAsync(
+        IReadOnlyList<string> requiredTables,
+        CancellationToken cancellationToken)
+    {
+        await refreshLock.WaitAsync(cancellationToken);
+        try
+        {
+            var current = snapshot ?? throw new InvalidOperationException(
+                "The Fabric segment catalog could not be initialized.");
+            var missing = requiredTables
+                .Where(table => !current.ContainsDataverse(table))
+                .ToList();
+            if (missing.Count == 0)
+            {
+                return;
+            }
+
+            var additions = await loadSnapshot(missing, cancellationToken);
+            snapshot = current.Merge(additions);
+            logger.LogInformation(
+                "Refreshed Fabric catalog metadata for {TableCount} requested Dataverse tables.",
+                missing.Count);
+        }
+        catch (Exception exception) when (
+            exception is SqlException or AuthenticationFailedException)
+        {
+            logger.LogWarning(
+                exception,
+                "The targeted Fabric catalog refresh failed; the existing snapshot remains unchanged.");
+            throw;
+        }
+        finally
+        {
+            refreshLock.Release();
+        }
+    }
+
     public async Task<IReadOnlyList<string>> GetMissingDataverseTablesAsync(
         IEnumerable<string> requiredTables,
         CancellationToken cancellationToken)
@@ -99,14 +151,10 @@ internal sealed class FabricSegmentCatalog(
             .ToList();
     }
 
-    private async Task RefreshAsync(
-        CancellationToken cancellationToken,
-        bool force)
+    public async Task RefreshAsync(CancellationToken cancellationToken)
     {
-        var refreshRequestedAt = DateTimeOffset.UtcNow;
         var current = snapshot;
-        if (!force &&
-            current is not null &&
+        if (current is not null &&
             DateTimeOffset.UtcNow - current.LoadedAt < cacheDuration)
         {
             return;
@@ -116,15 +164,7 @@ internal sealed class FabricSegmentCatalog(
         try
         {
             current = snapshot;
-            if (force &&
-                current is not null &&
-                current.LoadedAt >= refreshRequestedAt)
-            {
-                return;
-            }
-
-            if (!force &&
-                current is not null &&
+            if (current is not null &&
                 DateTimeOffset.UtcNow - current.LoadedAt < cacheDuration)
             {
                 return;
@@ -168,23 +208,63 @@ internal sealed class FabricSegmentCatalog(
         }
     }
 
-    private async Task<FabricSegmentCatalogSnapshot> LoadAsync(
+    private Task<FabricSegmentCatalogSnapshot> LoadAsync(
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        return loadSnapshot(null, cancellationToken);
+    }
+
+    internal static SqlCommand CreateCatalogCommand(IReadOnlyList<string>? requiredTables)
+    {
+        var command = new SqlCommand
+        {
+            CommandTimeout = 90
+        };
+        if (requiredTables is not null)
+        {
+            if (requiredTables.Count == 0)
+            {
+                throw new ArgumentException("At least one table is required.", nameof(requiredTables));
+            }
+
+            var parameters = requiredTables.Select((_, index) => "@table" + index).ToList();
+            command.CommandText = """
+                SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = @dataverse AND TABLE_NAME IN (
+                """ + string.Join(", ", parameters) + ");";
+            command.Parameters.AddWithValue("@dataverse", Schemas[0]);
+            for (var index = 0; index < requiredTables.Count; index++)
+            {
+                command.Parameters.AddWithValue(
+                    parameters[index],
+                    requiredTables[index].Trim().ToLowerInvariant());
+            }
+        }
+        else
+        {
+            command.CommandText = """
             SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME
             FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA IN (@dataverse, @journeys)
             ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION;
             """;
+            command.Parameters.AddWithValue("@dataverse", Schemas[0]);
+            command.Parameters.AddWithValue("@journeys", Schemas[1]);
+        }
+
+        return command;
+    }
+
+    private static async Task<FabricSegmentCatalogSnapshot> LoadAsync(
+        FabricConnectionFactory connectionFactory,
+        IReadOnlyList<string>? requiredTables,
+        CancellationToken cancellationToken)
+    {
         var tables = new Dictionary<string, MutableTable>(StringComparer.OrdinalIgnoreCase);
         await using var connection = await connectionFactory.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(sql, connection)
-        {
-            CommandTimeout = 90
-        };
-        command.Parameters.AddWithValue("@dataverse", Schemas[0]);
-        command.Parameters.AddWithValue("@journeys", Schemas[1]);
+        await using var command = CreateCatalogCommand(requiredTables);
+        command.Connection = connection;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -235,6 +315,19 @@ internal sealed class FabricSegmentCatalogSnapshot
     }
 
     public DateTimeOffset LoadedAt { get; }
+
+    public FabricSegmentCatalogSnapshot Merge(FabricSegmentCatalogSnapshot additions)
+    {
+        var merged = new Dictionary<string, EventTableDescriptor>(
+            tables, StringComparer.OrdinalIgnoreCase);
+        foreach (var table in additions.tables)
+        {
+            merged[table.Key] = table.Value;
+        }
+
+        // Targeted additions do not postpone the next full catalog refresh.
+        return new FabricSegmentCatalogSnapshot(LoadedAt, merged.Values);
+    }
 
     public EventTableDescriptor ResolveDataverse(string requestedTable)
     {

@@ -165,6 +165,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
     [DataContract]
     internal sealed class FabricRelationshipHopRequest
     {
+        [DataMember(Name = "sourceAlias", Order = 11, EmitDefaultValue = false)]
+        public string SourceAlias { get; set; }
+
         [DataMember(Name = "alias", Order = 1)]
         public string Alias { get; set; }
 

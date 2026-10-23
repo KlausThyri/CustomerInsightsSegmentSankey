@@ -24,7 +24,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
   return {
-    "contentVersion": "1.1.0.101",
+    "contentVersion": "1.1.0.105",
     "notebook": {
       "displayName": "Customer Insights Serving Bootstrap",
       "description": "Registers Journeys event folders and selected Dataverse mirror tables in one serving Lakehouse.",
@@ -549,9 +549,9 @@
       }
     },
     "api": {
-      "version": "1.1.0.101",
-      "packageUrl": "https://github.com/KlausThyri/CustomerInsightsSegmentSankey/releases/download/v1.1.0.101/segment-preview-api-1.1.0.101.zip",
-      "sha256": "19ea3570c04b8fd7f47f3de5f807c3b8d48ad5338431427da0b2c80c95795162",
+      "version": "1.1.0.105",
+      "packageUrl": "https://github.com/KlausThyri/CustomerInsightsSegmentSankey/releases/download/v1.1.0.105/segment-preview-api-1.1.0.105.zip",
+      "sha256": "91345c430b45e268ad2e3ccdc4f0a1ab1083b8367869ab540a3e1154f42b7aa6",
       "packageUrlTemplate": "https://github.com/KlausThyri/CustomerInsightsSegmentSankey/releases/download/v{version}/segment-preview-api-{version}.zip"
     }
   };

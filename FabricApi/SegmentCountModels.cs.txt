@@ -103,6 +103,9 @@ public sealed class SegmentPresentationHint
 
 public sealed class SegmentRelationshipHop
 {
+    // Null preserves the original linear-path contract; empty identifies the profile.
+    public string? SourceAlias { get; set; }
+
     public string Alias { get; set; } = string.Empty;
 
     public string RelatedEntity { get; set; } = string.Empty;

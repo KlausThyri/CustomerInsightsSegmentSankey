@@ -1,5 +1,6 @@
 #if FABRIC_API
 using CustomerInsightsSegmentSankey.FabricApi;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json;
 using Xunit;
 
@@ -7,6 +8,153 @@ namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
 
 public sealed class FabricSegmentCatalogTests
 {
+    [Fact]
+    public async Task WaitForDataverseTables_LoadsOnlyMissingTablesAndPreservesCache()
+    {
+        var loadedAt = DateTimeOffset.UtcNow;
+        var calls = new List<IReadOnlyList<string>?>();
+        var catalog = CreateCatalog((tables, _) =>
+        {
+            calls.Add(tables);
+            return Task.FromResult(tables is null
+                ? Snapshot(loadedAt, "contact")
+                : Snapshot(DateTimeOffset.UtcNow, "msdynci_webengagement7days"));
+        });
+
+        await catalog.WaitForDataverseTablesAsync(
+            ["contact", "msdynci_webengagement7days", "MSDYNCI_WEBENGAGEMENT7DAYS"],
+            CancellationToken.None);
+        await catalog.WaitForDataverseTablesAsync(
+            ["msdynci_webengagement7days"], CancellationToken.None);
+        await catalog.RefreshAsync(CancellationToken.None);
+
+        Assert.Equal(2, calls.Count);
+        Assert.Null(calls[0]);
+        Assert.Equal(["msdynci_webengagement7days"], calls[1]);
+        var snapshot = await catalog.GetSnapshotAsync(CancellationToken.None);
+        Assert.True(snapshot.ContainsDataverse("contact"));
+        Assert.True(snapshot.ContainsDataverse("msdynci_webengagement7days"));
+        Assert.Equal(loadedAt, snapshot.LoadedAt);
+    }
+
+    [Fact]
+    public async Task WaitForDataverseTables_PropagatesFailureWithoutDiscardingSnapshot()
+    {
+        var failure = new Azure.Identity.AuthenticationFailedException("test authentication failure");
+        var catalog = CreateCatalog((tables, _) => tables is null
+            ? Task.FromResult(Snapshot(DateTimeOffset.UtcNow, "contact"))
+            : Task.FromException<FabricSegmentCatalogSnapshot>(failure));
+
+        Assert.Same(failure, await Assert.ThrowsAsync<Azure.Identity.AuthenticationFailedException>(
+            () => catalog.WaitForDataverseTablesAsync(["missing"], CancellationToken.None)));
+        var snapshot = await catalog.GetSnapshotAsync(CancellationToken.None);
+        Assert.True(snapshot.ContainsDataverse("contact"));
+        Assert.False(snapshot.ContainsDataverse("missing"));
+    }
+
+    [Fact]
+    public async Task WaitForDataverseTables_PreservesCallerCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var catalog = CreateCatalog((tables, token) =>
+        {
+            if (tables is null)
+            {
+                return Task.FromResult(Snapshot(DateTimeOffset.UtcNow, "contact"));
+            }
+
+            cancellation.Cancel();
+            return Task.FromCanceled<FabricSegmentCatalogSnapshot>(token);
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            catalog.WaitForDataverseTablesAsync(["missing"], cancellation.Token));
+    }
+
+    [Fact]
+    public async Task WaitForDataverseTables_ConcurrentRequestsDoNotDuplicateLoads()
+    {
+        var targetedLoads = 0;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var catalog = CreateCatalog(async (tables, token) =>
+        {
+            if (tables is null)
+            {
+                return Snapshot(DateTimeOffset.UtcNow, "contact");
+            }
+
+            Interlocked.Increment(ref targetedLoads);
+            started.SetResult();
+            await release.Task.WaitAsync(token);
+            return Snapshot(DateTimeOffset.UtcNow, "newtable");
+        });
+        var first = catalog.WaitForDataverseTablesAsync(["newtable"], CancellationToken.None);
+        await started.Task;
+        var second = catalog.WaitForDataverseTablesAsync(["newtable"], CancellationToken.None);
+        release.SetResult();
+        await Task.WhenAll(first, second);
+        Assert.Equal(1, targetedLoads);
+    }
+
+    [Fact]
+    public void TargetedCatalogCommand_FiltersSchemaAndParameterizesTableNames()
+    {
+        using var command = FabricSegmentCatalog.CreateCatalogCommand(
+            ["MSDYNCI_WEBENGAGEMENT7DAYS", "contact"]);
+        Assert.Contains("TABLE_SCHEMA = @dataverse", command.CommandText);
+        Assert.Contains("TABLE_NAME IN (@table0, @table1)", command.CommandText);
+        Assert.DoesNotContain("msdynci_webengagement7days", command.CommandText);
+        Assert.DoesNotContain("ORDER BY", command.CommandText);
+        Assert.Equal("dataverse", command.Parameters["@dataverse"].Value);
+        Assert.Equal("msdynci_webengagement7days", command.Parameters["@table0"].Value);
+        Assert.Equal("contact", command.Parameters["@table1"].Value);
+        Assert.Equal(3, command.Parameters.Count);
+    }
+
+    [Fact]
+    public void FullCatalogCommand_PreservesBothSchemas()
+    {
+        using var command = FabricSegmentCatalog.CreateCatalogCommand(null);
+        Assert.Contains("TABLE_SCHEMA IN (@dataverse, @journeys)", command.CommandText);
+        Assert.Equal("journeys", command.Parameters["@journeys"].Value);
+        Assert.DoesNotContain("TABLE_NAME IN", command.CommandText);
+    }
+
+    [Fact]
+    public void Merge_PreservesJourneyTablesAndReplacesCompleteDescriptors()
+    {
+        var original = new FabricSegmentCatalogSnapshot(
+            DateTimeOffset.UtcNow,
+            [
+                new EventTableDescriptor("journeys", "events", new Dictionary<string, string>()),
+                new EventTableDescriptor("dataverse", "contact", new Dictionary<string, string>())
+            ]);
+        var additions = new FabricSegmentCatalogSnapshot(
+            DateTimeOffset.UtcNow,
+            [new EventTableDescriptor("dataverse", "contact",
+                new Dictionary<string, string> { ["contactid"] = "contactid" })]);
+        var merged = original.Merge(additions);
+        Assert.Same(original.ResolveJourney("events"), merged.ResolveJourney("events"));
+        Assert.Same(additions.ResolveDataverse("contact"), merged.ResolveDataverse("contact"));
+        Assert.NotSame(original.ResolveDataverse("contact"), merged.ResolveDataverse("contact"));
+    }
+
+    private static FabricSegmentCatalog CreateCatalog(
+        Func<IReadOnlyList<string>?, CancellationToken, Task<FabricSegmentCatalogSnapshot>> loader)
+    {
+        return new FabricSegmentCatalog(
+            loader, TimeSpan.FromHours(1), NullLogger<FabricSegmentCatalog>.Instance);
+    }
+
+    private static FabricSegmentCatalogSnapshot Snapshot(DateTimeOffset loadedAt, params string[] tables)
+    {
+        return new FabricSegmentCatalogSnapshot(
+            loadedAt,
+            tables.Select(table => new EventTableDescriptor(
+                "dataverse", table, new Dictionary<string, string>())));
+    }
+
     [Fact]
     public void ContainsDataverse_UsesTheSameNormalizedLookupAsResolve()
     {

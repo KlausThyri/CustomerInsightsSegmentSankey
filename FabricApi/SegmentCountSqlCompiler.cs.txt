@@ -510,7 +510,8 @@ internal sealed class SegmentCountSqlCompiler
                     "A relationship filter step requires a condition.");
             }
 
-            var relationships = step.Relationships is { Count: > 0 }
+            var hasRelationshipPath = step.Relationships is { Count: > 0 };
+            var relationships = hasRelationshipPath
                 ? step.Relationships
                 :
                 [
@@ -528,9 +529,42 @@ internal sealed class SegmentCountSqlCompiler
             var relatedKeys = new List<string>();
             var sourceIntersectKeys = new List<string?>();
             var relatedIntersectKeys = new List<string?>();
-            var sourceTable = profileTable;
-            foreach (var relationship in relationships)
+            var sourceIndices = new List<int>();
+            var explicitSources = relationships.Any(hop => hop.SourceAlias != null);
+            var sourceAliases = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (var relationshipIndex = 0; relationshipIndex < relationships.Count; relationshipIndex++)
             {
+                var relationship = relationships[relationshipIndex];
+                var sourceIndex = relationshipIndex - 1;
+                if (explicitSources)
+                {
+                    if (relationship.SourceAlias == null)
+                    {
+                        throw new SegmentQueryException(
+                            "invalid_relationship",
+                            "Explicit relationship sources cannot be mixed with a legacy linear path.");
+                    }
+
+                    sourceIndex = -1;
+                    if (relationship.SourceAlias.Length > 0 &&
+                        !sourceAliases.TryGetValue(relationship.SourceAlias, out sourceIndex))
+                    {
+                        throw new SegmentQueryException(
+                            "invalid_relationship",
+                            $"Relationship source alias '{relationship.SourceAlias}' is unknown or forward-referenced.");
+                    }
+
+                    if (string.IsNullOrWhiteSpace(relationship.Alias) ||
+                        !sourceAliases.TryAdd(relationship.Alias, relationshipIndex))
+                    {
+                        throw new SegmentQueryException(
+                            "invalid_relationship",
+                            $"Relationship alias '{relationship.Alias}' is empty or duplicated.");
+                    }
+                }
+
+                sourceIndices.Add(sourceIndex);
+                var sourceTable = sourceIndex < 0 ? profileTable : relatedTables[sourceIndex];
                 var relatedTable = catalog.ResolveDataverse(relationship.RelatedEntity);
                 AddSource(relatedTable);
                 var hasIntersect = !string.IsNullOrWhiteSpace(relationship.IntersectEntity);
@@ -578,7 +612,6 @@ internal sealed class SegmentCountSqlCompiler
                 }
 
                 relatedTables.Add(relatedTable);
-                sourceTable = relatedTable;
             }
 
             var rootNot = IsRootNot(step.Condition);
@@ -616,8 +649,8 @@ internal sealed class SegmentCountSqlCompiler
 
             var condition = CompileRelationshipCondition(
                 conditionNode,
-                relatedTables[^1],
-                aliases[^1],
+                hasRelationshipPath ? profileTable : relatedTables[^1],
+                hasRelationshipPath ? "p" : aliases[^1],
                 conditionScopes,
                 depth + 1);
             var relationshipSql = new StringBuilder();
@@ -625,7 +658,68 @@ internal sealed class SegmentCountSqlCompiler
                 .Select(index => relationships.Count == 1 ? "j" : "j" + index)
                 .ToList();
             string correlation;
-            if (intersectTables[0] != null)
+            if (explicitSources)
+            {
+                string JoinTree(int index, int pathDepth)
+                {
+                    EnsureDepth(depth + pathDepth);
+                    var tree = new StringBuilder();
+                    if (intersectTables[index] != null)
+                    {
+                        tree.Append(Qualified(intersectTables[index]!))
+                            .Append(" AS ").Append(junctionAliases[index])
+                            .Append(" INNER JOIN ").Append(Qualified(relatedTables[index]))
+                            .Append(" AS ").Append(aliases[index])
+                            .Append(" ON ").Append(aliases[index]).Append('.')
+                            .Append(Quote(relatedKeys[index])).Append(" = ")
+                            .Append(junctionAliases[index]).Append('.')
+                            .Append(Quote(relatedIntersectKeys[index]!));
+                    }
+                    else
+                    {
+                        tree.Append(Qualified(relatedTables[index]))
+                            .Append(" AS ").Append(aliases[index]);
+                    }
+
+                    for (var child = index + 1; child < relationships.Count; child++)
+                    {
+                        if (sourceIndices[child] == index)
+                        {
+                            AppendJoin(tree, child, aliases[index], pathDepth + 1);
+                        }
+                    }
+
+                    return intersectTables[index] != null ||
+                        sourceIndices.Contains(index)
+                            ? "(" + tree + ")"
+                            : tree.ToString();
+                }
+
+                void AppendJoin(StringBuilder builder, int index, string parentAlias, int pathDepth)
+                {
+                    builder.Append(relationships[index].IsOptional ? " LEFT JOIN " : " INNER JOIN ")
+                        .Append(JoinTree(index, pathDepth)).Append(" ON ")
+                        .Append(intersectTables[index] != null ? junctionAliases[index] : aliases[index])
+                        .Append('.')
+                        .Append(Quote(intersectTables[index] != null
+                            ? sourceIntersectKeys[index]!
+                            : relatedKeys[index]))
+                        .Append(" = ").Append(parentAlias).Append('.')
+                        .Append(Quote(sourceKeys[index]));
+                }
+
+                relationshipSql.Append("FROM (SELECT 1 AS value) AS relationship_seed");
+                for (var index = 0; index < relationships.Count; index++)
+                {
+                    if (sourceIndices[index] < 0)
+                    {
+                        AppendJoin(relationshipSql, index, "p", 0);
+                    }
+                }
+
+                correlation = "1 = 1";
+            }
+            else if (intersectTables[0] != null)
             {
                 relationshipSql.Append("FROM ")
                     .Append(Qualified(intersectTables[0]!))
@@ -661,7 +755,7 @@ internal sealed class SegmentCountSqlCompiler
                     " = p." + Quote(sourceKeys[0]);
             }
 
-            for (var index = 1; index < relationships.Count; index++)
+            for (var index = 1; !explicitSources && index < relationships.Count; index++)
             {
                 if (intersectTables[index] != null)
                 {
@@ -909,7 +1003,6 @@ internal sealed class SegmentCountSqlCompiler
                         table = scope.Table;
                         alias = scope.Alias;
                     }
-
                     return alias + "." + Quote(ResolveColumn(table, field));
                 },
                 child => CompileRelationshipCondition(

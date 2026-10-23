@@ -279,10 +279,13 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     var relationship = step as RelationshipFilterStep;
                     if (relationship != null)
                     {
-                        AddRelationshipTables(
-                            profile.EntityName,
-                            relationship.Relationship,
-                            tables);
+                        foreach (var path in relationship.Relationships)
+                        {
+                            AddRelationshipTables(
+                                profile.EntityName,
+                                path,
+                                tables);
+                        }
                         if (ContainsConsentToken(relationship.Condition))
                         {
                             tables.Add(ConsentEntityName);

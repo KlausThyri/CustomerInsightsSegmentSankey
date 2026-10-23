@@ -375,16 +375,21 @@ namespace CustomerInsightsSegmentSankey.CustomApi
     internal sealed class RelationshipFilterStep : MqlFilterStep
     {
         public RelationshipFilterStep(
-            RelationshipPath relationship,
+            IList<RelationshipPath> relationships,
             ConditionNode condition,
             bool isOptional)
         {
-            Relationship = relationship;
+            Relationships = relationships;
             Condition = condition;
             IsOptional = isOptional;
         }
 
-        public RelationshipPath Relationship { get; private set; }
+        public IList<RelationshipPath> Relationships { get; private set; }
+
+        public RelationshipPath Relationship
+        {
+            get { return Relationships[0]; }
+        }
 
         public string RelationshipSchema
         {

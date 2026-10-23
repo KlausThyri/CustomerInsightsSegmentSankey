@@ -435,9 +435,15 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         "The segment definition contains an unknown profile filter.");
                 }
 
-                var relationships = ResolveRelationshipPath(
-                    profile.EntityName,
-                    relationship.Relationship);
+                var relationships = relationship.Relationships
+                    .SelectMany(path => ResolveRelationshipPath(
+                        profile.EntityName,
+                        path,
+                        relationship.Relationships.Count > 1))
+                    .ToList();
+                var relationshipDescription = string.Join(
+                    ", ",
+                    relationship.Relationships.Select(path => path.RelationshipSchema));
                 var firstRelationship = relationships[0];
                 var supportsLegacyRelationship =
                     relationships.Count == 1 &&
@@ -451,9 +457,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     result.Steps.Add(new FabricSegmentFilterStepRequest
                     {
                         Kind = "relationship",
-                        Label = "Relationship filter " + relationship.RelationshipSchema,
-                        Detail = HumanizeLogicalName(
-                                relationship.RelationshipSchema) +
+                        Label = "Relationship filter " + relationshipDescription,
+                        Detail = string.Join(", ", relationship.Relationships.Select(
+                                path => HumanizeLogicalName(path.RelationshipSchema))) +
                             "\nCondition: " +
                             DescribeConditionExpression(accumulated, false),
                         Condition = ConvertCondition(accumulated, false),
@@ -469,8 +475,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                         IsOptional = relationship.IsOptional,
                         Relationships = relationships,
                         Presentation = BuildPresentationHint(
-                            relationships[relationships.Count - 1].RelatedEntity,
-                            accumulated,
+                            ResolvePresentationEntity(
+                                profile.EntityName, relationships, condition),
+                            condition,
                             false),
                         GroupLabel = groupLabel
                     });
@@ -480,13 +487,41 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             return result;
         }
 
+        private static string ResolvePresentationEntity(
+            string profileEntity,
+            IList<FabricRelationshipHopRequest> relationships,
+            ConditionNode condition)
+        {
+            var predicate = FindFirstPredicate(condition);
+            if (predicate == null || string.IsNullOrWhiteSpace(predicate.Field.Qualifier))
+            {
+                return profileEntity;
+            }
+
+            var qualifier = predicate.Field.Qualifier;
+            var matches = relationships.Where(hop =>
+                string.Equals(hop.Alias, qualifier, StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(hop.Alias) &&
+                 hop.Alias.EndsWith("." + qualifier, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            if (matches.Count != 1)
+            {
+                throw new InvalidPluginExecutionException(
+                    "Relationship alias '" + qualifier + "' is unknown or ambiguous.");
+            }
+
+            return matches[0].RelatedEntity;
+        }
+
         private List<FabricRelationshipHopRequest> ResolveRelationshipPath(
             string profileEntity,
-            RelationshipPath relationshipPath)
+            RelationshipPath relationshipPath,
+            bool explicitSources = false)
         {
             var result = new List<FabricRelationshipHopRequest>();
             var currentEntity = profileEntity;
             var current = relationshipPath;
+            var sourceAlias = string.Empty;
             while (current != null)
             {
                 var resolved = ResolveRelationship(
@@ -494,6 +529,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     current.RelationshipSchema);
                 result.Add(new FabricRelationshipHopRequest
                 {
+                    SourceAlias = explicitSources ? sourceAlias : null,
                     Alias = current.Alias,
                     RelatedEntity = resolved.RelatedEntity,
                     SourceAttribute = string.IsNullOrWhiteSpace(resolved.IntersectEntity)
@@ -514,6 +550,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     IsOptional = current.IsOptional
                 });
                 currentEntity = resolved.RelatedEntity;
+                sourceAlias = current.Alias;
                 current = current.Nested;
             }
 
@@ -1077,7 +1114,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                 if (relationship != null)
                 {
                     filters.Add(
-                        relationship.RelationshipSchema + ": " +
+                        string.Join(", ", relationship.Relationships.Select(
+                            path => path.RelationshipSchema)) + ": " +
                         relationship.Condition.Describe());
                 }
             }
@@ -1114,7 +1152,8 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     if (relationship != null)
                     {
                         details.Add(
-                            HumanizeLogicalName(relationship.RelationshipSchema) +
+                            string.Join(", ", relationship.Relationships.Select(
+                                path => HumanizeLogicalName(path.RelationshipSchema))) +
                             "\nCondition: " +
                             DescribeConditionExpression(
                                 relationship.Condition,

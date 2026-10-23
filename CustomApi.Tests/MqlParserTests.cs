@@ -8,6 +8,57 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
 {
     public sealed class MqlParserTests
     {
+        [Fact]
+        public void Parse_SwarovskiQuery_AcceptsSiblingPathsBeforeCommonFilter()
+        {
+            const string mql =
+                "PROFILE(contact).RELATEOPTIONAL(klth_loyaltyprofile_Contactid_contact, klth_loyaltytier_2, " +
+                "RELATEOPTIONAL(klth_loyaltyprofile_LoyaltyTierid_klth_loyaltytier, klth_loyaltytier_2__1))" +
+                ".RELATEOPTIONAL(klth_loyaltyprofile_Contactid_contact, klth_loyaltyprogram_1, " +
+                "RELATEOPTIONAL(klth_loyaltyprofile_LoyaltyProgramid_klth_loyaltyprogram, klth_loyaltyprogram_1__1))" +
+                ".FILTER(klth_loyaltyprogram_1__1.klth_loyaltyprogramid == '5e699cdf-5321-f111-8341-6045bde0d602' " +
+                "&& (klth_loyaltytier_2__1.klth_loyaltytierid == '281ee42c-5421-f111-8341-7c1e5236d7ff')) " +
+                "INTERSECT PROFILE(contact).FILTER(compliance_profile_06ba242267cf463d98c4e9aace82b774 == " +
+                "'cp:3e4e8759-da21-f111-8341-6045bde0d602;p:444e8759-da21-f111-8341-6045bde0d602;" +
+                "ch:Email;ea:emailaddress1;t:03b9fc9a-da21-f111-8341-6045bde0d602;v:WillSend') " +
+                "INTERSECT Interaction(msdynmkt_emaillinkclicked, msdynmkt_entityid)" +
+                ".FILTER(msdynmkt_entityid_LogicalName == 'contact' && ISNOTNULL(msdynmkt_messagetemplateid))" +
+                ".Having(Count() >= 1, UTCDAYS(28)) " +
+                "INTERSECT PROFILE(contact).RELATEOPTIONAL(msdynci_customerprofile_contact, msdynci_webengagement7days_2, " +
+                "RELATEOPTIONAL(msdynci_customerprofile_webengagement7days, msdynci_webengagement7days_2__1))" +
+                ".FILTER(msdynci_webengagement7days_2__1.msdynci_earringviews7d >= 1)";
+
+            var query = Parse(mql);
+            var operand = ReadProperty<object>(query, "FirstOperand");
+            var steps = ReadProperty<IEnumerable>(operand, "FilterSteps");
+            var enumerator = steps.GetEnumerator();
+            Assert.True(enumerator.MoveNext());
+            Assert.Equal(2, ReadProperty<IList>(enumerator.Current, "Relationships").Count);
+            Assert.Equal(3, ReadProperty<IList>(query, "SetOperations").Count);
+        }
+
+        [Theory]
+        [InlineData("AND")]
+        [InlineData("OR")]
+        public void Parse_SiblingPaths_PreservesPathsAndCommonFilter(string booleanOperator)
+        {
+            var step = ParseRelationship(
+                "PROFILE(contact)" +
+                ".RELATEOPTIONAL(contact_loyalty, tier_1, RELATEOPTIONAL(loyalty_tier, tier_2))" +
+                ".RELATEOPTIONAL(contact_loyalty, program_1, RELATEOPTIONAL(loyalty_program, program_2))" +
+                ".FILTER(tier_2.name == 'Gold' " + booleanOperator + " program_2.name == 'Rewards')");
+            var paths = ReadProperty<IList>(step, "Relationships");
+
+            Assert.Equal(2, paths.Count);
+            Assert.Equal("tier_1", ReadProperty<string>(paths[0], "Alias"));
+            Assert.Equal("program_1", ReadProperty<string>(paths[1], "Alias"));
+            Assert.Equal("tier_2", ReadProperty<string>(
+                ReadProperty<object>(paths[0], "Nested"), "Alias"));
+            Assert.Equal(
+                booleanOperator == "AND" ? "AndCondition" : "OrCondition",
+                ReadProperty<object>(step, "Condition").GetType().Name);
+        }
+
         [Theory]
         [InlineData(
             "PROFILE(contact).RELATEOPTIONAL(contact_customer_accounts, account_1).FILTER(account_1.name CONTAINS 'Depot')",
