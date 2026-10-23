@@ -13,6 +13,86 @@ namespace CustomerInsightsSegmentSankey.CustomApi.Tests
 {
     public sealed class PresentationDetailTests
     {
+        [Theory]
+        [InlineData(534120000)]
+        [InlineData(534120001)]
+        [InlineData(534120002)]
+        public void EvaluatedConsent_ResolvesPurposeModelAndSerializesIt(int model)
+        {
+            var definition = ConsentDefinition("WillSend");
+            var purpose = ConsentPurpose(model);
+            var topic = ConsentTopic(purpose.Id);
+            var request = BuildRequest(new StubOrganizationService(definition, purpose, topic),
+                definition.Id);
+            using (var stream = new System.IO.MemoryStream())
+            {
+                new System.Runtime.Serialization.Json.DataContractJsonSerializer(request.GetType())
+                    .WriteObject(stream, request);
+                var json = System.Text.Encoding.UTF8.GetString(stream.ToArray());
+                Assert.Contains("\"enforcementModel\":" + model, json);
+                Assert.Contains("\"value\":\"WillSend\"", json);
+            }
+        }
+
+        [Theory]
+        [InlineData(null, 0)]
+        [InlineData(999, 0)]
+        [InlineData(534120001, 1)]
+        public void EvaluatedConsent_RejectsMissingUnknownOrInactivePurpose(int? model, int state)
+        {
+            var definition = ConsentDefinition("WillSend");
+            var purpose = ConsentPurpose(model);
+            purpose["statecode"] = new OptionSetValue(state);
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                BuildRequest(new StubOrganizationService(definition, purpose), definition.Id));
+            Assert.IsType<InvalidPluginExecutionException>(error.InnerException);
+            Assert.Contains("unsupported Email enforcement model", error.InnerException.Message);
+        }
+
+        [Fact]
+        public void EvaluatedConsent_RejectsTopicFromAnotherPurpose()
+        {
+            var definition = ConsentDefinition("WillNotSend");
+            var purpose = ConsentPurpose(534120001);
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                BuildRequest(new StubOrganizationService(definition, purpose,
+                    ConsentTopic(Guid.NewGuid())), definition.Id));
+            Assert.IsType<InvalidPluginExecutionException>(error.InnerException);
+            Assert.Contains("does not belong", error.InnerException.Message);
+        }
+
+        private static Entity ConsentDefinition(string value) =>
+            new Entity("msdynmkt_segmentdefinition", Guid.NewGuid())
+            {
+                ["msdynmkt_segmentquery"] =
+                    "PROFILE(contact).FILTER(compliance_profile_example == " +
+                    "'cp:ab3f8454-ac47-f111-bec7-6045bde0d602;" +
+                    "p:444e8759-da21-f111-8341-6045bde0d602;ch:Email;ea:emailaddress1;" +
+                    "t:03b9fc9a-da21-f111-8341-6045bde0d602;v:" + value + "')",
+                ["modifiedon"] = DateTime.UtcNow
+            };
+
+        private static Entity ConsentPurpose(int? model)
+        {
+            var purpose = new Entity("msdynmkt_purpose",
+                Guid.Parse("444e8759-da21-f111-8341-6045bde0d602"))
+            {
+                ["statecode"] = new OptionSetValue(0)
+            };
+            if (model.HasValue)
+            {
+                purpose["msdynmkt_enforcementmodel"] = new OptionSetValue(model.Value);
+            }
+            return purpose;
+        }
+
+        private static Entity ConsentTopic(Guid purpose) =>
+            new Entity("msdynmkt_topic", Guid.Parse("03b9fc9a-da21-f111-8341-6045bde0d602"))
+            {
+                ["msdynmkt_purposeid"] = new EntityReference("msdynmkt_purpose", purpose),
+                ["statecode"] = new OptionSetValue(0)
+            };
+
         [Fact]
         public void SiblingRelationships_DiscoverDependenciesFromEveryBranch()
         {

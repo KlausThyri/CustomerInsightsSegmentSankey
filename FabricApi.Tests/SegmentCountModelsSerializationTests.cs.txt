@@ -20,6 +20,16 @@ public sealed class SegmentCountModelsSerializationTests
     private static readonly JsonSerializerOptions WebDefaults = new(JsonSerializerDefaults.Web);
 
     [Fact]
+    public void EvaluatedConsent_DeserializesPurposeEnforcementModel()
+    {
+        var condition = JsonSerializer.Deserialize<SegmentCondition>(
+            """{"kind":"consent","value":"WillSend","enforcementModel":534120001}""",
+            WebDefaults)!;
+        Assert.Equal(534120001, condition.EnforcementModel);
+        Assert.Equal("WillSend", condition.Value!.Value.GetString());
+    }
+
+    [Fact]
     public void SegmentCountRequest_RequiredDataverseTables_RoundTripsAsCamelCaseArray()
     {
         var request = new SegmentCountRequest { RequiredDataverseTables = ["contact", "account"] };

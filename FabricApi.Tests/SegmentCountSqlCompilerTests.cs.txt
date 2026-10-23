@@ -8,6 +8,101 @@ namespace CustomerInsightsSegmentSankey.FabricApi.Tests;
 public sealed class SegmentCountSqlCompilerTests
 {
     [Theory]
+    [InlineData(534120000, false)]
+    [InlineData(534120000, true)]
+    [InlineData(534120001, false)]
+    [InlineData(534120001, true)]
+    public void Compile_WillSend_EvaluatesPurposeAndTopicIndependently(int model, bool withTopic)
+    {
+        var result = CompileEvaluatedConsent(model, withTopic);
+        Assert.Contains("consent.[msdynmkt_topicid] IS NULL", result.Sql);
+        Assert.Contains("NOT EXISTS", result.Sql);
+        Assert.Contains(534120000, result.Parameters.Select(parameter => parameter.Value));
+        Assert.Equal(model == 534120000,
+            result.Parameters.Any(parameter => Equals(parameter.Value, 534120001)));
+        Assert.Equal(withTopic, result.Sql.Contains("consent.[msdynmkt_topicid] = "));
+        Assert.Equal(withTopic ? 2 : 1,
+            result.Sql.Split("NOT EXISTS").Length - 1);
+        Assert.Contains("consent.[msdynmkt_contactpointtype]", result.Sql);
+        Assert.Contains("consent.[statecode]", result.Sql);
+    }
+
+    [Theory]
+    [InlineData("WillSend", "(1 = 1)")]
+    [InlineData("WillNotSend", "(1 = 0)")]
+    public void Compile_DisabledConsent_DoesNotRequireConsentTable(string value, string expected)
+    {
+        var result = CompileEvaluatedConsent(534120002, true, value);
+        Assert.Contains(expected, result.Sql);
+        Assert.DoesNotContain("msdynmkt_contactpointconsent4", result.Sql);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(999)]
+    public void Compile_WillSend_RejectsMissingOrUnknownEnforcementModel(int? model)
+    {
+        var error = Assert.Throws<SegmentQueryException>(() =>
+            CompileEvaluatedConsent(model, false));
+        Assert.Equal("invalid_consent", error.Code);
+        Assert.Contains("enforcementModel", error.Message);
+    }
+
+    [Fact]
+    public void Compile_WillNotSend_ComplementsFullPurposeAndTopicEvaluation()
+    {
+        var allowed = CompileEvaluatedConsent(534120001, true);
+        var blocked = CompileEvaluatedConsent(534120001, true, "WillNotSend");
+        Assert.Equal(allowed.Parameters.Select(parameter => parameter.Value),
+            blocked.Parameters.Select(parameter => parameter.Value));
+        Assert.Contains("(NOT (", blocked.Sql);
+        Assert.Equal(2, blocked.Sql.Split("NOT EXISTS").Length - 1);
+    }
+
+    private static CompiledSegmentCountQuery CompileEvaluatedConsent(
+        int? model, bool withTopic, string value = "WillSend")
+    {
+        var request = Request(new SegmentOperand
+        {
+            Kind = "profile",
+            ProfileEntity = "contact",
+            BaseLabel = "Contacts",
+            BaseDetail = "PROFILE(contact)",
+            Steps =
+            [
+                new SegmentFilterStep
+                {
+                    Kind = "profile",
+                    Label = "Consent",
+                    Detail = value,
+                    Condition = new SegmentCondition
+                    {
+                        Kind = "consent",
+                        ProfileEmailField = "emailaddress1",
+                        PurposeId = Guid.Parse("444e8759-da21-f111-8341-6045bde0d602"),
+                        TopicId = withTopic
+                            ? Guid.Parse("03b9fc9a-da21-f111-8341-6045bde0d602") : null,
+                        Channel = "Email",
+                        EnforcementModel = model,
+                        Value = Json(JsonSerializer.Serialize(value))
+                    }
+                }
+            ]
+        });
+        var tables = new List<EventTableDescriptor>
+        {
+            Table("dataverse", "contact", "Id", "statecode", "emailaddress1")
+        };
+        if (model != 534120002)
+        {
+            tables.Add(Table("dataverse", "msdynmkt_contactpointconsent4", "Id", "statecode",
+                "msdynmkt_contactpointvalue", "msdynmkt_purposeid", "msdynmkt_topicid",
+                "msdynmkt_contactpointtype", "msdynmkt_value"));
+        }
+        return Compile(request, tables.ToArray());
+    }
+
+    [Theory]
     [InlineData("and")]
     [InlineData("or")]
     public void Compile_SiblingPaths_CorrelatesEachRootAndPreservesSharedFilter(string kind)

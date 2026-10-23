@@ -840,7 +840,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             return primaryId;
         }
 
-        private static FabricSegmentConditionRequest ConvertCondition(
+        private FabricSegmentConditionRequest ConvertCondition(
             ConditionNode condition,
             bool allowConsent)
         {
@@ -903,6 +903,7 @@ namespace CustomerInsightsSegmentSankey.CustomApi
                     PurposeId = consent.PurposeId,
                     TopicId = consent.TopicId,
                     Channel = consent.Channel,
+                    EnforcementModel = ResolveConsentEnforcementModel(consent),
                     Value = string.IsNullOrEmpty(consent.Value)
                         ? null
                         : consent.Value
@@ -1047,6 +1048,54 @@ namespace CustomerInsightsSegmentSankey.CustomApi
             {
                 FlattenAnd(child, result);
             }
+        }
+
+        private int? ResolveConsentEnforcementModel(ConsentToken consent)
+        {
+            if (!string.Equals(consent.Value, "WillSend", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(consent.Value, "WillNotSend", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            if (!string.Equals(consent.Channel, "Email", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidPluginExecutionException(
+                    "Evaluated consent supports only the Email channel.");
+            }
+
+            var purpose = service.Retrieve(
+                "msdynmkt_purpose",
+                consent.PurposeId,
+                new ColumnSet("msdynmkt_enforcementmodel", "statecode"));
+            var model = purpose.GetAttributeValue<OptionSetValue>("msdynmkt_enforcementmodel");
+            var state = purpose.GetAttributeValue<OptionSetValue>("statecode");
+            if (state == null || state.Value != 0 || model == null ||
+                model.Value < 534120000 || model.Value > 534120002)
+            {
+                throw new InvalidPluginExecutionException(
+                    "Consent purpose " + consent.PurposeId.ToString("D") +
+                    " is inactive or has an unsupported Email enforcement model.");
+            }
+
+            if (consent.TopicId.HasValue)
+            {
+                var topic = service.Retrieve(
+                    "msdynmkt_topic",
+                    consent.TopicId.Value,
+                    new ColumnSet("msdynmkt_purposeid", "statecode"));
+                var parent = topic.GetAttributeValue<EntityReference>("msdynmkt_purposeid");
+                var topicState = topic.GetAttributeValue<OptionSetValue>("statecode");
+                if (parent == null || parent.Id != consent.PurposeId ||
+                    topicState == null || topicState.Value != 0)
+                {
+                    throw new InvalidPluginExecutionException(
+                        "Consent topic " + consent.TopicId.Value.ToString("D") +
+                        " is inactive or does not belong to the selected purpose.");
+                }
+            }
+
+            return model.Value;
         }
 
         private static bool IsConsentPseudoField(string fieldName)

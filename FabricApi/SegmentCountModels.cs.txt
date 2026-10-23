@@ -150,6 +150,8 @@ public sealed class SegmentCondition
     public Guid? TopicId { get; set; }
 
     public string? Channel { get; set; }
+
+    public int? EnforcementModel { get; set; }
 }
 
 public sealed class SegmentHaving

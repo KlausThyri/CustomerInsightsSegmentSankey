@@ -1053,6 +1053,16 @@ internal sealed class SegmentCountSqlCompiler
                     "A consent condition requires profileEmailField and purposeId.");
             }
 
+            var consentValue = condition.Value is { ValueKind: JsonValueKind.String }
+                ? condition.Value.Value.GetString()?.Trim()
+                : null;
+            if (string.Equals(consentValue, "WillSend", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(consentValue, "WillNotSend", StringComparison.OrdinalIgnoreCase))
+            {
+                return CompileEvaluatedConsent(condition, profileTable, profileAlias,
+                    string.Equals(consentValue, "WillNotSend", StringComparison.OrdinalIgnoreCase));
+            }
+
             var consentTable = catalog.ResolveDataverse(ConsentEntity);
             AddSource(consentTable);
             var emailColumn = ResolveColumn(profileTable, condition.ProfileEmailField);
@@ -1103,7 +1113,7 @@ internal sealed class SegmentCountSqlCompiler
                         "Consent value must be OptedIn or OptedOut.");
                 }
 
-                var consentValue = condition.Value.Value.GetString();
+                consentValue = condition.Value.Value.GetString();
                 var value = (consentValue ?? string.Empty).Trim().ToUpperInvariant() switch
                 {
                     "OPTEDIN" => OptedInValue,
@@ -1123,6 +1133,65 @@ internal sealed class SegmentCountSqlCompiler
                 "        WHERE " +
                 string.Join(Environment.NewLine + "          AND ", predicates) +
                 Environment.NewLine + "    )";
+        }
+
+        private string CompileEvaluatedConsent(
+            SegmentCondition condition,
+            EventTableDescriptor profileTable,
+            string profileAlias,
+            bool negate)
+        {
+            if (!string.Equals(condition.Channel, "Email", StringComparison.OrdinalIgnoreCase) ||
+                condition.EnforcementModel is not (534120000 or 534120001 or 534120002))
+            {
+                throw new SegmentQueryException("invalid_consent",
+                    "Evaluated consent requires the Email channel and a supported purpose enforcementModel.");
+            }
+
+            if (condition.EnforcementModel == 534120002)
+            {
+                return negate ? "(1 = 0)" : "(1 = 1)";
+            }
+
+            var table = catalog.ResolveDataverse(ConsentEntity);
+            AddSource(table);
+            var email = ResolveColumn(profileTable, condition.ProfileEmailField!);
+            var point = ResolveColumn(table, "msdynmkt_contactpointvalue");
+            var state = ResolveColumn(table, "statecode");
+            var purpose = ResolveColumn(table, "msdynmkt_purposeid");
+            var topic = ResolveColumn(table, "msdynmkt_topicid");
+            var channel = ResolveColumn(table, "msdynmkt_contactpointtype");
+            var value = ResolveColumn(table, "msdynmkt_value");
+            var common = $"consent.{Quote(point)} = {profileAlias}.{Quote(email)}" +
+                $" AND consent.{Quote(state)} = {AddParameter(0)}" +
+                $" AND consent.{Quote(purpose)} = {AddParameter(condition.PurposeId!.Value)}" +
+                $" AND consent.{Quote(channel)} = {AddParameter(EmailContactPointType)}";
+            var outParameter = AddParameter(OptedOutValue);
+            var inParameter = condition.EnforcementModel == 534120000
+                ? AddParameter(OptedInValue)
+                : null;
+
+            string Exists(string scope, string consentParameter) =>
+                $"EXISTS (SELECT 1 FROM {Qualified(table)} AS consent WHERE {common}" +
+                $" AND {scope} AND consent.{Quote(value)} = {consentParameter})";
+
+            string Allows(string scope)
+            {
+                var noOptOut = "NOT " + Exists(scope, outParameter);
+                return inParameter == null
+                    ? noOptOut
+                    : "(" + Exists(scope, inParameter) + " AND " + noOptOut + ")";
+            }
+
+            // A topic inherits its purpose's model, but both scopes must allow sending.
+            var allowed = Allows($"consent.{Quote(topic)} IS NULL");
+            if (condition.TopicId.HasValue)
+            {
+                allowed = "(" + allowed + " AND " +
+                    Allows($"consent.{Quote(topic)} = {AddParameter(condition.TopicId.Value)}") + ")";
+            }
+
+            return negate ? "(NOT (" + allowed + "))" : "(" + allowed + ")";
         }
 
         private string CompileInteractionCondition(

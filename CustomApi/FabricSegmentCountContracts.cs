@@ -234,6 +234,9 @@ namespace CustomerInsightsSegmentSankey.CustomApi
 
         [DataMember(Name = "channel", Order = 11, EmitDefaultValue = false)]
         public string Channel { get; set; }
+
+        [DataMember(Name = "enforcementModel", Order = 12, EmitDefaultValue = false)]
+        public int? EnforcementModel { get; set; }
     }
 
     [DataContract]
